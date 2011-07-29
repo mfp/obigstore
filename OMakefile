@@ -1,0 +1,12 @@
+
+USE_OCAMLFIND = true
+NATIVE_ENABLED = true
+BYTE_ENABLED = true
+
+OCAMLFLAGS += -annot -thread
+OCAMLFINDFLAGS += -syntax camlp4o
+OCAMLOPTFLAGS += -inline 100
+
+OCAMLPACKS[] = batteries lwt lwt.syntax
+
+.SUBDIRS: src test

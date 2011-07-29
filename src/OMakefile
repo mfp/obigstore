@@ -1,0 +1,13 @@
+
+OCAMLINCLUDES += libs/ocaml-leveldb/src
+
+OBJECTS[] =
+  bytea
+  data_model
+  string_util
+
+OCamlLibrary(ostore, $(OBJECTS))
+
+.DEFAULT: ostore.cma ostore.cmxa
+
+
