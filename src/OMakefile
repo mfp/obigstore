@@ -8,6 +8,17 @@ OBJECTS[] =
 
 OCamlLibrary(ostore, $(OBJECTS))
 
+setenv(CAML_LD_LIBRARY_PATH, libs/ocaml-leveldb/src)
+
+toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
+	ocamlfind ocamlmktop \
+	    $(mapprefix -package, $(OCAMLPACKS)) \
+	    -cc g++ -verbose -o toplevel \
+	    -cclib -L. \
+	    -cclib -Llibs/ocaml-leveldb/src \
+	    libs/ocaml-leveldb/src/leveldb.cma ostore.cma \
+	    -linkpkg
+
 .DEFAULT: ostore.cma ostore.cmxa
 
 
