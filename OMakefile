@@ -10,3 +10,8 @@ OCAMLOPTFLAGS += -inline 100
 OCAMLPACKS[] = batteries lwt lwt.syntax
 
 .SUBDIRS: src test
+
+.PHONY: clean
+
+clean:
+	rm -f $(filter-proper-targets $(ls R, .))
