@@ -171,7 +171,7 @@ let open_db basedir =
 let close_db t = L.close t.db
 
 let list_keyspaces t =
-  List.rev (Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [])
+  List.sort String.compare (Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [])
 
 let register_keyspace t ks_name =
   try
