@@ -7,7 +7,7 @@ OCAMLFLAGS += -annot -thread
 OCAMLFINDFLAGS += -syntax camlp4o
 OCAMLOPTFLAGS += -inline 100
 
-OCAMLPACKS[] = batteries lwt lwt.syntax
+OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax
 
 .SUBDIRS: src test
 
