@@ -13,4 +13,8 @@ OCAML_LIBS[] +=
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
 
-.DEFAULT: test
+.PHONY: test
+test: test.opt
+	./test.opt -verbose
+
+.DEFAULT: test.opt
