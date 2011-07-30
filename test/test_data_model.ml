@@ -253,6 +253,32 @@ let test_get_slice_nested_transactions db =
                "b", "c2", ["c1", ""; "c2", ""];
                "c", "c2", ["c1", ""; "c2", ""]]))
 
+let test_delete_key db =
+  let ks = D.register_keyspace db "test_delete_key" in
+  let get_all tx = D.get_slice tx "tbl" (key_range ()) DD.All_columns in
+    put_slice ks "tbl"
+      [ "a", [ "x", ""; "y", ""; "z", "" ];
+        "b", [ "x", ""; "y", ""; "z", "" ]] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_all tx >|=
+           aeq_slice ~msg:"before delete"
+             (Some "b",
+              [ "a", "z", [ "x", ""; "y", ""; "z", "" ];
+                "b", "z", [ "x", ""; "y", ""; "z", "" ]]) >>
+         D.delete_key tx "tbl" "b" >>
+         let expect_after_del msg =
+           aeq_slice ~msg
+             (Some "a",
+              [ "a", "z", [ "x", ""; "y", ""; "z", "" ]])
+         in get_all tx >|= expect_after_del "with key range">>
+            D.get_slice tx "tbl" (DD.Keys ["a"; "b"]) DD.All_columns >|=
+              expect_after_del "with discrete keys") >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_all tx >|=
+           aeq_slice ~msg:"after delete, after transaction commit"
+             (Some "a", [ "a", "z", [ "x", ""; "y", ""; "z", "" ]]))
 
 let with_db f () =
   let dir = make_temp_dir () in
@@ -273,6 +299,7 @@ let tests =
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
     "get_slice nested transactions", test_get_slice_nested_transactions;
+    "delete_key", test_delete_key;
   ]
 
 let () =

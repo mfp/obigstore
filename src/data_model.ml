@@ -586,7 +586,6 @@ let get_slice tx table
             (M.submap ?first ?up_to
                (M.find_default M.empty table tx.added))
             m in
-        let last_key = M.maybe_max_binding m |> Option.map fst in
         let key_data_list =
           M.fold
             (fun key key_data l ->
@@ -595,7 +594,10 @@ let get_slice tx table
                    { Data.key; last_column; columns = M.values key_data; } :: l
                with Not_found -> l)
             m
-            []
+            [] in
+        let last_key = match key_data_list with
+            { Data.key; _ } :: _ -> Some key
+          | [] -> None
         in (last_key, List.rev key_data_list)
 
 let get_slice tx table ?max_keys key_range column_range =
