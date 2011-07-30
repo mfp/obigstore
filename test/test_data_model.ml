@@ -216,6 +216,45 @@ let test_get_slice_key_range db =
               [ "b", Some "k1", [ "k1", "kk1" ];
                 "c", Some "w", [ "w", "ww" ] ]))
 
+let test_get_slice_nested_transactions db =
+  let ks = D.register_keyspace db "test_get_slice_nested_transactions" in
+  let all = DD.All_columns in
+    put_slice ks "tbl"
+      [
+        "a", [ "c1", ""; "c2", "" ];
+        "b", [ "c1", ""; "c2", "" ];
+        "c", [ "c1", ""; "c2", "" ];
+      ] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" (key_range ~first:"b" ()) all >|=
+           aeq_slice (Some "c",
+                      ["b", Some "c2", [ "c1", ""; "c2", "" ];
+                       "c", Some "c2",  [ "c1", ""; "c2", "" ]]) >>
+         put_slice ks "tbl" ["a", ["c4", "c4"]] >>
+         begin try_lwt
+           D.read_committed_transaction ks
+             (fun tx ->
+                delete tx "tbl" "b" ["c1"; "c2"] >>
+                delete tx "tbl" "c" ["c2"] >>
+                put_slice ks "tbl" ["c", ["c3", "c3"]] >>
+                D.get_slice tx "tbl" (key_range ()) all >|=
+                  aeq_slice
+                    ~msg:"nested tx data"
+                    (Some "c",
+                     ["a", Some "c4", ["c1", ""; "c2", ""; "c4", "c4"];
+                      "b", None, [];
+                      "c", Some "c3", ["c1", ""; "c3", "c3"]]) >>
+                raise Exit)
+         with Exit -> return () end >>
+         D.get_slice tx "tbl" (key_range ()) all >|=
+           aeq_slice ~msg:"after aborted transaction"
+             (Some "c",
+              ["a", Some "c4", ["c1", ""; "c2", ""; "c4", "c4"];
+               "b", Some "c2", ["c1", ""; "c2", ""];
+               "c", Some "c2", ["c1", ""; "c2", ""]]))
+
+
 let with_db f () =
   let dir = make_temp_dir () in
   let db = D.open_db dir in
@@ -234,6 +273,7 @@ let tests =
     "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
+    "get_slice nested transactions", test_get_slice_nested_transactions;
   ]
 
 let () =
