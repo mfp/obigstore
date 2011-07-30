@@ -28,7 +28,7 @@ struct
 
   and timestamp = No_timestamp | Timestamp of Int64.t
 
-  type key_data = { key : key; last_column : string option; columns : column list }
+  type key_data = { key : key; last_column : string; columns : column list }
 
   type slice = key option * key_data list (** last_key * data *)
 
@@ -533,11 +533,12 @@ let get_slice tx table
                     M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m)
                  (tx.added |>
                   M.find_default M.empty table |> M.find_default M.empty key)
-                 m in
-             let last_column =
-               try Some (fst (M.max_binding m))
-               with Not_found -> None
-             in { Data.key; last_column; columns = M.values m; } :: key_data_list)
+                 m
+             in
+               try
+                 let last_column = fst (M.max_binding m) in
+                   { Data.key; last_column; columns = M.values m; } :: key_data_list
+               with Not_found -> key_data_list)
           s [] in
       let max_key =
         List.fold_left
@@ -589,8 +590,10 @@ let get_slice tx table
         let key_data_list =
           M.fold
             (fun key key_data l ->
-               let last_column = M.maybe_max_binding key_data |> Option.map fst in
-                 { Data.key; last_column; columns = M.values key_data; } :: l)
+               try
+                 let last_column = fst (M.max_binding key_data) in
+                   { Data.key; last_column; columns = M.values key_data; } :: l
+               with Not_found -> l)
             m
             []
         in (last_key, List.rev key_data_list)
@@ -600,7 +603,7 @@ let get_slice tx table ?max_keys key_range column_range =
 
 let get_columns tx table ?(max_columns = max_int) key column_range =
   match_lwt get_slice tx table (Data.Keys [key]) column_range with
-    | (_, { Data.last_column = Some last_column;
+    | (_, { Data.last_column = last_column;
             columns = ((_ :: _ as columns)) } :: _ ) ->
         return (Some (last_column, columns))
     | _ -> return None

@@ -16,7 +16,7 @@ sig
 
   and timestamp = No_timestamp | Timestamp of Int64.t
 
-  type key_data = { key : key; last_column : string option; columns : column list }
+  type key_data = { key : key; last_column : string; columns : column list }
 
   type slice = key option * key_data list (** last_key * data *)
 

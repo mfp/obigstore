@@ -134,8 +134,8 @@ let string_of_column c =
   sprintf "{ name = %S; data = %S; }" c.DD.name c.DD.data
 
 let string_of_key_data kd =
-  sprintf "{ key = %S; last_column = %s; columns = %s }"
-    kd.DD.key (string_of_option (sprintf "%S") kd.DD.last_column)
+  sprintf "{ key = %S; last_column = %S; columns = %s }"
+    kd.DD.key kd.DD.last_column
     (string_of_list string_of_column kd.DD.columns)
 
 let string_of_slice (last_key, l) =
@@ -172,23 +172,23 @@ let test_get_slice_discrete db =
          D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
            aeq_slice
              (Some "c",
-              ["a", Some "v", [ "k", "kk"; "v", "vv" ];
-               "c", Some "w", [ "k2", "kk2"; "w", "ww" ]]) >>
+              ["a", "v", [ "k", "kk"; "v", "vv" ];
+               "c", "w", [ "k2", "kk2"; "w", "ww" ]]) >>
          delete tx "tbl" "a" ["v"] >>
          delete tx "tbl" "c" ["k2"] >>
          put tx "tbl" "a" ["v2", "v2"] >>
          D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
            aeq_slice
              (Some "c",
-              ["a", Some "v2", [ "k", "kk"; "v2", "v2"; ];
-               "c", Some "w", [ "w", "ww" ]])) >>
+              ["a", "v2", [ "k", "kk"; "v2", "v2"; ];
+               "c", "w", [ "w", "ww" ]])) >>
     D.read_committed_transaction ks
       (fun tx ->
          D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
            aeq_slice
              (Some "c",
-              ["a", Some "v2", [ "k", "kk"; "v2", "v2"; ];
-               "c", Some "w", [ "w", "ww" ]]))
+              ["a", "v2", [ "k", "kk"; "v2", "v2"; ];
+               "c", "w", [ "w", "ww" ]]))
 
 let test_get_slice_key_range db =
   let ks = D.register_keyspace db "test_get_slice_key_range" in
@@ -204,8 +204,8 @@ let test_get_slice_key_range db =
          let expect1 =
            aeq_slice
              (Some "b",
-              [ "a", Some "v", [ "k", "kk"; "v", "vv"; ];
-                "b", Some "v", [ "k1", "kk1"; "v", "vv1" ]])
+              [ "a", "v", [ "k", "kk"; "v", "vv"; ];
+                "b", "v", [ "k1", "kk1"; "v", "vv1" ]])
          in
            D.get_slice tx "tbl" (key_range ~first:"a" ~up_to:"b" ()) all >|= expect1 >>
            D.get_slice tx "tbl" (key_range ~up_to:"b" ()) all >|= expect1 >>
@@ -213,8 +213,8 @@ let test_get_slice_key_range db =
              (DD.Columns ["k1"; "w"]) >|=
              aeq_slice
              (Some "c",
-              [ "b", Some "k1", [ "k1", "kk1" ];
-                "c", Some "w", [ "w", "ww" ] ]))
+              [ "b", "k1", [ "k1", "kk1" ];
+                "c", "w", [ "w", "ww" ] ]))
 
 let test_get_slice_nested_transactions db =
   let ks = D.register_keyspace db "test_get_slice_nested_transactions" in
@@ -229,8 +229,8 @@ let test_get_slice_nested_transactions db =
       (fun tx ->
          D.get_slice tx "tbl" (key_range ~first:"b" ()) all >|=
            aeq_slice (Some "c",
-                      ["b", Some "c2", [ "c1", ""; "c2", "" ];
-                       "c", Some "c2",  [ "c1", ""; "c2", "" ]]) >>
+                      ["b", "c2", [ "c1", ""; "c2", "" ];
+                       "c", "c2",  [ "c1", ""; "c2", "" ]]) >>
          put_slice ks "tbl" ["a", ["c4", "c4"]] >>
          begin try_lwt
            D.read_committed_transaction ks
@@ -242,17 +242,16 @@ let test_get_slice_nested_transactions db =
                   aeq_slice
                     ~msg:"nested tx data"
                     (Some "c",
-                     ["a", Some "c4", ["c1", ""; "c2", ""; "c4", "c4"];
-                      "b", None, [];
-                      "c", Some "c3", ["c1", ""; "c3", "c3"]]) >>
+                     ["a", "c4", ["c1", ""; "c2", ""; "c4", "c4"];
+                      "c", "c3", ["c1", ""; "c3", "c3"]]) >>
                 raise Exit)
          with Exit -> return () end >>
          D.get_slice tx "tbl" (key_range ()) all >|=
            aeq_slice ~msg:"after aborted transaction"
              (Some "c",
-              ["a", Some "c4", ["c1", ""; "c2", ""; "c4", "c4"];
-               "b", Some "c2", ["c1", ""; "c2", ""];
-               "c", Some "c2", ["c1", ""; "c2", ""]]))
+              ["a", "c4", ["c1", ""; "c2", ""; "c4", "c4"];
+               "b", "c2", ["c1", ""; "c2", ""];
+               "c", "c2", ["c1", ""; "c2", ""]]))
 
 
 let with_db f () =
