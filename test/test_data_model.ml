@@ -280,6 +280,56 @@ let test_delete_key db =
            aeq_slice ~msg:"after delete, after transaction commit"
              (Some "a", [ "a", "z", [ "x", ""; "y", ""; "z", "" ]]))
 
+let get_all tx tbl =
+  D.get_slice tx tbl (key_range ()) DD.All_columns
+
+let test_delete_columns db =
+  let ks = D.register_keyspace db "test_delete_columns" in
+    put_slice ks "tbl"
+      [ "a", [ "x", ""; "y", ""; "z", "" ];
+        "b", [ "x", ""; "y", ""; "z", "" ]] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_all tx "tbl" >|=
+           aeq_slice ~msg:"before delete_columns"
+             (Some "b",
+              [ "a", "z", [ "x", ""; "y", ""; "z", "" ];
+                "b", "z", [ "x", ""; "y", ""; "z", "" ]]) >>
+         D.delete_columns tx "tbl" "a" ["x"; "z"] >>
+         D.delete_columns tx "tbl" "b" ["x"; "y"; "z"] >>
+         get_all tx "tbl" >|=
+           aeq_slice ~msg:"after delete, in transaction"
+             (Some "a", ["a", "y", ["y", ""]])) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_all tx "tbl" >|=
+           aeq_slice ~msg:"after transaction commit"
+             (Some "a", ["a", "y", ["y", ""]]))
+
+let test_put_columns db =
+  let ks = D.register_keyspace db "test_put_columns" in
+    put_slice ks "tbl"
+      [ "a", [ "x", ""; "y", ""; "z", "" ];
+        "b", [ "x", ""; "y", ""; "z", "" ]] >>
+    put_slice ks "tbl"
+      [ "a", [ "x", "x"; "zz", ""];
+        "c", [ "z", ""] ] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_all tx "tbl" >|=
+           aeq_slice
+             (Some "c",
+              [ "a", "zz", [ "x", "x"; "y", ""; "z", ""; "zz", "" ];
+                "b", "z", [ "x", ""; "y", ""; "z", "" ];
+                "c", "z", [ "z", "" ]]) >>
+         put_slice ks "tbl" [ "c", ["c", "c"]] >>
+         D.get_slice tx "tbl" (DD.Keys ["c"]) DD.All_columns >|=
+           aeq_slice (Some "c", [ "c", "z", ["c", "c"; "z", ""] ])) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" (DD.Keys ["c"]) DD.All_columns >|=
+           aeq_slice (Some "c", [ "c", "z", ["c", "c"; "z", ""] ]))
+
 let with_db f () =
   let dir = make_temp_dir () in
   let db = D.open_db dir in
@@ -299,7 +349,9 @@ let tests =
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
     "get_slice nested transactions", test_get_slice_nested_transactions;
+    "put_columns", test_put_columns;
     "delete_key", test_delete_key;
+    "delete_columns", test_delete_columns;
   ]
 
 let () =
