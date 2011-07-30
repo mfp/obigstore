@@ -141,48 +141,52 @@ let string_of_slice (last_key, l) =
     (string_of_option (sprintf "%S") last_key)
     (string_of_list string_of_key_data l)
 
-let aeq_slice = aeq string_of_slice
-
 let rd_col (name, data) =
   { DD.name; data; timestamp = DD.No_timestamp }
 
+let put_slice ks tbl l =
+  D.read_committed_transaction ks
+    (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
+
+let aeq_slice ?msg (last_key, data) actual =
+  aeq ?msg string_of_slice
+    (last_key,
+     List.map
+       (fun (key, last_column, cols) ->
+          { DD.key; last_column; columns = List.map rd_col cols })
+       data)
+    actual
+
 let test_get_slice_discrete db =
   let ks = D.register_keyspace db "test_get_slice_discrete" in
-  let cols = List.map rd_col in
-    D.read_committed_transaction ks
-      (fun tx ->
-         put tx "tbl" "a" ["k", "kk"; "v", "vv"] >>
-         put tx "tbl" "b" ["k1", "kk1"; "v", "vv1"] >>
-         put tx "tbl" "c" ["k2", "kk2"; "w", "ww"]) >>
-
+    put_slice ks "tbl"
+      [
+       "a", ["k", "kk"; "v", "vv"];
+       "b", ["k1", "kk1"; "v", "vv1"];
+       "c", ["k2", "kk2"; "w", "ww"];
+      ] >>
     D.read_committed_transaction ks
       (fun tx ->
          D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
            aeq_slice
              (Some "c",
-              [{ DD.key = "a"; last_column = Some "v";
-                 columns = cols [ "k", "kk"; "v", "vv" ] };
-               { DD.key = "c"; last_column = Some "w";
-                 columns = cols [ "k2", "kk2"; "w", "ww" ] }]) >>
+              ["a", Some "v", [ "k", "kk"; "v", "vv" ];
+               "c", Some "w", [ "k2", "kk2"; "w", "ww" ]]) >>
          delete tx "tbl" "a" ["v"] >>
          delete tx "tbl" "c" ["k2"] >>
          put tx "tbl" "a" ["v2", "v2"] >>
          D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
            aeq_slice
              (Some "c",
-              [{ DD.key = "a"; last_column = Some "v2";
-                 columns = cols [ "k", "kk"; "v2", "v2"; ] };
-               { DD.key = "c"; last_column = Some "w";
-                 columns = cols [ "w", "ww" ] }])) >>
+              ["a", Some "v2", [ "k", "kk"; "v2", "v2"; ];
+               "c", Some "w", [ "w", "ww" ]])) >>
     D.read_committed_transaction ks
       (fun tx ->
          D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
            aeq_slice
              (Some "c",
-              [{ DD.key = "a"; last_column = Some "v2";
-                 columns = cols [ "k", "kk"; "v2", "v2"; ] };
-               { DD.key = "c"; last_column = Some "w";
-                 columns = cols [ "w", "ww" ] }]))
+              ["a", Some "v2", [ "k", "kk"; "v2", "v2"; ];
+               "c", Some "w", [ "w", "ww" ]]))
 
 let with_db f () =
   let dir = make_temp_dir () in
