@@ -47,6 +47,8 @@ let assert_not_found ?msg f =
 let aeq_list ?cmp f =
   assert_equal ~cmp:(cmp_list cmp) ~printer:(string_of_list f)
 
+let aeq_string_list = aeq_list (sprintf "%S")
+
 let shuffle l =
   let a = Array.of_list l in
   let n = ref (Array.length a) in

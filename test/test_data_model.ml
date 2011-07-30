@@ -7,10 +7,10 @@ open OUnit
 module D = Data_model
 
 let test_keyspace_management db =
-  aeq_list (sprintf "%S") [] (D.list_keyspaces db);
+  aeq_string_list [] (D.list_keyspaces db);
   let k1 = D.register_keyspace db "foo" in
   let k2 = D.register_keyspace db "bar" in
-    aeq_list (sprintf "%S") ["bar"; "foo";] (D.list_keyspaces db);
+    aeq_string_list ["bar"; "foo";] (D.list_keyspaces db);
     aeq_some D.keyspace_name k1 (D.get_keyspace db "foo");
     aeq_some D.keyspace_name k2 (D.get_keyspace db "bar");
     return ()
