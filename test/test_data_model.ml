@@ -41,21 +41,26 @@ let test_list_tables db =
     aeq_string_list [] (D.list_tables ks2);
     return ()
 
+
+let put tx tbl key l =
+  D.put_columns tx tbl key
+    (List.map column_without_timestamp l)
+
+let get_key_range ks ?first ?up_to tbl =
+  D.read_committed_transaction ks
+    (fun tx ->
+       D.get_keys_in_range tx tbl (DD.Key_range { DD.first; up_to }))
+
+let get_keys ks tbl l =
+  D.read_committed_transaction ks
+    (fun tx -> D.get_keys_in_range tx tbl (DD.Keys l))
+
 let test_get_keys_in_range_ranges db =
   let ks1 = D.register_keyspace db "test_get_keys_in_range_ranges" in
   let ks2 = D.register_keyspace db "test_get_keys_in_range_ranges2" in
 
-  let put tx tbl key l =
-    D.put_columns tx tbl key
-      (List.map column_without_timestamp l) in
-
-  let get_keys ks ?first ?up_to tbl =
-    D.read_committed_transaction ks
-      (fun tx ->
-         D.get_keys_in_range tx tbl (DD.Key_range { DD.first; up_to })) in
-
-    get_keys ks1 "tbl1" >|= aeq_string_list [] >>
-    get_keys ks2 "tbl1" >|= aeq_string_list [] >>
+    get_key_range ks1 "tbl1" >|= aeq_string_list [] >>
+    get_key_range ks2 "tbl1" >|= aeq_string_list [] >>
 
     D.read_committed_transaction ks1
       (fun tx ->
@@ -63,26 +68,26 @@ let test_get_keys_in_range_ranges db =
            (fun k -> put tx "tbl1" k ["name", k])
            ["a"; "ab"; "b"; "cde"; "d"; "e"; "f"; "g"]) >>
 
-    get_keys ks2 "tbl1" >|= aeq_string_list [] >>
-    get_keys ks1 "tbl1" >|=
+    get_key_range ks2 "tbl1" >|= aeq_string_list [] >>
+    get_key_range ks1 "tbl1" >|=
       aeq_string_list ["a"; "ab"; "b"; "cde"; "d"; "e"; "f"; "g"] >>
-    get_keys ks1 "tbl1" ~up_to:"c" >|=
+    get_key_range ks1 "tbl1" ~up_to:"c" >|=
       aeq_string_list ["a"; "ab"; "b"; ] >>
-    get_keys ks1 "tbl1" ~first:"c" ~up_to:"c" >|=
+    get_key_range ks1 "tbl1" ~first:"c" ~up_to:"c" >|=
       aeq_string_list [ ] >>
-    get_keys ks1 "tbl1" ~first:"c" ~up_to:"f"  >|=
+    get_key_range ks1 "tbl1" ~first:"c" ~up_to:"f"  >|=
       aeq_string_list [ "cde"; "d"; "e"; "f" ] >>
-    get_keys ks1 "tbl1" ~first:"b" >|=
+    get_key_range ks1 "tbl1" ~first:"b" >|=
       aeq_string_list [ "b"; "cde"; "d"; "e"; "f"; "g" ] >>
 
     D.read_committed_transaction ks1
       (fun tx ->
          put tx "tbl1" "fg" ["x", ""] >>
          put tx "tbl1" "x" ["x", ""] >>
-         get_keys ks1 "tbl1" ~first:"e" >|=
+         get_key_range ks1 "tbl1" ~first:"e" >|=
            aeq_string_list ~msg:"read updates in transaction"
              [ "e"; "f"; "fg"; "g"; "x" ] >>
-         get_keys ks1 "tbl1" ~first:"f" ~up_to:"g" >|=
+         get_key_range ks1 "tbl1" ~first:"f" ~up_to:"g" >|=
            aeq_string_list [ "f"; "fg"; "g"; ] >>
          begin try_lwt
            D.read_committed_transaction ks1
@@ -91,13 +96,13 @@ let test_get_keys_in_range_ranges db =
                 D.delete_columns tx "tbl1" "xx" ["x"] >>
                 put tx "tbl1" "fgh" ["x", ""] >>
                 put tx "tbl1" "xx" ["x", ""] >>
-                get_keys ks1 "tbl1" ~first:"f" >|=
+                get_key_range ks1 "tbl1" ~first:"f" >|=
                   aeq_string_list ~msg:"nested transactions"
                     [ "f"; "fgh"; "g"; "x"; "xx" ] >>
                 raise Exit)
          with Exit -> return ()
          end >>
-         get_keys ks1 "tbl1" ~first:"e" >|=
+         get_key_range ks1 "tbl1" ~first:"e" >|=
            aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
 
