@@ -3,11 +3,14 @@ USE_OCAMLFIND = true
 NATIVE_ENABLED = true
 BYTE_ENABLED = true
 
+OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread
 OCAMLFINDFLAGS += -syntax camlp4o
 OCAMLOPTFLAGS += -inline 100
 
 OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax
+
+setenv(CAML_LD_LIBRARY_PATH, $(absname $(file $(ROOT)/src/libs/ocaml-leveldb/src)))
 
 .SUBDIRS: src test
 

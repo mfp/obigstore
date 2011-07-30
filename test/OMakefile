@@ -3,8 +3,10 @@ OCAMLPACKS[] += unix threads oUnit
 
 OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
 	      -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src
+OCAML_BYTE_LINK_FLAGS =
 
 OCAMLINCLUDES += ../src
+
 OCAML_LIBS[] +=
     ../src/libs/ocaml-leveldb/src/leveldb
     ../src/ostore

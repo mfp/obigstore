@@ -8,8 +8,6 @@ OBJECTS[] =
 
 OCamlLibrary(ostore, $(OBJECTS))
 
-setenv(CAML_LD_LIBRARY_PATH, libs/ocaml-leveldb/src)
-
 toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
 	ocamlfind ocamlmktop \
 	    $(mapprefix -package, $(OCAMLPACKS)) \
