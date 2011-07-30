@@ -545,7 +545,7 @@ let get_slice tx table
                None -> Some key_data.Data.key
              | Some x -> Some (max x key_data.Data.key))
           None key_data_list
-      in (max_key, key_data_list)
+      in (max_key, List.rev key_data_list)
 
     | Data.Key_range { Data.first; up_to } ->
         let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =

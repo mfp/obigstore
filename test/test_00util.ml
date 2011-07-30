@@ -14,6 +14,8 @@ let string_of_option f = function
 
 let assert_failure_fmt fmt = Printf.ksprintf assert_failure fmt
 
+let aeq printer = assert_equal ~printer
+
 let aeq_int = assert_equal ~printer:(sprintf "%d")
 let aeq_bool = assert_equal ~printer:(sprintf "%b")
 let aeq_string = assert_equal ~printer:(sprintf "%S")

@@ -128,6 +128,62 @@ let test_get_keys_in_range_discrete db =
     with Exit -> return () end >>
     get_keys ks1 "tbl" ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"]
 
+let string_of_column c =
+  sprintf "{ name = %S; data = %S; }" c.DD.name c.DD.data
+
+let string_of_key_data kd =
+  sprintf "{ key = %S; last_column = %s; columns = %s }"
+    kd.DD.key (string_of_option (sprintf "%S") kd.DD.last_column)
+    (string_of_list string_of_column kd.DD.columns)
+
+let string_of_slice (last_key, l) =
+  sprintf "(%s, %s)"
+    (string_of_option (sprintf "%S") last_key)
+    (string_of_list string_of_key_data l)
+
+let aeq_slice = aeq string_of_slice
+
+let rd_col (name, data) =
+  { DD.name; data; timestamp = DD.No_timestamp }
+
+let test_get_slice_discrete db =
+  let ks = D.register_keyspace db "test_get_slice_discrete" in
+  let cols = List.map rd_col in
+    D.read_committed_transaction ks
+      (fun tx ->
+         put tx "tbl" "a" ["k", "kk"; "v", "vv"] >>
+         put tx "tbl" "b" ["k1", "kk1"; "v", "vv1"] >>
+         put tx "tbl" "c" ["k2", "kk2"; "w", "ww"]) >>
+
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
+           aeq_slice
+             (Some "c",
+              [{ DD.key = "a"; last_column = Some "v";
+                 columns = cols [ "k", "kk"; "v", "vv" ] };
+               { DD.key = "c"; last_column = Some "w";
+                 columns = cols [ "k2", "kk2"; "w", "ww" ] }]) >>
+         delete tx "tbl" "a" ["v"] >>
+         delete tx "tbl" "c" ["k2"] >>
+         put tx "tbl" "a" ["v2", "v2"] >>
+         D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
+           aeq_slice
+             (Some "c",
+              [{ DD.key = "a"; last_column = Some "v2";
+                 columns = cols [ "k", "kk"; "v2", "v2"; ] };
+               { DD.key = "c"; last_column = Some "w";
+                 columns = cols [ "w", "ww" ] }])) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" (DD.Keys ["a"; "c"]) DD.All_columns >|=
+           aeq_slice
+             (Some "c",
+              [{ DD.key = "a"; last_column = Some "v2";
+                 columns = cols [ "k", "kk"; "v2", "v2"; ] };
+               { DD.key = "c"; last_column = Some "w";
+                 columns = cols [ "w", "ww" ] }]))
+
 let with_db f () =
   let dir = make_temp_dir () in
   let db = D.open_db dir in
@@ -144,6 +200,7 @@ let tests =
     "list tables", test_list_tables;
     "get_keys_in_range ranges", test_get_keys_in_range_ranges;
     "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
+    "get_slice discrete", test_get_slice_discrete;
   ]
 
 let () =
