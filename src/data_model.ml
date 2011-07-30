@@ -298,7 +298,7 @@ let transaction_aux make_access ks f =
             added = M.empty; deleted = M.empty;
             access = make_access ks.ks_db.db; ks;
           } in
-        lwt y = f tx in
+        lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
         let b = L.Batch.make () in
         let datum_key = Bytea.create 13 in
           (* TODO: should iterate in Lwt monad so we can yield every once in a
@@ -333,9 +333,10 @@ let transaction_aux make_access ks f =
           return y
       end
     | Some parent_tx ->
-        let tx = { parent_tx with access = parent_tx.access
-                                  (* dummy field to get a copy of everything *)} in
-        lwt y = f tx in
+        (* we make a new access so as to honor repeatable_read_transaction
+         * nested in a read_committed_transaction *)
+        let tx = { parent_tx with access = make_access ks.ks_db.db } in
+        lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
           parent_tx.deleted_keys <- tx.deleted_keys;
           parent_tx.added <- tx.added;
           parent_tx.deleted <- tx.deleted;
