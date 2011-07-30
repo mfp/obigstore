@@ -115,20 +115,21 @@ struct
         ?key_buf ?key_len
         ?column_buf ?column_len
         datum_key len =
+    if datum_key.[0] <> '1' then false else
     let offset = ref (len - 1) in
     let c_len = decode_var_int_upto datum_key ~offset 0 in
     let k_len = decode_var_int_upto datum_key ~offset 0 in
-    let t_len = !offset - 5 - c_len - k_len in
+    let t_len = String.index_from datum_key 2 '\000' - 2 in
       if c_len + k_len + 5 > len then
         false
       else begin
         begin match table_buf, table_len with
             None, _ | _, None -> ()
           | Some b, Some l ->
-              if String.length !b < t_len then
-                b := String.create t_len;
-              String.blit datum_key 2 !b 0 t_len;
-              l := t_len
+                if String.length !b < t_len then
+                  b := String.create t_len;
+                String.blit datum_key 2 !b 0 t_len;
+                l := t_len
         end;
         begin match key_buf, key_len with
             None, _ | _, None -> ()
