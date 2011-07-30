@@ -188,6 +188,8 @@ let get_keyspace t ks_name =
     Some ({ ks_db = t; ks_name; ks_id = Hashtbl.find t.keyspaces ks_name })
   with Not_found -> None
 
+let keyspace_name ks = ks.ks_name
+
 let list_tables ks =
   let it = L.iterator ks.ks_db.db in
   let table_buf = ref "" in

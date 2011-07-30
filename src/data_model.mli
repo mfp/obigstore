@@ -49,6 +49,8 @@ val list_keyspaces : db -> string list
 val register_keyspace : db -> string -> keyspace
 val get_keyspace : db -> string -> keyspace option
 
+val keyspace_name : keyspace -> string
+
 val list_tables : keyspace -> Data.table list
 
 (** {2 Transactions} *)
