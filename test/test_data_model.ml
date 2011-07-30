@@ -48,10 +48,12 @@ let put tx tbl key l =
 
 let delete = D.delete_columns
 
+let key_range ?first ?up_to () = DD.Key_range { DD.first; up_to }
+
 let get_key_range ks ?first ?up_to tbl =
   D.read_committed_transaction ks
     (fun tx ->
-       D.get_keys_in_range tx tbl (DD.Key_range { DD.first; up_to }))
+       D.get_keys_in_range tx tbl (key_range ?first ?up_to ()))
 
 let get_keys ks tbl l =
   D.read_committed_transaction ks
@@ -188,6 +190,32 @@ let test_get_slice_discrete db =
               ["a", Some "v2", [ "k", "kk"; "v2", "v2"; ];
                "c", Some "w", [ "w", "ww" ]]))
 
+let test_get_slice_key_range db =
+  let ks = D.register_keyspace db "test_get_slice_key_range" in
+  let all = DD.All_columns in
+    put_slice ks "tbl"
+      [
+       "a", ["k", "kk"; "v", "vv"];
+       "b", ["k1", "kk1"; "v", "vv1"];
+       "c", ["k2", "kk2"; "w", "ww"];
+      ] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         let expect1 =
+           aeq_slice
+             (Some "b",
+              [ "a", Some "v", [ "k", "kk"; "v", "vv"; ];
+                "b", Some "v", [ "k1", "kk1"; "v", "vv1" ]])
+         in
+           D.get_slice tx "tbl" (key_range ~first:"a" ~up_to:"b" ()) all >|= expect1 >>
+           D.get_slice tx "tbl" (key_range ~up_to:"b" ()) all >|= expect1 >>
+           D.get_slice tx "tbl" (key_range ~first:"b" ~up_to:"c" ())
+             (DD.Columns ["k1"; "w"]) >|=
+             aeq_slice
+             (Some "c",
+              [ "b", Some "k1", [ "k1", "kk1" ];
+                "c", Some "w", [ "w", "ww" ] ]))
+
 let with_db f () =
   let dir = make_temp_dir () in
   let db = D.open_db dir in
@@ -205,6 +233,7 @@ let tests =
     "get_keys_in_range ranges", test_get_keys_in_range_ranges;
     "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
     "get_slice discrete", test_get_slice_discrete;
+    "get_slice key range", test_get_slice_key_range;
   ]
 
 let () =
