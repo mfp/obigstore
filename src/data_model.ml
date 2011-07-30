@@ -382,57 +382,58 @@ let exists_key tx table =
 
 let fold_over_data tx table f acc first up_to =
   let it = RA.iterator tx.access in
-    (* jump to first entry *)
-    begin match first with
-      None -> IT.seek_to_first it
-    | Some first ->
-        let k = Encoding.encode_datum_key_to_string tx.ks ~table ~key:first ~column:"" in
-          IT.seek it k 0 (String.length k)
-    end;
-    let buf = ref "" in
-    let table_buf = ref "" and table_len = ref 0 in
-    let key_buf = ref "" and key_len = ref 0 in
-    let column_buf = ref "" and column_len = ref 0 in
-    let past_upto = match up_to with
-        None -> (fun () -> false)
-      | Some k ->
-          (fun () ->
-             String_util.cmp_substrings
-               !key_buf 0 !key_len
-               k 0 (String.length k) > 0) in
 
-    let rec do_fold_over_data acc =
-      if not (IT.valid it) then
-        acc
-      else begin
-        let len = IT.fill_key it buf in
-          if not (Encoding.decode_datum_key
-                    ~table_buf ~table_len
-                    ~key_buf ~key_len
-                    ~column_buf ~column_len
-                    !buf len)
-          then acc (* if this happens, we must have hit the end of the data area *)
+  let buf = ref "" in
+  let table_buf = ref "" and table_len = ref 0 in
+  let key_buf = ref "" and key_len = ref 0 in
+  let column_buf = ref "" and column_len = ref 0 in
+  let past_upto = match up_to with
+      None -> (fun () -> false)
+    | Some k ->
+        (fun () ->
+           String_util.cmp_substrings
+             !key_buf 0 !key_len
+             k 0 (String.length k) > 0) in
+
+  let rec do_fold_over_data acc =
+    if not (IT.valid it) then
+      acc
+    else begin
+      let len = IT.fill_key it buf in
+        if not (Encoding.decode_datum_key
+                  ~table_buf ~table_len
+                  ~key_buf ~key_len
+                  ~column_buf ~column_len
+                  !buf len)
+        then acc (* if this happens, we must have hit the end of the data area *)
+        else begin
+          (* check that we're still in the table *)
+          if not (is_same_value table table_buf table_len) then
+            acc
+          (* check if we're past up_to *)
+          else if past_upto () then
+            acc
           else begin
-            (* check that we're still in the table *)
-            if not (is_same_value table table_buf table_len) then
-              acc
-            (* check if we're past up_to *)
-            else if past_upto () then
-              acc
-            else begin
-              match (f acc it ~key_buf ~key_len ~column_buf ~column_len)
-              with
-                  (* TODO: allow to
-                   * * skip key
-                   * * finish recursion
-                   * by using sum type like
-                   *   Skip_to_key of 'acc * key | Finish of 'acc
-                   * | Continue of 'a | Continue_no_next of 'a *)
-                  x -> IT.next it; do_fold_over_data x
-            end
-        end
+            match (f acc it ~key_buf ~key_len ~column_buf ~column_len)
+            with
+                (* TODO: allow to
+                 * * skip key
+                 * * finish recursion
+                 * by using sum type like
+                 *   Skip_to_key of 'acc * key | Finish of 'acc
+                 * | Continue of 'a | Continue_no_next of 'a *)
+                x -> IT.next it; do_fold_over_data x
+          end
       end
-    in do_fold_over_data acc
+    end in
+
+  (* jump to first entry *)
+  let first_datum_key =
+    Encoding.encode_datum_key_to_string tx.ks ~table
+      ~key:(Option.default "" first) ~column:""
+  in
+    IT.seek it first_datum_key 0 (String.length first_datum_key);
+    do_fold_over_data acc
 
 let get_keys_in_range tx table ?(max_keys = max_int) = function
     Data.Keys l ->
