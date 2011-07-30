@@ -68,13 +68,6 @@ struct
     else
       Some (String.slice ~first:2 k)
 
-  let table_data_prefix ks = function
-      None -> "1" ^ String_util.chr ks.ks_id
-    | Some tbl -> "1" ^ String_util.chr ks.ks_id ^ tbl ^ "\000"
-
-  let table_data_prefix_successor ks table =
-    table_data_prefix ks (Some table) ^ "\001"
-
   let rec decode_var_int_upto s ~offset prev =
     match Char.code s.[!offset] with
         n when n < 128 -> decr offset; n
@@ -101,9 +94,20 @@ struct
       Bytea.add_rev_vint dst (String.length key);
       Bytea.add_rev_vint dst (String.length column)
 
+  let encode_table_successor dst ks table =
+    encode_datum_key dst ks ~table ~key:"" ~column:"";
+    (* find the '\000' after the table name, increment it to \001 *)
+    let idx = String.index_from (Bytea.unsafe_string dst) 2 '\000' in
+      (Bytea.unsafe_string dst).[idx] <- '\001'
+
   let encode_datum_key_to_string ks ~table ~key ~column =
     let b = Bytea.create 13 in
       encode_datum_key b ks ~table ~key ~column;
+      Bytea.contents b
+
+  let encode_table_successor_to_string ks table =
+    let b = Bytea.create 13 in
+      encode_table_successor b ks table;
       Bytea.contents b
 
   let decode_datum_key
@@ -191,11 +195,12 @@ let list_tables ks =
   let jump_to_next_table () =
     match String.sub !table_buf 0 !table_len with
         "" ->
-          let prefix = Encoding.table_data_prefix ks None in
-            IT.seek it prefix 0 (String.length prefix);
+          let datum_key =
+            Encoding.encode_datum_key_to_string ks ~table:"" ~key:"" ~column:""
+          in IT.seek it datum_key 0 (String.length datum_key);
       | table ->
-          let prefix = Encoding.table_data_prefix_successor ks table in
-            IT.seek it prefix 0 (String.length prefix); in
+          let datum_key = Encoding.encode_table_successor_to_string ks table in
+            IT.seek it datum_key 0 (String.length datum_key); in
 
   let rec collect_tables acc =
     jump_to_next_table ();
