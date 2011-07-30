@@ -46,6 +46,8 @@ let put tx tbl key l =
   D.put_columns tx tbl key
     (List.map column_without_timestamp l)
 
+let delete = D.delete_columns
+
 let get_key_range ks ?first ?up_to tbl =
   D.read_committed_transaction ks
     (fun tx ->
@@ -105,6 +107,26 @@ let test_get_keys_in_range_ranges db =
          get_key_range ks1 "tbl1" ~first:"e" >|=
            aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
+let test_get_keys_in_range_discrete db =
+  let ks1 = D.register_keyspace db "test_get_keys_in_range_discrete" in
+    get_keys ks1 "tbl" ["a"; "b"] >|= aeq_string_list [] >>
+    D.read_committed_transaction ks1
+      (fun tx ->
+         Lwt_list.iter_s (fun k -> put tx "tbl" k ["x", ""])
+           [ "a"; "b"; "c"; "d" ]) >>
+    get_keys ks1 "tbl" ["a"; "b"; "d"] >|= aeq_string_list ["a"; "b"; "d"] >>
+    get_keys ks1 "tbl" ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"] >>
+    begin try_lwt
+      D.read_committed_transaction ks1
+        (fun tx ->
+           delete tx "tbl" "b" ["x"] >>
+           delete tx "tbl" "d" ["x"] >>
+           put tx "tbl" "x" ["x", ""] >>
+           get_keys ks1 "tbl" ["a"; "d"; "x"] >|=
+             aeq_string_list ~msg:"data in transaction" ["a"; "x" ] >>
+           raise Exit)
+    with Exit -> return () end >>
+    get_keys ks1 "tbl" ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"]
 
 let with_db f () =
   let dir = make_temp_dir () in
@@ -121,6 +143,7 @@ let tests =
     "keyspace management", test_keyspace_management;
     "list tables", test_list_tables;
     "get_keys_in_range ranges", test_get_keys_in_range_ranges;
+    "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
   ]
 
 let () =

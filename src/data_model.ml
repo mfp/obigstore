@@ -363,7 +363,9 @@ let exists_key tx table =
   let it = RA.iterator tx.access in
   let buf = ref "" in
   let table_buf = ref "" and table_len = ref 0 in
-  let key_buf = ref "" and key_len = ref 0
+  let key_buf = ref "" and key_len = ref 0 in
+  let column_buf = ref "" and column_len = ref 0 in
+  let deleted_col_tbl = M.find_default M.empty table tx.deleted
 
   in begin fun key ->
     Encoding.encode_datum_key datum_key tx.ks ~table ~key ~column:"";
@@ -374,12 +376,19 @@ let exists_key tx table =
       let len = IT.fill_key it buf in
       let ok =
         Encoding.decode_datum_key
-          ~table_buf ~table_len ~key_buf ~key_len !buf len
+          ~table_buf ~table_len ~key_buf ~key_len
+          ~column_buf ~column_len
+          !buf len
       in
         if not ok then false
         else
+          (* verify that it's the same table and key, and the column is not
+           * deleted *)
           is_same_value table table_buf table_len &&
-          is_same_value key key_buf key_len
+          is_same_value key key_buf key_len &&
+          (let col = String.sub !column_buf 0 !column_len in
+             not (M.find_default S.empty key deleted_col_tbl |>
+                  S.mem col))
     end
   end
 
