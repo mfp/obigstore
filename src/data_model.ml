@@ -357,6 +357,20 @@ let (|>) x f = f x
 let is_same_value v buf len =
   String.length v = !len && String_util.strneq v 0 !buf 0 !len
 
+let is_column_deleted tx table =
+  let deleted_col_table = tx.deleted |> M.find_default M.empty table in
+    begin fun ~key_buf ~key_len ~column_buf ~column_len ->
+      (* TODO: use substring sets to avoid allocation *)
+      let key =
+        if key_len = String.length key_buf then key_buf
+        else String.sub key_buf 0 key_len in
+      let col =
+        if column_len = String.length column_buf then column_buf
+        else String.sub column_buf 0 column_len
+      in
+        S.mem col (M.find_default S.empty key deleted_col_table)
+    end
+
 (* In [let f = exists_key tx table in ... f key], [f key] returns true iff
  * there's some column with the given key in the given [table]. *)
 let exists_key tx table =
@@ -366,7 +380,7 @@ let exists_key tx table =
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
-  let deleted_col_tbl = M.find_default M.empty table tx.deleted
+  let is_column_deleted = is_column_deleted tx table
 
   in begin fun key ->
     Encoding.encode_datum_key datum_key tx.ks ~table ~key ~column:"";
@@ -387,25 +401,10 @@ let exists_key tx table =
            * deleted *)
           is_same_value table table_buf table_len &&
           is_same_value key key_buf key_len &&
-          (let col = String.sub !column_buf 0 !column_len in
-             not (M.find_default S.empty key deleted_col_tbl |>
-                  S.mem col))
+          not (is_column_deleted ~key_buf:key ~key_len:(String.length key)
+                 ~column_buf:!column_buf ~column_len:!column_len)
     end
   end
-
-let is_column_deleted tx table =
-  let deleted_col_table = tx.deleted |> M.find_default M.empty table in
-    begin fun ~key_buf ~key_len ~column_buf ~column_len ->
-      (* TODO: use substring sets to avoid allocation *)
-      let key =
-        if key_len = String.length key_buf then key_buf
-        else String.sub key_buf 0 key_len in
-      let col =
-        if column_len = String.length column_buf then column_buf
-        else String.sub column_buf 0 column_len
-      in
-        S.mem col (M.find_default S.empty key deleted_col_table)
-    end
 
 let fold_over_data tx table f acc first up_to =
   let it = RA.iterator tx.access in
@@ -470,13 +469,13 @@ let get_keys_in_range tx table ?(max_keys = max_int) = function
       let s =
         S.filter
           (fun k ->
-             S.mem k (try M.find table tx.added_keys with Not_found -> S.empty) ||
+             S.mem k (M.find_default S.empty table tx.added_keys) ||
              exists_key k)
           s
       in List.take max_keys (S.to_list s)
   | Data.Key_range { Data.first; up_to } ->
       (* we recover all the keys added in the transaction *)
-      let s = (try M.find table tx.added_keys with Not_found -> S.empty) in
+      let s = M.find_default S.empty table tx.added_keys in
       let s = S.subset ?first ?up_to s in
       (* now s contains the added keys in the wanted range *)
       let deleted_keys = M.find_default S.empty table tx.deleted_keys in
