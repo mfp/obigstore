@@ -505,41 +505,44 @@ let get_slice tx table
     Data.Keys l ->
       let s = S.of_list l in
       let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
-      let key_data_list =
+      let key_data_list, _ =
         S.fold
-          (fun key key_data_list ->
-             let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
-               (* TODO: use substring sets and avoid allocating a string
-                * before the following checks *)
-               let col = String.sub !column_buf 0 !column_len in
-                 (* must skip deleted columns *)
-                 if is_column_deleted
-                      ~key_buf:key ~key_len:(String.length key)
-                      ~column_buf:!column_buf ~column_len:!column_len then
+          (fun key (key_data_list, keys_so_far) ->
+             if keys_so_far >= max_keys then (key_data_list, keys_so_far)
+             else
+               let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
+                 (* TODO: use substring sets and avoid allocating a string
+                  * before the following checks *)
+                 let col = String.sub !column_buf 0 !column_len in
+                   (* must skip deleted columns *)
+                   if is_column_deleted
+                        ~key_buf:key ~key_len:(String.length key)
+                        ~column_buf:!column_buf ~column_len:!column_len then
+                     m
+                   (* also skip non-selected columns *)
+                   else if not (column_selected col) then
+                     m
+                   (* otherwise, if the column is not deleted and is selected *)
+                   else begin
+                     let data = IT.get_value it in
+                       M.add col { Data.name = col; data; timestamp = Data.No_timestamp } m
+                   end in
+               let m = fold_over_data tx table fold_datum M.empty
+                         (Some key) (Some (key ^ "\000")) in
+               let m =
+                 M.fold
+                   (fun col data m ->
+                      M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m)
+                   (tx.added |>
+                    M.find_default M.empty table |> M.find_default M.empty key)
                    m
-                 (* also skip non-selected columns *)
-                 else if not (column_selected col) then
-                   m
-                 (* otherwise, if the column is not deleted and is selected *)
-                 else begin
-                   let data = IT.get_value it in
-                     M.add col { Data.name = col; data; timestamp = Data.No_timestamp } m
-                 end in
-             let m = fold_over_data tx table fold_datum M.empty
-                       (Some key) (Some (key ^ "\000")) in
-             let m =
-               M.fold
-                 (fun col data m ->
-                    M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m)
-                 (tx.added |>
-                  M.find_default M.empty table |> M.find_default M.empty key)
-                 m
-             in
-               try
-                 let last_column = fst (M.max_binding m) in
-                   { Data.key; last_column; columns = M.values m; } :: key_data_list
-               with Not_found -> key_data_list)
-          s [] in
+               in
+                 try
+                   let last_column = fst (M.max_binding m) in
+                     ({ Data.key; last_column; columns = M.values m; } :: key_data_list,
+                      keys_so_far + 1)
+                 with Not_found -> (key_data_list, keys_so_far))
+          s ([], 0) in
       let max_key =
         List.fold_left
           (fun max_key key_data -> match max_key with
@@ -586,15 +589,18 @@ let get_slice tx table
             (M.submap ?first ?up_to
                (M.find_default M.empty table tx.added))
             m in
-        let key_data_list =
+        let key_data_list, _ =
           M.fold
-            (fun key key_data l ->
-               try
-                 let last_column = fst (M.max_binding key_data) in
-                   { Data.key; last_column; columns = M.values key_data; } :: l
-               with Not_found -> l)
+            (fun key key_data (l, keys_so_far) ->
+               if keys_so_far >= max_keys then (l, keys_so_far)
+               else
+                 try
+                   let last_column = fst (M.max_binding key_data) in
+                     ({ Data.key; last_column; columns = M.values key_data; } :: l,
+                      keys_so_far + 1)
+                 with Not_found -> (l, keys_so_far))
             m
-            [] in
+            ([], 0) in
         let last_key = match key_data_list with
             { Data.key; _ } :: _ -> Some key
           | [] -> None
