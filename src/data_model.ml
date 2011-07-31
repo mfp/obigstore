@@ -600,6 +600,9 @@ let get_slice tx table
       in (max_key, List.rev key_data_list)
 
     | Data.Key_range { Data.first; up_to } ->
+        let keys_so_far = ref 0 in
+        let module T = struct exception Done of Data.column M.t M.t end in
+        let prev_key = Bytea.create 13 in
         let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
           (* TODO: use substring sets/maps and avoid allocating the following
            * unless we want the data *)
@@ -613,16 +616,33 @@ let get_slice tx table
               m
             else begin
               (* column not deleted, and selected *)
+              if String_util.cmp_substrings
+                   (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
+                   !key_buf 0 !key_len <> 0
+              then begin
+                (* new key, increment count and copy the key to prev_key *)
+                  incr keys_so_far;
+                  Bytea.clear prev_key;
+                  Bytea.add_substring prev_key !key_buf 0 !key_len;
+              end;
               let key = String.sub !key_buf 0 !key_len in
               let data = IT.get_value it in
               let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
               let key_data = M.find_default M.empty key m in
-                M.add key (M.add col col_data key_data) m
+              let m = M.add key (M.add col col_data key_data) m in
+                (* early termination w/o iterating over further keys if we
+                 * already have enough  *)
+                (* we cannot use >= because further columns for the same key
+                 * could follow *)
+                if !keys_so_far > max_keys then raise (T.Done m);
+                m
             end in
 
         (* m : key -> column_name -> column *)
-        let m = fold_over_data tx table fold_datum M.empty
-                  first up_to in
+        let m =
+          try fold_over_data tx table fold_datum M.empty first up_to
+          with T.Done m -> m in
+
         let m =
           M.fold
             (fun key key_data_in_mem m ->
