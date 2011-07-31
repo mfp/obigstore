@@ -2,6 +2,7 @@
 open Lwt
 
 module String = struct include String include BatString end
+module List = struct include BatList include List end
 module Option = BatOption
 module L = LevelDB
 module RA = L.Read_access
@@ -458,26 +459,35 @@ let get_keys_in_range tx table ?(max_keys = max_int) = function
              S.mem k (try M.find table tx.added_keys with Not_found -> S.empty) ||
              exists_key k)
           s
-      in S.to_list s
+      in List.take max_keys (S.to_list s)
   | Data.Key_range { Data.first; up_to } ->
       (* we recover all the keys added in the transaction *)
       let s = (try M.find table tx.added_keys with Not_found -> S.empty) in
       let s = S.subset ?first ?up_to s in
       (* now s contains the added keys in the wanted range *)
       let deleted_keys = M.find_default S.empty table tx.deleted_keys in
+      let module M = struct exception Finished of S.t end in
+      let keys_on_disk_kept = ref 0 in
       let fold_datum s it
             ~key_buf ~key_len
             ~column_buf ~column_len =
         (* TODO: optimize by caching previous key, ignoring new entry
          * if same key *)
-        let k = String.sub !key_buf 0 !key_len in
-          if S.mem k deleted_keys then s
-          else S.add k s
-        (* TODO: seek to the datum_key corresponding to a successor
-         * of the key when the key has been repeated more than
-         * THRESHOLD times. *)
+        if !keys_on_disk_kept >= max_keys then
+          raise (M.Finished s)
+        else
+          let k = String.sub !key_buf 0 !key_len in
+            if S.mem k deleted_keys then s
+            else begin
+              incr keys_on_disk_kept;
+              S.add k s
+            end
+          (* TODO: seek to the datum_key corresponding to a successor
+           * of the key when the key has been repeated more than
+           * THRESHOLD times. *)
       in
-        fold_over_data tx table fold_datum s first up_to |> S.to_list
+        (try fold_over_data tx table fold_datum s first up_to with M.Finished s -> s) |>
+        S.to_list |> List.take max_keys
 
 let get_keys_in_range tx table ?max_keys range =
   return (get_keys_in_range tx table ?max_keys range)

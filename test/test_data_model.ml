@@ -10,6 +10,37 @@ module D = Data_model
 module DD = D.Data
 module DU = D.Update
 
+let string_of_column c =
+  sprintf "{ name = %S; data = %S; }" c.DD.name c.DD.data
+
+let string_of_key_data kd =
+  sprintf "{ key = %S; last_column = %S; columns = %s }"
+    kd.DD.key kd.DD.last_column
+    (string_of_list string_of_column kd.DD.columns)
+
+let string_of_slice (last_key, l) =
+  sprintf "(%s, %s)"
+    (string_of_option (sprintf "%S") last_key)
+    (string_of_list string_of_key_data l)
+
+let rd_col (name, data) =
+  { DD.name; data; timestamp = DD.No_timestamp }
+
+let column_without_timestamp (name, data) =
+  { DU.name; data; timestamp = DU.No_timestamp }
+
+let put tx tbl key l =
+  D.put_columns tx tbl key
+    (List.map column_without_timestamp l)
+
+let delete = D.delete_columns
+
+let key_range ?first ?up_to () = DD.Key_range { DD.first; up_to }
+
+let put_slice ks tbl l =
+  D.read_committed_transaction ks
+    (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
+
 let test_keyspace_management db =
   aeq_string_list [] (D.list_keyspaces db);
   let k1 = D.register_keyspace db "foo" in
@@ -18,9 +49,6 @@ let test_keyspace_management db =
     aeq_some D.keyspace_name k1 (D.get_keyspace db "foo");
     aeq_some D.keyspace_name k2 (D.get_keyspace db "bar");
     return ()
-
-let column_without_timestamp (name, data) =
-  { DU.name; data; timestamp = DU.No_timestamp }
 
 let test_list_tables db =
   let ks1 = D.register_keyspace db "test_list_tables" in
@@ -43,19 +71,10 @@ let test_list_tables db =
     aeq_string_list [] (D.list_tables ks2);
     return ()
 
-
-let put tx tbl key l =
-  D.put_columns tx tbl key
-    (List.map column_without_timestamp l)
-
-let delete = D.delete_columns
-
-let key_range ?first ?up_to () = DD.Key_range { DD.first; up_to }
-
-let get_key_range ks ?first ?up_to tbl =
+let get_key_range ks ?max_keys ?first ?up_to tbl =
   D.read_committed_transaction ks
     (fun tx ->
-       D.get_keys_in_range tx tbl (key_range ?first ?up_to ()))
+       D.get_keys_in_range tx tbl ?max_keys (key_range ?first ?up_to ()))
 
 let get_keys ks tbl l =
   D.read_committed_transaction ks
@@ -132,25 +151,21 @@ let test_get_keys_in_range_discrete db =
     with Exit -> return () end >>
     get_keys ks1 "tbl" ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"]
 
-let string_of_column c =
-  sprintf "{ name = %S; data = %S; }" c.DD.name c.DD.data
-
-let string_of_key_data kd =
-  sprintf "{ key = %S; last_column = %S; columns = %s }"
-    kd.DD.key kd.DD.last_column
-    (string_of_list string_of_column kd.DD.columns)
-
-let string_of_slice (last_key, l) =
-  sprintf "(%s, %s)"
-    (string_of_option (sprintf "%S") last_key)
-    (string_of_list string_of_key_data l)
-
-let rd_col (name, data) =
-  { DD.name; data; timestamp = DD.No_timestamp }
-
-let put_slice ks tbl l =
-  D.read_committed_transaction ks
-    (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
+let test_get_keys_in_range_max_keys db =
+  let ks = D.register_keyspace db "test_get_keys_in_range_max_keys" in
+  let key_name i = sprintf "%03d" i in
+    put_slice ks "tbl"
+      (List.init 10 (fun i -> (key_name i, [ "x", "" ]))) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_key_range ks "tbl" >|=
+           aeq_string_list (List.init 10 key_name) >>
+         get_key_range ks "tbl" ~first:"002" ~max_keys:2 >|=
+           aeq_string_list ["002"; "003"] >>
+         get_key_range ks "tbl" ~up_to:"002" ~max_keys:5 >|=
+           aeq_string_list ["000"; "001"; "002"] >>
+         get_key_range ks "tbl" ~first:"008" ~max_keys:5 >|=
+           aeq_string_list ["008"; "009"])
 
 let aeq_slice ?msg (last_key, data) actual =
   aeq ?msg string_of_slice
@@ -389,6 +404,7 @@ let tests =
     "list tables", test_list_tables;
     "get_keys_in_range ranges", test_get_keys_in_range_ranges;
     "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
+    "get_keys_in_range honors max_keys", test_get_keys_in_range_max_keys;
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
     "get_slice honors max_keys", test_get_slice_max_keys;
