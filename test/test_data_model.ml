@@ -130,6 +130,22 @@ let test_get_keys_in_range_ranges db =
          get_key_range ks1 "tbl1" ~first:"e" >|=
            aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
+let test_get_keys_in_range_with_del_put db =
+  let ks = D.register_keyspace db "test_get_keys_in_range_with_del_put" in
+  let key_name i = sprintf "%03d" i in
+    get_key_range ks "tbl" >|= aeq_string_list [] >>
+    put_slice ks "tbl"
+      (List.init 5 (fun i -> (key_name i, [ "x", "" ]))) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_key_range ks "tbl" >|= aeq_string_list (List.init 5 key_name) >>
+         D.delete_key tx "tbl" "001" >>
+         D.delete_columns tx "tbl" "002" ["y"; "x"] >>
+         D.delete_columns tx "tbl" "003" ["y"; "x"] >>
+         put_slice ks "tbl" ["002", ["z", "z"]] >>
+         get_key_range ks "tbl" >|= aeq_string_list ["000"; "002"; "004"]) >>
+    get_key_range ks "tbl" >|= aeq_string_list ["000"; "002"; "004"]
+
 let test_get_keys_in_range_discrete db =
   let ks1 = D.register_keyspace db "test_get_keys_in_range_discrete" in
     get_keys ks1 "tbl" ["a"; "b"] >|= aeq_string_list [] >>
@@ -165,7 +181,16 @@ let test_get_keys_in_range_max_keys db =
          get_key_range ks "tbl" ~up_to:"002" ~max_keys:5 >|=
            aeq_string_list ["000"; "001"; "002"] >>
          get_key_range ks "tbl" ~first:"008" ~max_keys:5 >|=
-           aeq_string_list ["008"; "009"])
+           aeq_string_list ["008"; "009"] >>
+         D.delete_key tx "tbl" "001" >>
+         D.delete_columns tx "tbl" "003" ["x"] >>
+         D.delete_columns tx "tbl" "002" ["xxxx"] >>
+         get_key_range ks "tbl" ~max_keys:3 >|=
+           aeq_string_list ["000"; "002"; "004"]) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         get_key_range ks "tbl" ~max_keys:4 >|=
+           aeq_string_list ["000"; "002"; "004"; "005"])
 
 let aeq_slice ?msg (last_key, data) actual =
   aeq ?msg string_of_slice
@@ -405,6 +430,7 @@ let tests =
     "get_keys_in_range ranges", test_get_keys_in_range_ranges;
     "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
     "get_keys_in_range honors max_keys", test_get_keys_in_range_max_keys;
+    "get_keys_in_range with delete/put", test_get_keys_in_range_with_del_put;
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
     "get_slice honors max_keys", test_get_slice_max_keys;

@@ -393,6 +393,20 @@ let exists_key tx table =
     end
   end
 
+let is_column_deleted tx table =
+  let deleted_col_table = tx.deleted |> M.find_default M.empty table in
+    begin fun ~key_buf ~key_len ~column_buf ~column_len ->
+      (* TODO: use substring sets to avoid allocation *)
+      let key =
+        if key_len = String.length key_buf then key_buf
+        else String.sub key_buf 0 key_len in
+      let col =
+        if column_len = String.length column_buf then column_buf
+        else String.sub column_buf 0 column_len
+      in
+        S.mem col (M.find_default S.empty key deleted_col_table)
+    end
+
 let fold_over_data tx table f acc first up_to =
   let it = RA.iterator tx.access in
 
@@ -466,6 +480,7 @@ let get_keys_in_range tx table ?(max_keys = max_int) = function
       let s = S.subset ?first ?up_to s in
       (* now s contains the added keys in the wanted range *)
       let deleted_keys = M.find_default S.empty table tx.deleted_keys in
+      let is_column_deleted = is_column_deleted tx table in
       let module M = struct exception Finished of S.t end in
       let keys_on_disk_kept = ref 0 in
       let fold_datum s it
@@ -477,7 +492,14 @@ let get_keys_in_range tx table ?(max_keys = max_int) = function
           raise (M.Finished s)
         else
           let k = String.sub !key_buf 0 !key_len in
-            if S.mem k deleted_keys then s
+            if S.mem k deleted_keys then
+              s
+            (* check if the column has been deleted *)
+            else if is_column_deleted
+                      ~key_buf:!key_buf ~key_len:!key_len
+                      ~column_buf:!column_buf ~column_len:!column_len then
+              s
+            (* if neither the key nor the column were deleted *)
             else begin
               incr keys_on_disk_kept;
               S.add k s
@@ -499,17 +521,7 @@ let get_slice tx table
       Data.All_columns -> (fun c -> true)
     | Data.Columns l -> let s = S.of_list l in (fun c -> S.mem c s) in
 
-  let deleted_col_table = tx.deleted |> M.find_default M.empty table in
-
-  let is_column_deleted ~key_buf ~key_len ~column_buf ~column_len =
-    let key =
-      if key_len = String.length key_buf then key_buf
-      else String.sub key_buf 0 key_len in
-    let col =
-      if column_len = String.length column_buf then column_buf
-      else String.sub column_buf 0 column_len
-    in
-      S.mem col (M.find_default S.empty key deleted_col_table)
+  let is_column_deleted = is_column_deleted tx table
 
   in match key_range with
     Data.Keys l ->
@@ -687,4 +699,7 @@ let delete_key tx table key =
   match_lwt get_columns tx table key Data.All_columns with
       None -> return ()
     | Some (_, columns) ->
-        delete_columns tx table key (List.map (fun c -> c.Data.name) columns)
+        lwt () = delete_columns tx table key (List.map (fun c -> c.Data.name) columns) in
+          tx.deleted_keys <- M.update (fun s -> Some (S.add key s))
+                               S.empty table tx.deleted_keys;
+          return ()
