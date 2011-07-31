@@ -336,6 +336,25 @@ let test_get_slice_nested_transactions db =
                "b", "c2", ["c1", ""; "c2", ""];
                "c", "c2", ["c1", ""; "c2", ""]]))
 
+let test_get_slice_read_tx_data db =
+  let ks = D.register_keyspace db "test_get_slice_read_tx_data" in
+    put_slice ks "tbl" [ "a", ["0", ""; "1", ""]; "b", ["0", ""; "1", ""] ] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         put_slice ks "tbl" [ "a", ["00", ""]; "b", [ "10", ""] ] >>
+         D.get_slice tx "tbl" (key_range ()) DD.All_columns >|=
+           aeq_slice
+             (Some "b", ["a", "1", ["0", ""; "00", ""; "1", ""];
+                         "b", "10", ["0", ""; "1", ""; "10", ""]]) >>
+         D.get_slice tx "tbl" (key_range ()) (DD.Columns ["0"; "00"]) >|=
+           aeq_slice ~msg:"key range"
+             (Some "b", ["a", "00", ["0", ""; "00", ""];
+                         "b", "0", ["0", ""]]) >>
+         D.get_slice tx "tbl" (DD.Keys ["a"; "b"]) (DD.Columns ["0"; "00"]) >|=
+           aeq_slice ~msg:"discrete keys"
+             (Some "b", ["a", "00", ["0", ""; "00", ""];
+                         "b", "0", ["0", ""]]))
+
 let test_delete_key db =
   let ks = D.register_keyspace db "test_delete_key" in
   let get_all tx = D.get_slice tx "tbl" (key_range ()) DD.All_columns in
@@ -435,6 +454,7 @@ let tests =
     "get_slice key range", test_get_slice_key_range;
     "get_slice honors max_keys", test_get_slice_max_keys;
     "get_slice nested transactions", test_get_slice_nested_transactions;
+    "get_slice in open transaction", test_get_slice_read_tx_data;
     "put_columns", test_put_columns;
     "delete_key", test_delete_key;
     "delete_columns", test_delete_columns;

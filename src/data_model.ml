@@ -553,7 +553,9 @@ let get_slice tx table
                let m =
                  M.fold
                    (fun col data m ->
-                      M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m)
+                      if column_selected col then
+                        M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m
+                      else m)
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
                    m
@@ -602,8 +604,10 @@ let get_slice tx table
                let key_data' =
                  M.fold
                    (fun col data m ->
-                      let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
-                        M.add col col_data m)
+                      if column_selected col then
+                        let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
+                          M.add col col_data m
+                      else m)
                    key_data_in_mem
                    (M.find_default M.empty key m)
                in M.add key key_data' m)
