@@ -74,15 +74,15 @@ let test_list_tables db =
 let get_key_range ks ?max_keys ?first ?up_to tbl =
   D.read_committed_transaction ks
     (fun tx ->
-       D.get_keys_in_range tx tbl ?max_keys (key_range ?first ?up_to ()))
+       D.get_keys tx tbl ?max_keys (key_range ?first ?up_to ()))
 
 let get_keys ks tbl l =
   D.read_committed_transaction ks
-    (fun tx -> D.get_keys_in_range tx tbl (DD.Keys l))
+    (fun tx -> D.get_keys tx tbl (DD.Keys l))
 
-let test_get_keys_in_range_ranges db =
-  let ks1 = D.register_keyspace db "test_get_keys_in_range_ranges" in
-  let ks2 = D.register_keyspace db "test_get_keys_in_range_ranges2" in
+let test_get_keys_ranges db =
+  let ks1 = D.register_keyspace db "test_get_keys_ranges" in
+  let ks2 = D.register_keyspace db "test_get_keys_ranges2" in
 
     get_key_range ks1 "tbl1" >|= aeq_string_list [] >>
     get_key_range ks2 "tbl1" >|= aeq_string_list [] >>
@@ -130,8 +130,8 @@ let test_get_keys_in_range_ranges db =
          get_key_range ks1 "tbl1" ~first:"e" >|=
            aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
-let test_get_keys_in_range_with_del_put db =
-  let ks = D.register_keyspace db "test_get_keys_in_range_with_del_put" in
+let test_get_keys_with_del_put db =
+  let ks = D.register_keyspace db "test_get_keys_with_del_put" in
   let key_name i = sprintf "%03d" i in
     get_key_range ks "tbl" >|= aeq_string_list [] >>
     put_slice ks "tbl"
@@ -146,8 +146,8 @@ let test_get_keys_in_range_with_del_put db =
          get_key_range ks "tbl" >|= aeq_string_list ["000"; "002"; "004"]) >>
     get_key_range ks "tbl" >|= aeq_string_list ["000"; "002"; "004"]
 
-let test_get_keys_in_range_discrete db =
-  let ks1 = D.register_keyspace db "test_get_keys_in_range_discrete" in
+let test_get_keys_discrete db =
+  let ks1 = D.register_keyspace db "test_get_keys_discrete" in
     get_keys ks1 "tbl" ["a"; "b"] >|= aeq_string_list [] >>
     D.read_committed_transaction ks1
       (fun tx ->
@@ -167,8 +167,8 @@ let test_get_keys_in_range_discrete db =
     with Exit -> return () end >>
     get_keys ks1 "tbl" ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"]
 
-let test_get_keys_in_range_max_keys db =
-  let ks = D.register_keyspace db "test_get_keys_in_range_max_keys" in
+let test_get_keys_max_keys db =
+  let ks = D.register_keyspace db "test_get_keys_max_keys" in
   let key_name i = sprintf "%03d" i in
     put_slice ks "tbl"
       (List.init 10 (fun i -> (key_name i, [ "x", "" ]))) >>
@@ -427,10 +427,10 @@ let tests =
   [
     "keyspace management", test_keyspace_management;
     "list tables", test_list_tables;
-    "get_keys_in_range ranges", test_get_keys_in_range_ranges;
-    "get_keys_in_range discrete keys", test_get_keys_in_range_discrete;
-    "get_keys_in_range honors max_keys", test_get_keys_in_range_max_keys;
-    "get_keys_in_range with delete/put", test_get_keys_in_range_with_del_put;
+    "get_keys ranges", test_get_keys_ranges;
+    "get_keys discrete keys", test_get_keys_discrete;
+    "get_keys honors max_keys", test_get_keys_max_keys;
+    "get_keys with delete/put", test_get_keys_with_del_put;
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
     "get_slice honors max_keys", test_get_slice_max_keys;

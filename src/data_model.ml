@@ -461,7 +461,7 @@ let fold_over_data tx table f acc first up_to =
     IT.seek it first_datum_key 0 (String.length first_datum_key);
     do_fold_over_data acc
 
-let get_keys_in_range tx table ?(max_keys = max_int) = function
+let get_keys tx table ?(max_keys = max_int) = function
     Data.Keys l ->
       let exists_key = exists_key tx table in
       let s = S.of_list l in
@@ -510,8 +510,8 @@ let get_keys_in_range tx table ?(max_keys = max_int) = function
         (try fold_over_data tx table fold_datum s first up_to with M.Finished s -> s) |>
         S.to_list |> List.take max_keys
 
-let get_keys_in_range tx table ?max_keys range =
-  return (get_keys_in_range tx table ?max_keys range)
+let get_keys tx table ?max_keys range =
+  return (get_keys tx table ?max_keys range)
 
 let get_slice tx table
       ?(max_keys = max_int)

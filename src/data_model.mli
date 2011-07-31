@@ -64,7 +64,7 @@ val repeatable_read_transaction :
 
 (** {2 Read operations} *)
 
-val get_keys_in_range :
+val get_keys :
   transaction -> Data.table ->
   ?max_keys:int ->
   Data.key_range -> string list Lwt.t
