@@ -71,7 +71,7 @@ val get_keys :
 
 val get_slice :
   transaction -> Data.table ->
-  ?max_keys:int ->
+  ?max_keys:int -> ?max_columns:int ->
   Data.key_range -> Data.column_range -> Data.slice Lwt.t
 
 val get_columns :

@@ -299,6 +299,53 @@ let test_get_slice_max_keys db =
                       [ "001", "x", ["x", ""];
                         "002", "x", ["x", ""]]))
 
+let test_get_slice_max_columns db =
+  let ks = D.register_keyspace db "test_get_slice_max_columns" in
+    put_slice ks "tbl"
+      (List.init 10
+         (fun i -> (sprintf "%02d" i,
+                    List.init 10 (fun i -> string_of_int i, "")))) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:2
+           (key_range ()) DD.All_columns >|=
+           aeq_slice
+             (Some "01", ["00", "1", ["0", ""; "1", ""];
+                          "01", "1", ["0", ""; "1", ""]]) >>
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:1
+           (key_range ()) (DD.Columns ["2"; "1"]) >|=
+           aeq_slice
+             (Some "01", ["00", "1", ["1", ""]; "01", "1", ["1", ""]]) >>
+         D.delete_columns tx "tbl" "01" ["1"; "2"] >>
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:3
+           (key_range ()) (DD.Columns ["2"; "1"; "0"]) >|=
+           aeq_slice
+             (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
+                          "01", "0", ["0", ""]]) >>
+         put_slice ks "tbl" [ "01",  ["10", "a"; "11", "b"] ] >>
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:3
+           (key_range ()) DD.All_columns >|=
+           aeq_slice
+             (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
+                          "01", "11", ["0", ""; "10", "a"; "11", "b"]]) >>
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:3
+           (key_range ()) (DD.Columns ["2"; "1"; "0"]) >|=
+           aeq_slice ~msg:"all keys, Columns 2, 1, 0"
+             (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
+                          "01", "0", ["0", ""]])) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:3
+           (key_range ()) DD.All_columns >|=
+           aeq_slice
+             (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
+                          "01", "11", ["0", ""; "10", "a"; "11", "b"]]) >>
+         D.get_slice tx "tbl" ~max_keys:2 ~max_columns:3
+           (DD.Keys ["01"; "00"]) (DD.Columns ["2"; "1"; "0"; "10"]) >|=
+           aeq_slice
+             (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
+                          "01", "10", ["0", ""; "10", "a"]]))
+
 let test_get_slice_nested_transactions db =
   let ks = D.register_keyspace db "test_get_slice_nested_transactions" in
   let all = DD.All_columns in
@@ -455,6 +502,7 @@ let tests =
     "get_slice honors max_keys", test_get_slice_max_keys;
     "get_slice nested transactions", test_get_slice_nested_transactions;
     "get_slice in open transaction", test_get_slice_read_tx_data;
+    "get_slice honor max_columns", test_get_slice_max_columns;
     "put_columns", test_put_columns;
     "delete_key", test_delete_key;
     "delete_columns", test_delete_columns;

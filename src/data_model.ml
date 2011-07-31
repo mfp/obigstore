@@ -248,7 +248,23 @@ module M =
 struct
   include Map.Make(String)
   let find_default x k m = try find k m with Not_found -> x
-  let values m = List.rev (fold (fun _ v l -> v :: l) m [])
+
+  let rev_values m = fold (fun _ v l -> v :: l) m []
+  let values m = List.rev (rev_values m)
+
+  let rev_take_values (type a) n (m : a t) =
+    let module T = struct exception Done of a list end in
+    let p = ref 0 in
+      try
+        fold
+          (fun _ v l ->
+             incr p;
+             let l = v :: l in
+               if !p >= n then raise (T.Done l);
+               l)
+          m
+          []
+      with T.Done l -> l
 
   let submap ?first ?up_to m =
     (* trim entries before the first, if proceeds *)
@@ -515,6 +531,7 @@ let get_keys tx table ?max_keys range =
 
 let get_slice tx table
       ?(max_keys = max_int)
+      ?(max_columns = max_int)
       key_range column_range =
   let column_selected = match column_range with
       Data.All_columns -> (fun c -> true)
@@ -526,11 +543,13 @@ let get_slice tx table
     Data.Keys l ->
       let s = S.of_list l in
       let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
+      let module T = struct exception Done of Data.column M.t end in
       let key_data_list, _ =
         S.fold
           (fun key (key_data_list, keys_so_far) ->
              if keys_so_far >= max_keys then (key_data_list, keys_so_far)
              else
+               let columns_selected = ref 0 in
                let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
                  (* TODO: use substring sets and avoid allocating a string
                   * before the following checks *)
@@ -545,11 +564,18 @@ let get_slice tx table
                      m
                    (* otherwise, if the column is not deleted and is selected *)
                    else begin
+                     incr columns_selected;
                      let data = IT.get_value it in
-                       M.add col { Data.name = col; data; timestamp = Data.No_timestamp } m
+                     let timestamp = Data.No_timestamp in
+                     let m = M.add col { Data.name = col; data; timestamp; } m in
+                       if !columns_selected >= max_columns then raise (T.Done m);
+                       m
                    end in
-               let m = fold_over_data tx table fold_datum M.empty
-                         (Some key) (Some (key ^ "\000")) in
+               let m =
+                 try
+                   fold_over_data tx table fold_datum M.empty
+                     (Some key) (Some (key ^ "\000"))
+                 with T.Done m -> m in
                let m =
                  M.fold
                    (fun col data m ->
@@ -559,12 +585,11 @@ let get_slice tx table
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
                    m
-               in
-                 try
-                   let last_column = fst (M.max_binding m) in
-                     ({ Data.key; last_column; columns = M.values m; } :: key_data_list,
-                      keys_so_far + 1)
-                 with Not_found -> (key_data_list, keys_so_far))
+               in match M.rev_take_values max_columns m with
+                   [] -> (key_data_list, keys_so_far)
+                 | { Data.name = last_column; _ } :: _ as l ->
+                     ({ Data.key; last_column; columns = List.rev l } :: key_data_list,
+                      keys_so_far + 1))
           s ([], 0) in
       let max_key =
         List.fold_left
@@ -616,14 +641,13 @@ let get_slice tx table
             m in
         let key_data_list, _ =
           M.fold
-            (fun key key_data (l, keys_so_far) ->
-               if keys_so_far >= max_keys then (l, keys_so_far)
-               else
-                 try
-                   let last_column = fst (M.max_binding key_data) in
-                     ({ Data.key; last_column; columns = M.values key_data; } :: l,
-                      keys_so_far + 1)
-                 with Not_found -> (l, keys_so_far))
+            (fun key key_data (key_data_list, keys_so_far) ->
+               if keys_so_far >= max_keys then (key_data_list, keys_so_far)
+               else match M.rev_take_values max_columns key_data with
+                   [] -> (key_data_list, keys_so_far)
+                 | { Data.name = last_column; _ } :: _ as l ->
+                     ({ Data.key; last_column; columns = List.rev l; } :: key_data_list,
+                      keys_so_far + 1))
             m
             ([], 0) in
         let last_key = match key_data_list with
@@ -631,11 +655,11 @@ let get_slice tx table
           | [] -> None
         in (last_key, List.rev key_data_list)
 
-let get_slice tx table ?max_keys key_range column_range =
-  return (get_slice tx table ?max_keys key_range column_range)
+let get_slice tx table ?max_keys ?max_columns key_range column_range =
+  return (get_slice tx table ?max_keys ?max_columns key_range column_range)
 
-let get_columns tx table ?(max_columns = max_int) key column_range =
-  match_lwt get_slice tx table (Data.Keys [key]) column_range with
+let get_columns tx table ?max_columns key column_range =
+  match_lwt get_slice tx table ?max_columns (Data.Keys [key]) column_range with
     | (_, { Data.last_column = last_column;
             columns = ((_ :: _ as columns)) } :: _ ) ->
         return (Some (last_column, columns))
