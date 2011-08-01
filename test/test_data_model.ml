@@ -255,6 +255,18 @@ let aeq_slice ?msg (last_key, data) actual =
        data)
     actual
 
+let string_of_slice_columns (last_key, l) =
+  sprintf "(%s, %s)"
+    (string_of_option (sprintf "%S") last_key)
+    (string_of_list
+       (string_of_tuple2
+          (sprintf "%S")
+          (string_of_list (string_of_option (sprintf "%S"))))
+       l)
+
+let aeq_slice_columns ?msg x actual =
+  aeq ?msg string_of_slice_columns x actual
+
 let test_get_slice_discrete db =
   let ks = D.register_keyspace db "test_get_slice_discrete" in
     put_slice ks "tbl"
@@ -473,6 +485,32 @@ let test_get_slice_tricky_columns db =
          D.get_slice tx "tbl" (DD.Keys ["k\000"]) DD.All_columns >|=
            aeq_slice (Some "k\000", [ "k\000", "2", [ "2", "" ] ]))
 
+let test_get_slice_columns db =
+  let ks = D.register_keyspace db "test_get_slice_column " in
+  let add_data () =
+    put_slice ks "tbl"
+      [ "a", (List.init 10 (fun n -> (sprintf "%d" n, sprintf "a%d" n)));
+        "b", ["0", "b0"; "3", "b3"];
+        "c", ["1", "c1"] ] in
+  let assertions tx =
+    D.get_slice_columns tx "tbl" (DD.Keys ["a"; "b"]) ["0"; "1"] >|=
+      aeq_slice_columns
+        (Some "b", ["a", [Some "a0"; Some "a1"];
+                    "b", [Some "b0"; None]]) >>
+    D.get_slice_columns tx "tbl" (DD.Keys ["a"; "b"]) ["1"] >|=
+      aeq_slice_columns
+        (Some "b", ["a", [Some "a1"];
+                    "b", [None]]) >>
+    D.get_slice_columns tx "tbl" (key_range ()) ["0"; "2"] >|=
+      aeq_slice_columns
+        (Some "c", ["a", [Some "a0"; Some "a2"];
+                    "b", [Some "b0"; None];
+                    "c", [None; None]])
+  in
+    D.read_committed_transaction ks (fun tx -> add_data () >> assertions tx) >>
+    (* also after commit *)
+    D.read_committed_transaction ks assertions
+
 let test_delete_key db =
   let ks = D.register_keyspace db "test_delete_key" in
   let get_all tx = D.get_slice tx "tbl" (key_range ()) DD.All_columns in
@@ -576,6 +614,7 @@ let tests =
     "get_slice in open transaction", test_get_slice_read_tx_data;
     "get_slice honor max_columns", test_get_slice_max_columns;
     "get_slice correct iteration with tricky columns", test_get_slice_tricky_columns;
+    "get_slice_columns", test_get_slice_columns;
     "put_columns", test_put_columns;
     "delete_key", test_delete_key;
     "delete_columns", test_delete_columns;

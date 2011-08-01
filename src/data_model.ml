@@ -539,7 +539,9 @@ let get_keys tx table ?(max_keys = max_int) = function
 let get_keys tx table ?max_keys range =
   return (get_keys tx table ?max_keys range)
 
-let get_slice tx table
+let get_slice_aux
+      postproc_keydata get_keydata_key keep_columnless_keys
+      tx table
       ?(max_keys = max_int)
       ?(max_columns = max_int)
       key_range column_range =
@@ -594,19 +596,14 @@ let get_slice tx table
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
                    m
-               in match M.rev_take_values max_columns m with
-                   [] -> (key_data_list, keys_so_far)
-                 | { Data.name = last_column; _ } :: _ as l ->
-                     ({ Data.key; last_column; columns = List.rev l } :: key_data_list,
-                      keys_so_far + 1))
+               in match postproc_keydata key m with
+                   None -> (key_data_list, keys_so_far)
+                 | Some x -> (x :: key_data_list, keys_so_far + 1))
           s ([], 0) in
-      let max_key =
-        List.fold_left
-          (fun max_key key_data -> match max_key with
-               None -> Some key_data.Data.key
-             | Some x -> Some (max x key_data.Data.key))
-          None key_data_list
-      in (max_key, List.rev key_data_list)
+      let last_key = match key_data_list with
+          x :: _ -> Some (get_keydata_key x)
+        | [] -> None
+      in (last_key, List.rev key_data_list)
 
     | Data.Key_range { Data.first; up_to } ->
         let keys_so_far = ref 0 in
@@ -621,9 +618,13 @@ let get_slice tx table
                  ~column_buf:col ~column_len:(String.length col)
             then
               m
-            else if not (column_selected col) then
-              m
-            else begin
+            else if not (column_selected col) then begin
+              if keep_columnless_keys then
+                let key = String.sub !key_buf 0 !key_len in
+                  M.add key (M.find_default M.empty key m) m
+              else
+                m
+            end else begin
               (* column not deleted, and selected *)
               if String_util.cmp_substrings
                    (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
@@ -672,20 +673,48 @@ let get_slice tx table
           M.fold
             (fun key key_data (key_data_list, keys_so_far) ->
                if keys_so_far >= max_keys then (key_data_list, keys_so_far)
-               else match M.rev_take_values max_columns key_data with
-                   [] -> (key_data_list, keys_so_far)
-                 | { Data.name = last_column; _ } :: _ as l ->
-                     ({ Data.key; last_column; columns = List.rev l; } :: key_data_list,
-                      keys_so_far + 1))
+               else match postproc_keydata key key_data with
+                   None -> (key_data_list, keys_so_far)
+                 | Some x -> (x :: key_data_list, keys_so_far + 1))
             m
             ([], 0) in
         let last_key = match key_data_list with
-            { Data.key; _ } :: _ -> Some key
+            x :: _ -> Some (get_keydata_key x)
           | [] -> None
         in (last_key, List.rev key_data_list)
 
+let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range =
+  let postproc_keydata key m =
+    match M.rev_take_values max_columns m with
+        [] -> None
+      | { Data.name = last_column; _ } :: _ as l ->
+          Some ({ Data.key; last_column; columns = List.rev l }) in
+
+  let get_keydata_key { Data.key; _ } = key
+
+  in get_slice_aux postproc_keydata get_keydata_key false tx table
+      ?max_keys ~max_columns key_range column_range
+
+let get_slice_columns tx table ?max_keys key_range columns =
+  let postproc_keydata key m =
+    let l =
+      List.map
+        (fun column ->
+           try Some (M.find column m).Data.data
+           with Not_found -> None)
+        columns
+    in Some (key, l) in
+
+  let get_keydata_key (key, _) = key
+
+  in get_slice_aux postproc_keydata get_keydata_key true tx table
+       ?max_keys key_range (Data.Columns columns)
+
 let get_slice tx table ?max_keys ?max_columns key_range column_range =
   return (get_slice tx table ?max_keys ?max_columns key_range column_range)
+
+let get_slice_columns tx table ?max_keys key_range columns =
+  return (get_slice_columns tx table ?max_keys key_range columns)
 
 let get_columns tx table ?max_columns key column_range =
   match_lwt get_slice tx table ?max_columns (Data.Keys [key]) column_range with
