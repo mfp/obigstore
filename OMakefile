@@ -3,6 +3,8 @@ USE_OCAMLFIND = true
 NATIVE_ENABLED = true
 BYTE_ENABLED = true
 
+.SUBDIRS: src/libs/ocaml-leveldb
+
 OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread
 OCAMLFINDFLAGS += -syntax camlp4o
