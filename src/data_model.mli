@@ -77,14 +77,14 @@ val get_slice :
   ?max_keys:int -> ?max_columns:int ->
   Data.key_range -> Data.column_range -> Data.slice Lwt.t
 
-(** [get_slice_columns tx table key_range ["col1"; "col2"]]
+(** [get_slice_values tx table key_range ["col1"; "col2"]]
   * returns [Some last_key, l] if at least a key was selected, where [l] is
   * an associative list whose elements are pairs containing the key and a list
   * of value options corresponding to the requested columns (in the order they
-  * were given to [get_slice_columns]). A key is selected if:
+  * were given to [get_slice_values]). A key is selected if:
   * * it is specified in a [Data.Keys l] range
   * * it exists in the given [Data.Key_range r] range *)
-val get_slice_columns :
+val get_slice_values :
   transaction -> Data.table ->
   ?max_keys:int ->
   Data.key_range -> Data.column_name list ->

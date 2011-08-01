@@ -695,7 +695,7 @@ let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range
   in get_slice_aux postproc_keydata get_keydata_key false tx table
       ?max_keys ~max_columns key_range column_range
 
-let get_slice_columns tx table ?max_keys key_range columns =
+let get_slice_values tx table ?max_keys key_range columns =
   let postproc_keydata key m =
     let l =
       List.map
@@ -713,8 +713,8 @@ let get_slice_columns tx table ?max_keys key_range columns =
 let get_slice tx table ?max_keys ?max_columns key_range column_range =
   return (get_slice tx table ?max_keys ?max_columns key_range column_range)
 
-let get_slice_columns tx table ?max_keys key_range columns =
-  return (get_slice_columns tx table ?max_keys key_range columns)
+let get_slice_values tx table ?max_keys key_range columns =
+  return (get_slice_values tx table ?max_keys key_range columns)
 
 let get_columns tx table ?max_columns key column_range =
   match_lwt get_slice tx table ?max_columns (Data.Keys [key]) column_range with
@@ -724,7 +724,7 @@ let get_columns tx table ?max_columns key column_range =
     | _ -> return None
 
 let get_column_values tx table key columns =
-  match_lwt get_slice_columns tx table (Data.Keys [key]) columns with
+  match_lwt get_slice_values tx table (Data.Keys [key]) columns with
     | (_, (_, l):: _) -> return l
     | _ -> assert false
 
