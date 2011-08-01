@@ -723,6 +723,11 @@ let get_columns tx table ?max_columns key column_range =
         return (Some (last_column, columns))
     | _ -> return None
 
+let get_column_values tx table key columns =
+  match_lwt get_slice_columns tx table (Data.Keys [key]) columns with
+    | (_, (_, l):: _) -> return l
+    | _ -> assert false
+
 let get_column tx table key column_name =
   match_lwt get_columns tx table key (Data.Columns [column_name]) with
       Some (_, c :: _) -> return (Some (c.Data.data, c.Data.timestamp))

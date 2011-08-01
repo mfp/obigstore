@@ -92,7 +92,12 @@ val get_columns :
   transaction -> Data.table ->
   ?max_columns:int ->
   Data.key -> Data.column_range ->
-  (Data.column_name * Data.column list) option Lwt.t
+  (Data.column_name * (Data.column list)) option Lwt.t
+
+val get_column_values :
+  transaction -> Data.table ->
+  Data.key -> Data.column_name list ->
+  string option list Lwt.t
 
 val get_column :
   transaction -> Data.table ->

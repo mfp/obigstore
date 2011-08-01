@@ -511,6 +511,27 @@ let test_get_slice_columns db =
     (* also after commit *)
     D.read_committed_transaction ks assertions
 
+let test_get_column_values db =
+  let ks = D.register_keyspace db "test_get_column_values" in
+  let aeq ?msg =
+    aeq ?msg (string_of_list (string_of_option (sprintf "%S")))
+  in
+    put_slice ks "tbl"
+      [ "a", [ "0", ""; "1", "1"; "3", "" ] ] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_column_values tx "tbl" "a" ["1"; "2"; "0"] >|=
+           aeq [Some "1"; None; Some ""] >>
+         D.get_column_values tx "tbl" "b" ["1"] >|=
+           aeq [None] >>
+         put_slice ks "tbl" [ "b", [ "1", "b1" ] ] >>
+         D.get_column_values tx "tbl" "b" ["1"; "2"] >|=
+           aeq [Some "b1"; None]) >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_column_values tx "tbl" "b" ["1"; "2"] >|=
+           aeq [Some "b1"; None])
+
 let test_delete_key db =
   let ks = D.register_keyspace db "test_delete_key" in
   let get_all tx = D.get_slice tx "tbl" (key_range ()) DD.All_columns in
@@ -615,6 +636,7 @@ let tests =
     "get_slice honor max_columns", test_get_slice_max_columns;
     "get_slice correct iteration with tricky columns", test_get_slice_tricky_columns;
     "get_slice_columns", test_get_slice_columns;
+    "get_column_values", test_get_column_values;
     "put_columns", test_put_columns;
     "delete_key", test_delete_key;
     "delete_columns", test_delete_columns;
