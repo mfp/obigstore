@@ -81,7 +81,9 @@ val get_slice :
   * returns [Some last_key, l] if at least a key was selected, where [l] is
   * an associative list whose elements are pairs containing the key and a list
   * of value options corresponding to the requested columns (in the order they
-  * were given to [get_slice_columns]). *)
+  * were given to [get_slice_columns]). A key is selected if:
+  * * it is specified in a [Data.Keys l] range
+  * * it exists in the given [Data.Key_range r] range *)
 val get_slice_columns :
   transaction -> Data.table ->
   ?max_keys:int ->
@@ -94,6 +96,9 @@ val get_columns :
   Data.key -> Data.column_range ->
   (Data.column_name * (Data.column list)) option Lwt.t
 
+(** [get_column_values tx table key columns] returns the data associated to
+  * the given [columns] (if existent). If [key] doesn't exist (that is, it has
+  * got no associated columns), all the values will be [None]. *)
 val get_column_values :
   transaction -> Data.table ->
   Data.key -> Data.column_name list ->
