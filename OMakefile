@@ -3,6 +3,8 @@ USE_OCAMLFIND = true
 NATIVE_ENABLED = true
 BYTE_ENABLED = true
 
+.PHONY: clean
+
 .SUBDIRS: src/libs/ocaml-leveldb
 
 OCAMLCFLAGS += -g
@@ -15,8 +17,6 @@ OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax
 setenv(CAML_LD_LIBRARY_PATH, $(absname $(file $(ROOT)/src/libs/ocaml-leveldb/src)))
 
 .SUBDIRS: src test
-
-.PHONY: clean
 
 clean:
 	rm -f $(filter-proper-targets $(ls R, .))
