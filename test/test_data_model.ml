@@ -456,6 +456,23 @@ let test_get_slice_read_tx_data db =
              (Some "b", ["a", "00", ["0", ""; "00", ""];
                          "b", "0", ["0", ""]]))
 
+(* check that iteration over datum keys is performed correctly
+ *   key "foo"  column "\0001"
+ * should precede
+ *   key "foo\000" column "0"
+ * *)
+let test_get_slice_tricky_columns db =
+  let ks = D.register_keyspace db "test_get_slice_tricky_columns" in
+    put_slice ks "tbl"
+      [ "k", [ "\0003", "" ];
+        "k\000", [ "2", "" ] ] >>
+    D.read_committed_transaction ks
+      (fun tx ->
+         D.get_slice tx "tbl" (DD.Keys ["k"]) DD.All_columns >|=
+           aeq_slice (Some "k", [ "k", "\0003", [ "\0003", "" ] ]) >>
+         D.get_slice tx "tbl" (DD.Keys ["k\000"]) DD.All_columns >|=
+           aeq_slice (Some "k\000", [ "k\000", "2", [ "2", "" ] ]))
+
 let test_delete_key db =
   let ks = D.register_keyspace db "test_delete_key" in
   let get_all tx = D.get_slice tx "tbl" (key_range ()) DD.All_columns in
@@ -558,6 +575,7 @@ let tests =
     "get_slice nested transactions", test_get_slice_nested_transactions;
     "get_slice in open transaction", test_get_slice_read_tx_data;
     "get_slice honor max_columns", test_get_slice_max_columns;
+    "get_slice correct iteration with tricky columns", test_get_slice_tricky_columns;
     "put_columns", test_put_columns;
     "delete_key", test_delete_key;
     "delete_columns", test_delete_columns;
