@@ -560,12 +560,7 @@ let get_slice tx table
              if keys_so_far >= max_keys then (key_data_list, keys_so_far)
              else
                let columns_selected = ref 0 in
-               let wanted_key_len = String.length key in
                let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
-                 if !key_len <> wanted_key_len then
-                   (* this is an entry for the key successor   key ^ "\000"
-                    * so the iteration is finished *)
-                   raise (T.Done m);
                  (* TODO: use substring sets and avoid allocating a string
                   * before the following checks *)
                  let col = String.sub !column_buf 0 !column_len in
@@ -588,8 +583,7 @@ let get_slice tx table
                    end in
                let m =
                  try
-                   fold_over_data tx table fold_datum M.empty
-                     (Some key) (Some (key ^ "\000"))
+                   fold_over_data tx table fold_datum M.empty (Some key) (Some key)
                  with T.Done m -> m in
                let m =
                  M.fold
