@@ -17,6 +17,13 @@ type db =
 
 type keyspace = { ks_db : db; ks_name : string; ks_id : int }
 
+external custom_comparator_ : unit ->  L.comparator = "ostore_custom_comparator"
+
+let custom_comparator = custom_comparator_ ()
+
+external apply_custom_comparator : string -> string -> int =
+  "ostore_apply_custom_comparator"
+
 module Data =
 struct
   type table = string
@@ -69,37 +76,30 @@ struct
     else
       Some (String.slice ~first:2 k)
 
-  let rec decode_var_int_upto s ~offset prev =
-    match Char.code s.[!offset] with
-        n when n < 128 -> decr offset; n
-      | n -> decr offset;
-             decode_var_int_upto s ~offset
-               ((prev lsl 7) lor (n land 0x7f))
-
   (* datum key format:
-   * '1' uint8(keyspace) asciiz(table) stringz(key) stringz(column)
-   * rev_var_int(key_len) rev_var_int(col_len)
+   * '1' uint8(keyspace) string(table) string(key) string(column)
+   * var_int(key_len) var_int(col_len) uint8(tbl_len)
+   * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
    * *)
 
   let encode_datum_key dst ks ~table ~key ~column =
     Bytea.clear dst;
     Bytea.add_char dst '1';
     Bytea.add_byte dst ks.ks_id;
-    let add_strz dst s =
-      Bytea.add_string dst s;
-      Bytea.add_byte dst 0
-    in
-      add_strz dst table;
-      add_strz dst key;
-      add_strz dst column;
-      Bytea.add_rev_vint dst (String.length key);
-      Bytea.add_rev_vint dst (String.length column)
+      Bytea.add_string dst table;
+      Bytea.add_string dst key;
+      Bytea.add_string dst column;
+      let off = Bytea.length dst in
+        Bytea.add_vint dst (String.length key);
+        let klen_len = Bytea.length dst - off in
+        let off = Bytea.length dst in
+          Bytea.add_vint dst (String.length column);
+          let clen_len = Bytea.length dst - off in
+            Bytea.add_byte dst (String.length table);
+            Bytea.add_byte dst ((klen_len lsl 3) lor clen_len)
 
   let encode_table_successor dst ks table =
-    encode_datum_key dst ks ~table ~key:"" ~column:"";
-    (* find the '\000' after the table name, increment it to \001 *)
-    let idx = String.index_from (Bytea.unsafe_string dst) 2 '\000' in
-      (Bytea.unsafe_string dst).[idx] <- '\001'
+    encode_datum_key dst ks ~table:(table ^ "\000") ~key:"" ~column:""
 
   let encode_datum_key_to_string ks ~table ~key ~column =
     let b = Bytea.create 13 in
@@ -111,17 +111,27 @@ struct
       encode_table_successor b ks table;
       Bytea.contents b
 
+  let decode_var_int_at s off =
+    let rec loop s off shift n =
+      match Char.code s.[off] with
+          m when m > 128 ->
+            loop s (off + 1) (shift + 7) (n lor ((m land 0x7F) lsl shift))
+        | m -> n lor (m lsl shift)
+    in loop s off 0 0
+
   let decode_datum_key
         ?table_buf ?table_len
         ?key_buf ?key_len
         ?column_buf ?column_len
         datum_key len =
     if datum_key.[0] <> '1' then false else
-    let offset = ref (len - 1) in
-    let c_len = decode_var_int_upto datum_key ~offset 0 in
-    let k_len = decode_var_int_upto datum_key ~offset 0 in
-    let t_len = String.index_from datum_key 2 '\000' - 2 in
-      if c_len + k_len + 5 > len then
+    let last_byte = Char.code datum_key.[len - 1] in
+    let clen_len = last_byte land 0x7 in
+    let klen_len = (last_byte lsr 3) land 0x7 in (* safer *)
+    let t_len = Char.code datum_key.[len - 2] in
+    let c_len = decode_var_int_at datum_key (len - 2 - clen_len) in
+    let k_len = decode_var_int_at datum_key (len - 2 - clen_len - klen_len) in
+      if 2 + t_len + c_len + k_len + clen_len + klen_len + 1 + 1 <> len then
         false
       else begin
         begin match table_buf, table_len with
@@ -137,7 +147,7 @@ struct
           | Some b, Some l ->
               if String.length !b < k_len then
                 b := String.create k_len;
-              String.blit datum_key (t_len + 3) !b 0 k_len;
+              String.blit datum_key (2 + t_len) !b 0 k_len;
               l := k_len
         end;
         begin match column_buf, column_len with
@@ -145,7 +155,7 @@ struct
           | Some b, Some l ->
               if String.length !b < c_len then
                 b := String.create c_len;
-              String.blit datum_key (t_len + k_len + 4) !b 0 c_len;
+              String.blit datum_key (2 + t_len + k_len) !b 0 c_len;
               l := c_len
         end;
         true
@@ -166,7 +176,7 @@ let read_keyspaces db =
     h
 
 let open_db basedir =
-  let db = L.open_db basedir in
+  let db = L.open_db ~comparator:custom_comparator basedir in
     { basedir; db; keyspaces = read_keyspaces db; }
 
 let close_db t = L.close t.db

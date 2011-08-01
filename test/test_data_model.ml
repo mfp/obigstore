@@ -41,6 +41,60 @@ let put_slice ks tbl l =
   D.read_committed_transaction ks
     (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
 
+let test_custom_comparator db =
+  let ks = D.register_keyspace db "test_custom_comparator" in
+  let ks2 = D.register_keyspace db "test_custom_comparator2" in
+
+  let encode ks (table, key, column) =
+    let b = Bytea.create 13 in
+      D.Encoding.encode_datum_key b ks ~table ~key ~column;
+      Bytea.contents b in
+  let cmp ks1 a ks2 b = D.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
+  let printer (tbl, key, col) =
+    sprintf "{ table = %S; key = %S; column = %S }" tbl key col in
+  let ksname () ks = D.keyspace_name ks in
+  let aeq ?(ks1 = ks) ?(ks2 = ks) a b =
+              match cmp ks1 a ks2 b with
+        0 -> ()
+      | n -> assert_failure_fmt
+               "Expected equality for %a:%s vs %a:%s, got %d"
+               ksname ks1 (printer a) ksname ks2 (printer b) n in
+  let alt ?(ks1 = ks) ?(ks2 = ks) a b =
+    match cmp ks1 a ks2 b with
+        n when n < 0 -> ()
+      | n -> assert_failure_fmt
+               "Expected LT for %a:%s vs %a:%s, got %d"
+               ksname ks1 (printer a) ksname ks2 (printer b) n in
+  let agt ?(ks1 = ks) ?(ks2 = ks) a b =
+    match cmp ks1 a ks2 b with
+        n when n > 0 -> ()
+      | n -> assert_failure_fmt
+               "Expected GT for %a:%s vs %a:%s, got %d"
+               ksname ks1 (printer a) ksname ks2 (printer b) n in
+  let agt ?ks1 ?ks2 a b =
+    aeq ?ks1 ?ks2:ks1 a a;
+    aeq ?ks1 ?ks2:ks1 b b;
+    aeq ?ks1:ks2 ?ks2 b b;
+    aeq ?ks1:ks2 ?ks2 a a;
+    agt ?ks1 ?ks2 a b;
+    alt ?ks1:ks2 ?ks2:ks1 b a
+  in
+    agt ~ks1:ks2 ("", "", "") ("", "", "");
+    agt ~ks1:ks2 ("", "", "") ("x", "", "");
+    agt ~ks1:ks2 ("a", "b", "c") ("a", "b", "d");
+    agt ~ks1:ks2 ("a", "b", "c") ("a", "c", "c");
+    agt ~ks1:ks2 ("a", "b", "c") ("b", "b", "c");
+    agt ("x", "", "") ("a", "", "");
+    agt ("", "x", "") ("", "", "");
+    agt ("", "x", "") ("", "", "");
+    agt ("\000", "", "") ("", "", "");
+    agt ("\000", "", "") ("", "\000", "");
+    agt ("\000", "", "") ("", "\000", "b");
+    agt ("1", "\000", "") ("1", "", "\000");
+    agt ("1", "1\000", "") ("1", "1", "\000");
+    agt ("tbl", "k\000", "2") ("tbl", "k", "\0003");
+    return ()
+
 let test_keyspace_management db =
   aeq_string_list [] (D.list_keyspaces db);
   let k1 = D.register_keyspace db "foo" in
@@ -491,6 +545,7 @@ let test_with_db f = with_db f
 let tests =
   List.map (fun (n, f) -> n >:: test_with_db f)
   [
+    "custom comparator", test_custom_comparator;
     "keyspace management", test_keyspace_management;
     "list tables", test_list_tables;
     "get_keys ranges", test_get_keys_ranges;

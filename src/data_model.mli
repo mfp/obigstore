@@ -95,3 +95,12 @@ val delete_columns :
 
 val delete_key : transaction -> Data.table -> Data.key -> unit Lwt.t
 
+(** / *)
+
+val apply_custom_comparator : string -> string -> int
+
+module Encoding :
+sig
+  val encode_datum_key : Bytea.t -> keyspace ->
+    table:string -> key:string -> column:string -> unit
+end

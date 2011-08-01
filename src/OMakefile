@@ -1,12 +1,24 @@
 
 OCAMLINCLUDES += libs/ocaml-leveldb/src
 
+CFLAGS += -g -Wall -O2 -Ilibs/ocaml-leveldb/leveldb/include -fPIC
+
+%.o: %.c
+	$(OCAMLC) -cc g++ $(mapprefix -ccopt, $(CFLAGS)) -c $^
+
 OBJECTS[] =
   bytea
-  data_model
   string_util
+  data_model
 
-OCamlLibrary(ostore, $(OBJECTS))
+ostore_stubs.o: ostore_stubs.cc
+
+ostore.cma ostore.a ostore.cmxa: ostore_stubs.o \
+    $(addsuffixes .cmo .cmx, $(OBJECTS))
+	ocamlmklib -verbose -oc camlostore -o ostore \
+	    ostore_stubs.o \
+	    $(OCamlLinkSort $(addsuffixes .cmo, $(OBJECTS))) \
+	    $(OCamlLinkSort $(addsuffixes .cmx, $(OBJECTS)))
 
 toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
 	ocamlfind ocamlmktop \
