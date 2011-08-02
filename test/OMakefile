@@ -12,9 +12,10 @@ OCAML_LIBS[] +=
     ../src/ostore
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
+OCamlProgram(benchmark_data_model, test_00util benchmark_data_model)
 
 .PHONY: test
 test: test.opt
 	./test.opt -verbose
 
-.DEFAULT: test.opt
+.DEFAULT: test$(EXE) benchmark_data_model$(EXE)
