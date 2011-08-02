@@ -232,6 +232,12 @@ let list_tables ks =
 
   in List.rev (collect_tables [])
 
+let table_size_on_disk ks table =
+  L.get_approximate_size ks.ks_db.db
+    (Encoding.encode_datum_key_to_string ks ~table ~key:"" ~column:"")
+    (Encoding.encode_datum_key_to_string ks ~table
+       ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255")
+
 module S =
 struct
   include Set.Make(String)

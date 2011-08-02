@@ -58,6 +58,9 @@ val keyspace_name : keyspace -> string
 
 val list_tables : keyspace -> Data.table list
 
+(** @return approximate size on disk of the data for the given table. *)
+val table_size_on_disk : keyspace -> Data.table -> Int64.t
+
 (** {2 Transactions} *)
 type transaction
 
