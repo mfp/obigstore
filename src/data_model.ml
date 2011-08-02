@@ -623,6 +623,7 @@ let get_slice_aux
         let keys_so_far = ref 0 in
         let module T = struct exception Done of Data.column M.t M.t end in
         let prev_key = Bytea.create 13 in
+        let ncols = ref 0 in
         let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
           (* TODO: use substring sets/maps and avoid allocating the following
            * unless we want the data *)
@@ -645,10 +646,15 @@ let get_slice_aux
                    !key_buf 0 !key_len <> 0
               then begin
                 (* new key, increment count and copy the key to prev_key *)
+                  ncols := 0;
                   incr keys_so_far;
                   Bytea.clear prev_key;
                   Bytea.add_substring prev_key !key_buf 0 !key_len;
               end;
+              (* see if we already have enough columns for this key*)
+              if !ncols >= max_columns then m else
+
+              let () = incr ncols in
               let key = String.sub !key_buf 0 !key_len in
               let data = IT.get_value it in
               let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
