@@ -35,11 +35,11 @@ let bm_put_columns ?(iters=10000) ?(batch_size=1000) make_row ks ~table =
   in return (insert_time -. overhead)
 
 let make_row_dummy ?(avg_cols=10) () =
-  (sprintf "%d%d" (Random.int 0x3FFFFFF) (Random.int 0x3FFFFFF),
-   List.init
-     (1 + Random.int (avg_cols/2))
-     (fun i ->
-        mk_col ~name:(sprintf "col%d" i) (string_of_int (Random.int 0x3FFFFFF))))
+  let c = if avg_cols > 1 then 1 + Random.int (avg_cols*2) else 1 in
+    (sprintf "%d%d" (Random.int 0x3FFFFFF) (Random.int 0x3FFFFFF),
+     List.init c
+       (fun i ->
+          mk_col ~name:(sprintf "col%d" i) (string_of_int (Random.int 0x3FFFFFF))))
 
 let row_data_size (key, cols) =
   String.length key +
