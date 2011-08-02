@@ -20,6 +20,10 @@ sig
 
   type slice = key option * key_data list (** last_key * data *)
 
+  (** Range representing elements between [first] (inclusive) and [up_to]
+    * (exclusive). If [first] is not provided, the range starts with the first
+    * available element; likewise, if [up_to] is not provided, the elements
+    * until the last one are selected. *)
   type range =
     {
       first : string option;

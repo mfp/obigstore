@@ -35,7 +35,11 @@ let put tx tbl key l =
 
 let delete = D.delete_columns
 
-let key_range ?first ?up_to () = DD.Key_range { DD.first; up_to }
+let key_range ?first ?last () =
+  let up_to = match last with
+      None -> None
+    | Some l -> Some (l ^ "\000")
+  in DD.Key_range { DD.first; up_to; }
 
 let put_slice ks tbl l =
   D.read_committed_transaction ks
@@ -125,10 +129,10 @@ let test_list_tables db =
     aeq_string_list [] (D.list_tables ks2);
     return ()
 
-let get_key_range ks ?max_keys ?first ?up_to tbl =
+let get_key_range ks ?max_keys ?first ?last tbl =
   D.read_committed_transaction ks
     (fun tx ->
-       D.get_keys tx tbl ?max_keys (key_range ?first ?up_to ()))
+       D.get_keys tx tbl ?max_keys (key_range ?first ?last ()))
 
 let get_keys ks tbl l =
   D.read_committed_transaction ks
@@ -150,11 +154,11 @@ let test_get_keys_ranges db =
     get_key_range ks2 "tbl1" >|= aeq_string_list [] >>
     get_key_range ks1 "tbl1" >|=
       aeq_string_list ["a"; "ab"; "b"; "cde"; "d"; "e"; "f"; "g"] >>
-    get_key_range ks1 "tbl1" ~up_to:"c" >|=
+    get_key_range ks1 "tbl1" ~last:"c" >|=
       aeq_string_list ["a"; "ab"; "b"; ] >>
-    get_key_range ks1 "tbl1" ~first:"c" ~up_to:"c" >|=
+    get_key_range ks1 "tbl1" ~first:"c" ~last:"c" >|=
       aeq_string_list [ ] >>
-    get_key_range ks1 "tbl1" ~first:"c" ~up_to:"f"  >|=
+    get_key_range ks1 "tbl1" ~first:"c" ~last:"f"  >|=
       aeq_string_list [ "cde"; "d"; "e"; "f" ] >>
     get_key_range ks1 "tbl1" ~first:"b" >|=
       aeq_string_list [ "b"; "cde"; "d"; "e"; "f"; "g" ] >>
@@ -166,7 +170,7 @@ let test_get_keys_ranges db =
          get_key_range ks1 "tbl1" ~first:"e" >|=
            aeq_string_list ~msg:"read updates in transaction"
              [ "e"; "f"; "fg"; "g"; "x" ] >>
-         get_key_range ks1 "tbl1" ~first:"f" ~up_to:"g" >|=
+         get_key_range ks1 "tbl1" ~first:"f" ~last:"g" >|=
            aeq_string_list [ "f"; "fg"; "g"; ] >>
          begin try_lwt
            D.read_committed_transaction ks1
@@ -232,7 +236,7 @@ let test_get_keys_max_keys db =
            aeq_string_list (List.init 10 key_name) >>
          get_key_range ks "tbl" ~first:"002" ~max_keys:2 >|=
            aeq_string_list ["002"; "003"] >>
-         get_key_range ks "tbl" ~up_to:"002" ~max_keys:5 >|=
+         get_key_range ks "tbl" ~last:"002" ~max_keys:5 >|=
            aeq_string_list ["000"; "001"; "002"] >>
          get_key_range ks "tbl" ~first:"008" ~max_keys:5 >|=
            aeq_string_list ["008"; "009"] >>
@@ -315,9 +319,9 @@ let test_get_slice_key_range db =
               [ "a", "v", [ "k", "kk"; "v", "vv"; ];
                 "b", "v", [ "k1", "kk1"; "v", "vv1" ]])
          in
-           D.get_slice tx "tbl" (key_range ~first:"a" ~up_to:"b" ()) all >|= expect1 >>
-           D.get_slice tx "tbl" (key_range ~up_to:"b" ()) all >|= expect1 >>
-           D.get_slice tx "tbl" (key_range ~first:"b" ~up_to:"c" ())
+           D.get_slice tx "tbl" (key_range ~first:"a" ~last:"b" ()) all >|= expect1 >>
+           D.get_slice tx "tbl" (key_range ~last:"b" ()) all >|= expect1 >>
+           D.get_slice tx "tbl" (key_range ~first:"b" ~last:"c" ())
              (DD.Columns ["k1"; "w"]) >|=
              aeq_slice
              (Some "c",

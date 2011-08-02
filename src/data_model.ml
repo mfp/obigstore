@@ -245,12 +245,12 @@ struct
       | Some first ->
           let _, found, after = split first s in
             if found then add first after else after in
-    (* trim entries after the last, if proceeds *)
+    (* trim entries starting from up_to if proceeds *)
     let s = match up_to with
         None -> s
       | Some last ->
-          let before, found, _ = split last s in
-            if found then add last before else before
+          let before, _, _ = split last s in
+            before
     in s
 end
 
@@ -285,14 +285,12 @@ struct
             match found with
                 Some v -> add first v after
               | None -> after in
-    (* trim entries after the last, if proceeds *)
+    (* trim entries starting with up_to, if proceeds *)
     let m = match up_to with
         None -> m
       | Some last ->
-          let before, found, _ = split last m in
-            match found with
-                Some v -> add last v before
-              | None -> before
+          let before, _, _ = split last m in
+            before
     in m
 
   let maybe_max_binding m =
@@ -439,13 +437,13 @@ let fold_over_data tx table f acc first up_to =
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
-  let past_upto = match up_to with
+  let at_or_past_upto = match up_to with
       None -> (fun () -> false)
     | Some k ->
         (fun () ->
            String_util.cmp_substrings
              !key_buf 0 !key_len
-             k 0 (String.length k) > 0) in
+             k 0 (String.length k) >= 0) in
 
   let rec do_fold_over_data acc =
     if not (IT.valid it) then
@@ -462,8 +460,8 @@ let fold_over_data tx table f acc first up_to =
           (* check that we're still in the table *)
           if not (is_same_value table table_buf table_len) then
             acc
-          (* check if we're past up_to *)
-          else if past_upto () then
+          (* check if we're at or past up_to *)
+          else if at_or_past_upto () then
             acc
           else begin
             match (f acc it ~key_buf ~key_len ~column_buf ~column_len)
@@ -585,7 +583,8 @@ let get_slice_aux
                    end in
                let m =
                  try
-                   fold_over_data tx table fold_datum M.empty (Some key) (Some key)
+                   fold_over_data tx table fold_datum M.empty
+                     (Some key) (Some (key ^ "\000"))
                  with T.Done m -> m in
                let m =
                  M.fold
