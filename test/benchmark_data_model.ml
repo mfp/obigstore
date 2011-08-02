@@ -45,6 +45,10 @@ let row_data_size (key, cols) =
   String.length key +
   List.fold_left (fun s c -> s + String.length c.D.Update.data) 0 cols
 
+let row_data_size_with_colnames (key, cols) =
+  row_data_size (key, cols) +
+  List.fold_left (fun s c -> s + String.length c.D.Update.name) 0 cols
+
 let () =
   let db = Data_model.open_db (Test_00util.make_temp_dir ()) in
   let avg_cols = 10 in
@@ -58,17 +62,23 @@ let () =
            (i * 10000) ((i + 1) * 10000) dt (float 10000 /. dt)
            (D.table_size_on_disk ks "dummy")
     done;
-    let avg_row_size =
+    let compute_avg_size f =
       float
         (List.fold_left
-           (fun s r -> s + row_data_size r)
+           (fun s r -> s + f r)
            0 (List.init 1000 (fun _ -> make_row_dummy ~avg_cols ()))) /.
       1000.  in
+    let avg_row_size = compute_avg_size row_data_size in
+    let avg_row_size' = compute_avg_size row_data_size_with_colnames in
     let size_on_disk = D.table_size_on_disk ks "dummy" in
     let total_data_size = avg_row_size *. 200000. in
+    let total_data_size' = avg_row_size' *. 200000. in
       printf "\nData:       %9Ld bytes  excluding colum names\n\
+               \            %9Ld bytes  with column names\n\
                 Table size: %9Ld bytes\n\
-                Ratio:      %9.2f\n"
+                Ratio:      %9.2f  %9.2f\n"
         (Int64.of_float total_data_size)
+        (Int64.of_float total_data_size')
         size_on_disk
         (Int64.to_float size_on_disk /. total_data_size)
+        (Int64.to_float size_on_disk /. total_data_size')
