@@ -37,6 +37,7 @@ sig
   type column_range =
       All_columns
     | Columns of string list
+    | Column_range of range
 end
 
 module Update :

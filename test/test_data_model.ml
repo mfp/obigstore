@@ -41,6 +41,14 @@ let key_range ?first ?last () =
     | Some l -> Some (l ^ "\000")
   in DD.Key_range { DD.first; up_to; }
 
+let col_range ?first ?last ?up_to () =
+  let up_to = match up_to with
+      Some _ as x -> x
+    | None -> match last with
+          None -> None
+        | Some x -> Some (x ^ "\000")
+  in DD.Column_range { DD.first; up_to; }
+
 let put_slice ks tbl l =
   D.read_committed_transaction ks
     (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
@@ -416,6 +424,35 @@ let test_get_slice_max_columns db =
              (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
                           "01", "10", ["0", ""; "10", "a"]]))
 
+let test_get_slice_column_ranges db =
+  let ks = D.register_keyspace db "test_get_slice_column_ranges" in
+  let expect tx =
+    D.get_slice tx "tbl" ~max_keys:1
+      (key_range ~first:"02" ~last:"03" ())
+      (col_range ~first:"5" ~last:"6" ()) >|=
+    aeq_slice (Some "02", ["02", "6", ["5", ""; "6", ""]]) >>
+    D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
+      (key_range ~first:"02" ())
+      (col_range ~first:"5" ~last:"6" ()) >|=
+    aeq_slice (Some "02", ["02", "5", ["5", ""]]) >>
+    D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
+      (key_range ~first:"02" ())
+      (col_range ~first:"50" ~last:"6" ()) >|=
+        aeq_slice (Some "02", ["02", "6", ["6", ""]]) >>
+    D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
+      (key_range ~first:"02" ())
+      (col_range ~first:"7" ~last:"6" ()) >|=
+        aeq_slice (None, [])
+  in
+    D.read_committed_transaction ks
+      (fun tx ->
+         put_slice ks "tbl"
+           (List.init 10
+              (fun i -> (sprintf "%02d" i,
+                         List.init 10 (fun i -> string_of_int i, "")))) >>
+         expect tx) >>
+    D.read_committed_transaction ks expect
+
 let test_get_slice_nested_transactions db =
   let ks = D.register_keyspace db "test_get_slice_nested_transactions" in
   let all = DD.All_columns in
@@ -638,6 +675,7 @@ let tests =
     "get_slice nested transactions", test_get_slice_nested_transactions;
     "get_slice in open transaction", test_get_slice_read_tx_data;
     "get_slice honor max_columns", test_get_slice_max_columns;
+    "get_slice with column ranges", test_get_slice_column_ranges;
     "get_slice correct iteration with tricky columns", test_get_slice_tricky_columns;
     "get_slice_values", test_get_slice_values;
     "get_column_values", test_get_column_values;

@@ -53,6 +53,7 @@ struct
   type column_range =
       All_columns
     | Columns of string list
+    | Column_range of range
 end
 
 module Update =
@@ -545,7 +546,15 @@ let get_slice_aux
       key_range column_range =
   let column_selected = match column_range with
       Data.All_columns -> (fun c -> true)
-    | Data.Columns l -> let s = S.of_list l in (fun c -> S.mem c s) in
+    | Data.Columns l -> let s = S.of_list l in (fun c -> S.mem c s)
+    | Data.Column_range r ->
+        let cmp_first = match r.Data.first with
+            None -> (fun c -> true)
+          | Some x -> (fun c -> String.compare c x >= 0) in
+        let cmp_up_to = match r.Data.up_to with
+            None -> (fun c -> true)
+          | Some x -> (fun c -> String.compare c x < 0)
+        in (fun c -> cmp_first c && cmp_up_to c) in
 
   let is_column_deleted = is_column_deleted tx table
 
