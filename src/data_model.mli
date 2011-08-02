@@ -94,6 +94,8 @@ val get_slice_values :
   Data.key_range -> Data.column_name list ->
   (Data.key option * (Data.key * string option list) list) Lwt.t
 
+(** @return [Some last_column_name, column_list] if any column exists for the
+  * selected key, [None] otherwise. *)
 val get_columns :
   transaction -> Data.table ->
   ?max_columns:int ->
