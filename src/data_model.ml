@@ -400,14 +400,21 @@ let is_column_deleted tx table =
   let deleted_col_table = tx.deleted |> M.find_default M.empty table in
     begin fun ~key_buf ~key_len ~column_buf ~column_len ->
       (* TODO: use substring sets to avoid allocation *)
-      let key =
-        if key_len = String.length key_buf then key_buf
-        else String.sub key_buf 0 key_len in
-      let col =
-        if column_len = String.length column_buf then column_buf
-        else String.sub column_buf 0 column_len
-      in
-        S.mem col (M.find_default S.empty key deleted_col_table)
+      if M.is_empty deleted_col_table then
+        false
+      else begin
+        let key =
+          if key_len = String.length key_buf then key_buf
+          else String.sub key_buf 0 key_len in
+        let deleted_cols = M.find_default S.empty key deleted_col_table in
+          if S.is_empty deleted_cols then
+            false
+          else
+            let col =
+              if column_len = String.length column_buf then column_buf
+              else String.sub column_buf 0 column_len
+            in S.mem col deleted_cols
+      end
     end
 
 (* In [let f = exists_key tx table in ... f key], [f key] returns true iff
