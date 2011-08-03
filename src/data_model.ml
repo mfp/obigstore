@@ -633,48 +633,50 @@ let get_slice_aux
         let prev_key = Bytea.create 13 in
         let ncols = ref 0 in
         let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
+          if String_util.cmp_substrings
+               (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
+               !key_buf 0 !key_len <> 0
+          then begin
+            (* new key, increment count and copy the key to prev_key *)
+              ncols := 0;
+              incr keys_so_far;
+              Bytea.clear prev_key;
+              Bytea.add_substring prev_key !key_buf 0 !key_len;
+          end;
+          (* see if we already have enough columns for this key*)
+          if !ncols >= max_columns then m else
+
           (* TODO: use substring sets/maps and avoid allocating the following
            * unless we want the data *)
           let col = String.sub !column_buf 0 !column_len in
-            if is_column_deleted
-                 ~key_buf:!key_buf ~key_len:!key_len
-                 ~column_buf:col ~column_len:(String.length col)
-            then
-              m
-            else if not (column_selected col) then begin
-              if keep_columnless_keys then
-                let key = String.sub !key_buf 0 !key_len in
-                  M.add key (M.find_default M.empty key m) m
-              else
-                m
-            end else begin
-              (* column not deleted, and selected *)
-              if String_util.cmp_substrings
-                   (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
-                   !key_buf 0 !key_len <> 0
-              then begin
-                (* new key, increment count and copy the key to prev_key *)
-                  ncols := 0;
-                  incr keys_so_far;
-                  Bytea.clear prev_key;
-                  Bytea.add_substring prev_key !key_buf 0 !key_len;
-              end;
-              (* see if we already have enough columns for this key*)
-              if !ncols >= max_columns then m else
 
-              let () = incr ncols in
+          if not (column_selected col) then begin
+            (* need only add it the first time we get a non-selected col *)
+            if !ncols = 0 && keep_columnless_keys then
               let key = String.sub !key_buf 0 !key_len in
-              let data = IT.get_value it in
-              let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
-              let key_data = M.find_default M.empty key m in
-              let m = M.add key (M.add col col_data key_data) m in
-                (* early termination w/o iterating over further keys if we
-                 * already have enough  *)
-                (* we cannot use >= because further columns for the same key
-                 * could follow *)
-                if !keys_so_far > max_keys then raise (T.Done m);
-                m
-            end in
+                M.add key (M.find_default M.empty key m) m
+            else
+              m
+          end else if is_column_deleted
+             ~key_buf:!key_buf ~key_len:!key_len
+             ~column_buf:!column_buf ~column_len:!column_len
+          then
+            m
+          else begin
+            let () = incr ncols in
+            let key = String.sub !key_buf 0 !key_len in
+            let data = IT.get_value it in
+            let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
+            let key_data = M.find_default M.empty key m in
+            let m = M.add key (M.add col col_data key_data) m in
+              (* early termination w/o iterating over further keys if we
+               * already have enough  *)
+              (* we cannot use >= because further columns for the same key
+               * could follow *)
+              if !keys_so_far > max_keys then raise (T.Done m);
+              m
+          end
+        in
 
         (* m : key -> column_name -> column *)
         let m =
