@@ -556,6 +556,43 @@ let get_keys tx table ?(max_keys = max_int) = function
 let get_keys tx table ?max_keys range =
   return (get_keys tx table ?max_keys range)
 
+let merge_rev cmp l1 l2 =
+  let rec loop_merge_rev cmp acc l1 l2 =
+    match l1, l2 with
+        [], [] -> acc
+      | [], x :: tl | x :: tl, [] -> loop_merge_rev cmp (x :: acc) [] tl
+      | x1 :: tl1, x2 :: tl2 ->
+          match cmp x1 x2 with
+              n when n > 0 -> loop_merge_rev cmp (x1 :: acc) tl1 l2
+            | n when n < 0 -> loop_merge_rev cmp (x2 :: acc) l1 tl2
+            | _ -> loop_merge_rev cmp (x2 :: acc) tl1 tl2
+  in loop_merge_rev cmp [] l1 l2
+
+let filter_map_merge cmp map merge ~limit l1 l2 =
+
+  let rec loop_fmm cmp f g acc l1 l2 = function
+      n when n > 0 -> begin
+        match l1, l2 with
+            [], [] -> acc
+          | [], x :: tl | x :: tl, [] ->
+              (match f x with None -> loop_fmm cmp f g acc [] tl n
+                 | Some y -> loop_fmm cmp f g (y :: acc) [] tl (n-1))
+          | x1 :: tl1, x2 :: tl2 -> match cmp x1 x2 with
+                m when m < 0 ->
+                  (match f x1 with None -> loop_fmm cmp f g acc tl1 l2 n
+                     | Some y -> loop_fmm cmp f g (y :: acc) tl1 l2 (n-1))
+              | m when m > 0 ->
+                  (match f x2 with None -> loop_fmm cmp f g acc l1 tl2 n
+                     | Some y -> loop_fmm cmp f g (y :: acc) l1 tl2 (n-1))
+              | _ ->
+                  (match f (g x1 x2) with None -> loop_fmm cmp f g acc tl1 tl2 n
+                     | Some y -> loop_fmm cmp f g (y :: acc) tl1 tl2 (n-1))
+      end
+    | _ -> acc
+
+  in loop_fmm cmp map merge [] l1 l2 limit
+
+
 let get_slice_aux
       postproc_keydata get_keydata_key keep_columnless_keys
       tx table
@@ -598,47 +635,55 @@ let get_slice_aux
     Data.Keys l ->
       let s = S.of_list l in
       let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
-      let module T = struct exception Done of Data.column M.t end in
+      let module T = struct exception Done of Data.column list end in
       let key_data_list, _ =
         S.fold
           (fun key (key_data_list, keys_so_far) ->
              if keys_so_far >= max_keys then (key_data_list, keys_so_far)
              else
                let columns_selected = ref 0 in
-               let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
+               let fold_datum rev_cols it ~key_buf ~key_len ~column_buf ~column_len =
                  (* must skip deleted columns *)
                  if is_column_deleted
                       ~key_buf:key ~key_len:(String.length key)
                       ~column_buf:!column_buf ~column_len:!column_len then
-                   m
+                   rev_cols
                  (* also skip non-selected columns *)
                  else if not (column_selected !column_buf !column_len) then
-                   m
+                   rev_cols
                  (* otherwise, if the column is not deleted and is selected *)
                  else begin
                    incr columns_selected;
                    let data = IT.get_value it in
                    let col = String.sub !column_buf 0 !column_len in
                    let timestamp = Data.No_timestamp in
-                   let m = M.add col { Data.name = col; data; timestamp; } m in
-                     if !columns_selected >= max_columns then raise (T.Done m);
-                     m
+                   let rev_cols = { Data.name = col; data; timestamp; } :: rev_cols in
+                     if !columns_selected >= max_columns then raise (T.Done rev_cols);
+                     rev_cols
                  end in
-               let m =
+
+               let rev_cols1 =
                  try
-                   fold_over_data tx table fold_datum M.empty
+                   fold_over_data tx table fold_datum []
                      (Some key) (Some (key ^ "\000"))
-                 with T.Done m -> m in
-               let m =
+                 with T.Done l -> l in
+
+               let rev_cols2 =
                  M.fold
-                   (fun col data m ->
+                   (fun col data l ->
                       if column_selected col (String.length col) then
-                        M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m
-                      else m)
+                        { Data.name = col; data; timestamp = Data.No_timestamp} :: l
+                      else l)
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
-                   m
-               in match postproc_keydata key m with
+                   [] in
+
+               let cols =
+                 merge_rev
+                   (fun c1 c2 -> String.compare c1.Data.name c2.Data.name)
+                   rev_cols1 rev_cols2
+
+               in match postproc_keydata (key, List.rev cols) with
                    None -> (key_data_list, keys_so_far)
                  | Some x -> (x :: key_data_list, keys_so_far + 1))
           s ([], 0) in
@@ -648,94 +693,127 @@ let get_slice_aux
       in (last_key, List.rev key_data_list)
 
     | Data.Key_range { Data.first; up_to } ->
+        let module T = struct
+          exception Done of ((string * Data.column list) list * Data.column list)
+        end in
+
+        let first_pass = ref true in
         let keys_so_far = ref 0 in
-        let module T = struct exception Done of Data.column M.t M.t end in
         let prev_key = Bytea.create 13 in
         let ncols = ref 0 in
-        let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
-          if String_util.cmp_substrings
-               (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
-               !key_buf 0 !key_len <> 0
-          then begin
-            (* new key, increment count and copy the key to prev_key *)
-              ncols := 0;
-              incr keys_so_far;
-              Bytea.clear prev_key;
-              Bytea.add_substring prev_key !key_buf 0 !key_len;
-          end;
-          (* see if we already have enough columns for this key*)
-          if !ncols >= max_columns then m else
 
-          if not (column_selected !column_buf !column_len) then begin
-            (* need only add it the first time we get a non-selected col *)
-            if !ncols = 0 && keep_columnless_keys then
-              let key = String.sub !key_buf 0 !key_len in
-                M.add key (M.find_default M.empty key m) m
-            else
-              m
-          end else if is_column_deleted
-             ~key_buf:!key_buf ~key_len:!key_len
-             ~column_buf:!column_buf ~column_len:!column_len
-          then
-            m
-          else begin
-            let () = incr ncols in
-            let key = String.sub !key_buf 0 !key_len in
-            let data = IT.get_value it in
-            let col = String.sub !column_buf 0 !column_len in
-            let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
-            let key_data = M.find_default M.empty key m in
-            let m = M.add key (M.add col col_data key_data) m in
-              (* early termination w/o iterating over further keys if we
-               * already have enough  *)
-              (* we cannot use >= because further columns for the same key
-               * could follow *)
-              if !keys_so_far > max_keys then raise (T.Done m);
-              m
-          end
+        let fold_datum ((key_data_list, key_data) as acc)
+              it ~key_buf ~key_len ~column_buf ~column_len =
+          let ((key_data_list, key_data) as acc) =
+            if String_util.cmp_substrings
+                 (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
+                 !key_buf 0 !key_len = 0
+            then
+              acc
+            else begin
+              (* new key, increment count and copy the key to prev_key *)
+                ncols := 0;
+                incr keys_so_far;
+                let key_data_list =
+                  match key_data with
+                      _ :: _ ->
+                        (Bytea.contents prev_key, key_data) :: key_data_list
+                    | [] ->
+                        if not !first_pass && keep_columnless_keys then
+                          (Bytea.contents prev_key, key_data) :: key_data_list
+                        else key_data_list
+                in
+                  Bytea.clear prev_key;
+                  Bytea.add_substring prev_key !key_buf 0 !key_len;
+                  (key_data_list, [])
+            end
+
+          in
+            first_pass := false;
+            (* see if we already have enough columns for this key*)
+            if !ncols >= max_columns then acc
+
+            else if not (column_selected !column_buf !column_len) then begin
+              (* skip *)
+              acc
+            end else if is_column_deleted
+               ~key_buf:!key_buf ~key_len:!key_len
+               ~column_buf:!column_buf ~column_len:!column_len
+            then
+              acc
+            else begin
+              let () = incr ncols in
+              let data = IT.get_value it in
+              let col = String.sub !column_buf 0 !column_len in
+              let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
+
+              let key_data = col_data :: key_data in
+              let acc = (key_data_list, key_data) in
+                (* early termination w/o iterating over further keys if we
+                 * already have enough  *)
+                (* we cannot use >= because further columns for the same key
+                 * could follow *)
+                if !keys_so_far > max_keys then raise (T.Done acc);
+                acc
+            end
         in
 
-        (* m : key -> column_name -> column *)
-        let m =
-          try fold_over_data tx table fold_datum M.empty first up_to
-          with T.Done m -> m in
+        let rev_key_data_list1 =
+          let l1, d1 =
+            try fold_over_data tx table fold_datum ([], []) first up_to
+            with T.Done x -> x
+          in match d1 with
+              [] when not !first_pass && keep_columnless_keys ->
+                (Bytea.contents prev_key, d1) :: l1
+            | [] -> l1
+            | cols -> (Bytea.contents prev_key, cols) :: l1 in
 
-        let m =
+        (* rev_key_data_listN : (key * column list) list   cols also in rev order *)
+
+        let rev_key_data_list2 =
           M.fold
-            (fun key key_data_in_mem m ->
-               let key_data' =
+            (fun key key_data_in_mem l ->
+               let cols =
                  M.fold
-                   (fun col data m ->
+                   (fun col data l ->
                       if column_selected col (String.length col) then
                         let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
-                          M.add col col_data m
-                      else m)
+                          col_data :: l
+                      else l)
                    key_data_in_mem
-                   (M.find_default M.empty key m)
-               in M.add key key_data' m)
-            (M.submap ?first ?up_to
-               (M.find_default M.empty table tx.added))
-            m in
-        let key_data_list, _ =
-          M.fold
-            (fun key key_data (key_data_list, keys_so_far) ->
-               if keys_so_far >= max_keys then (key_data_list, keys_so_far)
-               else match postproc_keydata key key_data with
-                   None -> (key_data_list, keys_so_far)
-                 | Some x -> (x :: key_data_list, keys_so_far + 1))
-            m
-            ([], 0) in
-        let last_key = match key_data_list with
+                   []
+               in (key, cols) :: l)
+            (M.submap ?first ?up_to (M.find_default M.empty table tx.added))
+            [] in
+
+        let key_data_list1 = List.rev rev_key_data_list1 in
+        let key_data_list2 = List.rev rev_key_data_list2 in
+
+        let rev_key_data_list =
+          filter_map_merge
+            (fun (k1, _) (k2, _) -> String.compare k1 k2)
+            postproc_keydata
+            (fun (k, rev_cols1) (_, rev_cols2) ->
+               let cols =
+                 merge_rev
+                   (fun c1 c2 -> String.compare c1.Data.name c2.Data.name)
+                   rev_cols1 rev_cols2
+               in (k, List.rev cols))
+            ~limit:max_keys key_data_list1 key_data_list2 in
+
+        let last_key = match rev_key_data_list with
             x :: _ -> Some (get_keydata_key x)
           | [] -> None
-        in (last_key, List.rev key_data_list)
+        in (last_key, List.rev rev_key_data_list)
 
 let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range =
-  let postproc_keydata key m =
-    match M.rev_take_values max_columns m with
-        [] -> None
-      | { Data.name = last_column; _ } :: _ as l ->
-          Some ({ Data.key; last_column; columns = List.rev l }) in
+  let postproc_keydata (key, rev_cols) =
+    match rev_cols with
+      | _ :: _ as l when max_columns > 0 ->
+          let columns = List.take max_columns (List.rev l) in
+          let last_column = (List.last columns).Data.name in
+            Some ({ Data.key; last_column; columns; })
+      | _ -> None in
 
   let get_keydata_key { Data.key; _ } = key
 
@@ -743,11 +821,11 @@ let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range
       ?max_keys ~max_columns key_range column_range
 
 let get_slice_values tx table ?max_keys key_range columns =
-  let postproc_keydata key m =
+  let postproc_keydata (key, cols) =
     let l =
       List.map
         (fun column ->
-           try Some (M.find column m).Data.data
+           try Some (List.find (fun c -> c.Data.name = column) cols).Data.data
            with Not_found -> None)
         columns
     in Some (key, l) in
