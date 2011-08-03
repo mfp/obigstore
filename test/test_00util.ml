@@ -4,6 +4,8 @@ open OUnit
 
 let rounds = ref 1
 
+let keep_tmp = ref false
+
 let string_of_list f l = "[ " ^ String.concat "; " (List.map f l) ^ " ]"
 let string_of_pair f (a, b) = sprintf "(%s, %s)" (f a) (f b)
 let string_of_tuple2 f g (a, b) = sprintf "(%s, %s)" (f a) (g b)
@@ -65,14 +67,16 @@ let shuffle l =
 
 let make_temp_file ?(prefix = "temp") ?(suffix = ".dat") () =
   let file = Filename.temp_file prefix suffix in
-    at_exit (fun () -> Sys.remove file);
+    at_exit (fun () -> if not !keep_tmp then Sys.remove file);
     file
 
 let make_temp_dir ?(prefix = "temp") () =
   let path = Filename.temp_file prefix "" in
     Sys.remove path;
     Unix.mkdir path 0o755;
-    at_exit (fun () -> ignore (Sys.command (sprintf "rm -rf %S" path)));
+    at_exit
+      (fun () -> if not !keep_tmp then
+                   ignore (Sys.command (sprintf "rm -rf %S" path)));
     path
 
 let random_list gen len =
