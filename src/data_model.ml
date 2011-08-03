@@ -1,12 +1,20 @@
 
 open Lwt
 
-module String = struct include String include BatString end
 module List = struct include BatList include List end
 module Option = BatOption
 module L = LevelDB
 module RA = L.Read_access
 module IT = L.Iterator
+
+module String =
+struct
+  include String
+  include BatString
+
+  let compare x y =
+    String_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
+end
 
 type db =
     {
