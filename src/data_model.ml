@@ -559,16 +559,34 @@ let get_slice_aux
       ?(max_columns = max_int)
       key_range column_range =
   let column_selected = match column_range with
-      Data.All_columns -> (fun c -> true)
-    | Data.Columns l -> let s = S.of_list l in (fun c -> S.mem c s)
+      Data.All_columns -> (fun ~buf ~len -> true)
+    | Data.Columns l ->
+        if List.length l < 5 then (* TODO: determine threshold *)
+          (fun ~buf ~len ->
+             List.exists
+               (fun s ->
+                  String_util.cmp_substrings s 0 (String.length s) buf 0 len = 0)
+               l)
+        else begin
+          let s = S.of_list l in
+            (fun ~buf ~len ->
+               let c =
+                 if len = String.length buf then buf
+                 else String.sub buf 0 len
+               in S.mem c s)
+        end
     | Data.Column_range r ->
         let cmp_first = match r.Data.first with
-            None -> (fun c -> true)
-          | Some x -> (fun c -> String.compare c x >= 0) in
+            None -> (fun ~buf ~len -> true)
+          | Some x ->
+              (fun ~buf ~len ->
+                 String_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
         let cmp_up_to = match r.Data.up_to with
-            None -> (fun c -> true)
-          | Some x -> (fun c -> String.compare c x < 0)
-        in (fun c -> cmp_first c && cmp_up_to c) in
+            None -> (fun ~buf ~len -> true)
+          | Some x ->
+              (fun ~buf ~len ->
+                 String_util.cmp_substrings buf 0 len x 0 (String.length x) < 0)
+        in (fun ~buf ~len -> cmp_first ~buf ~len && cmp_up_to ~buf ~len) in
 
   let is_column_deleted = is_column_deleted tx table
 
@@ -584,26 +602,24 @@ let get_slice_aux
              else
                let columns_selected = ref 0 in
                let fold_datum m it ~key_buf ~key_len ~column_buf ~column_len =
-                 (* TODO: use substring sets and avoid allocating a string
-                  * before the following checks *)
-                 let col = String.sub !column_buf 0 !column_len in
-                   (* must skip deleted columns *)
-                   if is_column_deleted
-                        ~key_buf:key ~key_len:(String.length key)
-                        ~column_buf:!column_buf ~column_len:!column_len then
+                 (* must skip deleted columns *)
+                 if is_column_deleted
+                      ~key_buf:key ~key_len:(String.length key)
+                      ~column_buf:!column_buf ~column_len:!column_len then
+                   m
+                 (* also skip non-selected columns *)
+                 else if not (column_selected !column_buf !column_len) then
+                   m
+                 (* otherwise, if the column is not deleted and is selected *)
+                 else begin
+                   incr columns_selected;
+                   let data = IT.get_value it in
+                   let col = String.sub !column_buf 0 !column_len in
+                   let timestamp = Data.No_timestamp in
+                   let m = M.add col { Data.name = col; data; timestamp; } m in
+                     if !columns_selected >= max_columns then raise (T.Done m);
                      m
-                   (* also skip non-selected columns *)
-                   else if not (column_selected col) then
-                     m
-                   (* otherwise, if the column is not deleted and is selected *)
-                   else begin
-                     incr columns_selected;
-                     let data = IT.get_value it in
-                     let timestamp = Data.No_timestamp in
-                     let m = M.add col { Data.name = col; data; timestamp; } m in
-                       if !columns_selected >= max_columns then raise (T.Done m);
-                       m
-                   end in
+                 end in
                let m =
                  try
                    fold_over_data tx table fold_datum M.empty
@@ -612,7 +628,7 @@ let get_slice_aux
                let m =
                  M.fold
                    (fun col data m ->
-                      if column_selected col then
+                      if column_selected col (String.length col) then
                         M.add col { Data.name = col; data; timestamp = Data.No_timestamp} m
                       else m)
                    (tx.added |>
@@ -646,11 +662,7 @@ let get_slice_aux
           (* see if we already have enough columns for this key*)
           if !ncols >= max_columns then m else
 
-          (* TODO: use substring sets/maps and avoid allocating the following
-           * unless we want the data *)
-          let col = String.sub !column_buf 0 !column_len in
-
-          if not (column_selected col) then begin
+          if not (column_selected !column_buf !column_len) then begin
             (* need only add it the first time we get a non-selected col *)
             if !ncols = 0 && keep_columnless_keys then
               let key = String.sub !key_buf 0 !key_len in
@@ -666,6 +678,7 @@ let get_slice_aux
             let () = incr ncols in
             let key = String.sub !key_buf 0 !key_len in
             let data = IT.get_value it in
+            let col = String.sub !column_buf 0 !column_len in
             let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
             let key_data = M.find_default M.empty key m in
             let m = M.add key (M.add col col_data key_data) m in
@@ -689,7 +702,7 @@ let get_slice_aux
                let key_data' =
                  M.fold
                    (fun col data m ->
-                      if column_selected col then
+                      if column_selected col (String.length col) then
                         let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
                           M.add col col_data m
                       else m)
