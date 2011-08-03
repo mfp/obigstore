@@ -272,24 +272,8 @@ end
 module M =
 struct
   include Map.Make(String)
+
   let find_default x k m = try find k m with Not_found -> x
-
-  let rev_values m = fold (fun _ v l -> v :: l) m []
-  let values m = List.rev (rev_values m)
-
-  let rev_take_values (type a) n (m : a t) =
-    let module T = struct exception Done of a list end in
-    let p = ref 0 in
-      try
-        fold
-          (fun _ v l ->
-             incr p;
-             let l = v :: l in
-               if !p >= n then raise (T.Done l);
-               l)
-          m
-          []
-      with T.Done l -> l
 
   let submap ?first ?up_to m =
     (* trim entries before the first, if proceeds *)
