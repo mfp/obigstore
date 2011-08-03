@@ -308,9 +308,6 @@ struct
             before
     in m
 
-  let maybe_max_binding m =
-    try Some (max_binding m) with Not_found -> None
-
   let update f default k m =
     let x = find_default default k m in
       match f x with
