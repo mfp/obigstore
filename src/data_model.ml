@@ -448,7 +448,7 @@ let fold_over_data tx table f acc first up_to =
 
   let rec do_fold_over_data acc =
     if not (IT.valid it) then
-      acc
+      return acc
     else begin
       let len = IT.fill_key it buf in
         if not (Encoding.decode_datum_key
@@ -456,14 +456,14 @@ let fold_over_data tx table f acc first up_to =
                   ~key_buf ~key_len
                   ~column_buf ~column_len
                   !buf len)
-        then acc (* if this happens, we must have hit the end of the data area *)
+        then return acc (* if this happens, we must have hit the end of the data area *)
         else begin
           (* check that we're still in the table *)
           if not (is_same_value table table_buf table_len) then
-            acc
+            return acc
           (* check if we're at or past up_to *)
           else if at_or_past_upto () then
-            acc
+            return acc
           else begin
             match (f acc it ~key_buf ~key_len ~column_buf ~column_len)
             with
@@ -497,7 +497,7 @@ let get_keys tx table ?(max_keys = max_int) = function
              S.mem k (M.find_default S.empty table tx.added_keys) ||
              exists_key k)
           s
-      in List.take max_keys (S.to_list s)
+      in return (List.take max_keys (S.to_list s))
   | Data.Key_range { Data.first; up_to } ->
       (* we recover all the keys added in the transaction *)
       let s = M.find_default S.empty table tx.added_keys in
@@ -532,11 +532,10 @@ let get_keys tx table ?(max_keys = max_int) = function
            * of the key when the key has been repeated more than
            * THRESHOLD times. *)
       in
-        (try fold_over_data tx table fold_datum s first up_to with M.Finished s -> s) |>
-        S.to_list |> List.take max_keys
-
-let get_keys tx table ?max_keys range =
-  return (get_keys tx table ?max_keys range)
+        (try_lwt
+           fold_over_data tx table fold_datum s first up_to
+         with M.Finished s -> return s) >|=
+        S.to_list >|= List.take max_keys
 
 let merge_rev cmp l1 l2 =
   let rec loop_merge_rev cmp acc l1 l2 =
@@ -615,15 +614,18 @@ let get_slice_aux
 
   in match key_range with
     Data.Keys l ->
-      let s = S.of_list l in
-      let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
       let module T = struct exception Done of Data.column list end in
-      let key_data_list, _ =
-        S.fold
-          (fun key (key_data_list, keys_so_far) ->
-             if keys_so_far >= max_keys then (key_data_list, keys_so_far)
+      let l =
+        List.filter
+          (fun k -> not (S.mem k (M.find_default S.empty table tx.deleted_keys)))
+          (List.sort String.compare l) in
+      lwt key_data_list, _ =
+        Lwt_list.fold_left_s
+          (fun (key_data_list, keys_so_far) key ->
+             if keys_so_far >= max_keys then return (key_data_list, keys_so_far)
              else
                let columns_selected = ref 0 in
+
                let fold_datum rev_cols it ~key_buf ~key_len ~column_buf ~column_len =
                  (* must skip deleted columns *)
                  if is_column_deleted
@@ -640,15 +642,15 @@ let get_slice_aux
                    let col = String.sub !column_buf 0 !column_len in
                    let timestamp = Data.No_timestamp in
                    let rev_cols = { Data.name = col; data; timestamp; } :: rev_cols in
-                     if !columns_selected >= max_columns then raise (T.Done rev_cols);
-                     rev_cols
+                     if !columns_selected >= max_columns then raise (T.Done rev_cols)
+                     else rev_cols
                  end in
 
-               let rev_cols1 =
-                 try
+               lwt rev_cols1 =
+                 try_lwt
                    fold_over_data tx table fold_datum []
                      (Some key) (Some (key ^ "\000"))
-                 with T.Done l -> l in
+                 with T.Done l -> return l in
 
                let rev_cols2 =
                  M.fold
@@ -666,13 +668,13 @@ let get_slice_aux
                    rev_cols1 rev_cols2
 
                in match postproc_keydata (key, List.rev cols) with
-                   None -> (key_data_list, keys_so_far)
-                 | Some x -> (x :: key_data_list, keys_so_far + 1))
-          s ([], 0) in
+                   None -> return (key_data_list, keys_so_far)
+                 | Some x -> return (x :: key_data_list, keys_so_far + 1))
+          ([], 0) l in
       let last_key = match key_data_list with
           x :: _ -> Some (get_keydata_key x)
         | [] -> None
-      in (last_key, List.rev key_data_list)
+      in return (last_key, List.rev key_data_list)
 
     | Data.Key_range { Data.first; up_to } ->
         let module T = struct
@@ -735,20 +737,20 @@ let get_slice_aux
                  * already have enough  *)
                 (* we cannot use >= because further columns for the same key
                  * could follow *)
-                if !keys_so_far > max_keys then raise (T.Done acc);
-                acc
+                if !keys_so_far > max_keys then raise (T.Done acc)
+                else acc
             end
         in
 
-        let rev_key_data_list1 =
-          let l1, d1 =
-            try fold_over_data tx table fold_datum ([], []) first up_to
-            with T.Done x -> x
+        lwt rev_key_data_list1 =
+          lwt l1, d1 =
+            try_lwt fold_over_data tx table fold_datum ([], []) first up_to
+            with T.Done x -> return x
           in match d1 with
               [] when not !first_pass && keep_columnless_keys ->
-                (Bytea.contents prev_key, d1) :: l1
-            | [] -> l1
-            | cols -> (Bytea.contents prev_key, cols) :: l1 in
+                return ((Bytea.contents prev_key, d1) :: l1)
+            | [] -> return l1
+            | cols -> return ((Bytea.contents prev_key, cols) :: l1) in
 
         (* rev_key_data_listN : (key * column list) list   cols also in rev order *)
 
@@ -786,7 +788,7 @@ let get_slice_aux
         let last_key = match rev_key_data_list with
             x :: _ -> Some (get_keydata_key x)
           | [] -> None
-        in (last_key, List.rev rev_key_data_list)
+        in return (last_key, List.rev rev_key_data_list)
 
 let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range =
   let postproc_keydata (key, rev_cols) =
@@ -816,12 +818,6 @@ let get_slice_values tx table ?max_keys key_range columns =
 
   in get_slice_aux postproc_keydata get_keydata_key true tx table
        ?max_keys key_range (Data.Columns columns)
-
-let get_slice tx table ?max_keys ?max_columns key_range column_range =
-  return (get_slice tx table ?max_keys ?max_columns key_range column_range)
-
-let get_slice_values tx table ?max_keys key_range columns =
-  return (get_slice_values tx table ?max_keys key_range columns)
 
 let get_columns tx table ?max_columns key column_range =
   match_lwt get_slice tx table ?max_columns (Data.Keys [key]) column_range with
