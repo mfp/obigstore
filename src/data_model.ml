@@ -304,6 +304,7 @@ type transaction =
       mutable added : string M.t M.t M.t; (* table -> key -> column -> value *)
       mutable deleted : S.t M.t M.t; (* table -> key -> column set *)
       access : L.read_access;
+      repeatable_read : bool;
       ks : keyspace;
     }
 
@@ -312,10 +313,11 @@ let tx_key = Lwt.new_key ()
 let transaction_aux make_access ks f =
   match Lwt.get tx_key with
     | None -> begin
+        let access, repeatable_read = make_access ks.ks_db.db None in
         let tx =
           { added_keys = M.empty; deleted_keys = M.empty;
             added = M.empty; deleted = M.empty;
-            access = make_access ks.ks_db.db; ks;
+            access; repeatable_read; ks;
           } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
         let b = L.Batch.make () in
@@ -352,9 +354,8 @@ let transaction_aux make_access ks f =
           return y
       end
     | Some parent_tx ->
-        (* we make a new access so as to honor repeatable_read_transaction
-         * nested in a read_committed_transaction *)
-        let tx = { parent_tx with access = make_access ks.ks_db.db } in
+        let access, repeatable_read = make_access ks.ks_db.db (Some parent_tx) in
+        let tx = { parent_tx with access; repeatable_read; } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
           parent_tx.deleted_keys <- tx.deleted_keys;
           parent_tx.added <- tx.added;
@@ -362,11 +363,18 @@ let transaction_aux make_access ks f =
           parent_tx.added_keys <- tx.added_keys;
           return y
 
-let read_committed_transaction f = transaction_aux L.read_access f
+let read_committed_transaction f =
+  transaction_aux
+    (fun db -> function
+         None -> (L.read_access db, false)
+       | Some tx -> (tx.access, false))
+    f
 
 let repeatable_read_transaction f =
   transaction_aux
-    (fun db -> L.Snapshot.read_access (L.Snapshot.make db))
+    (fun db -> function
+         Some tx when tx.repeatable_read -> (tx.access, true)
+       | _ -> (L.Snapshot.read_access (L.Snapshot.make db), true))
     f
 
 let (|>) x f = f x
