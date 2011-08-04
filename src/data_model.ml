@@ -292,11 +292,9 @@ struct
             before
     in m
 
-  let update f default k m =
-    let x = find_default default k m in
-      match f x with
-          None -> remove k m
-        | Some y -> add k y m
+  let modify f default k m = add k (f (find_default default k m)) m
+
+  let modify_if_found f k m = try add k (f (find k m)) m with Not_found -> m
 end
 
 type transaction =
@@ -843,54 +841,47 @@ let get_column tx table key column_name =
     | _ -> return None
 
 let put_columns tx table key columns =
-  tx.added_keys <- M.update
-                     (fun s -> Some (S.add key s))
-                     S.empty table tx.added_keys;
-  tx.deleted_keys <- M.update
-                       (fun s -> Some (S.remove key s))
-                       S.empty table tx.deleted_keys;
+  tx.added_keys <- M.modify (S.add key) S.empty table tx.added_keys;
+  tx.deleted_keys <- M.modify_if_found (S.remove key) table tx.deleted_keys;
   tx.deleted <-
-    M.update
+    M.modify_if_found
       (fun m ->
-         Some
-           (M.update
-              (fun m ->
-                 Some (List.fold_left (fun m c -> S.remove c.Update.name m) m columns))
-              S.empty key m))
-      M.empty table tx.deleted;
+         if M.is_empty m then m
+         else
+           M.modify_if_found
+             (fun s ->
+                List.fold_left (fun s c -> S.remove c.Update.name s) s columns)
+             key m)
+      table tx.deleted;
   tx.added <-
-    M.update
+    M.modify
       (fun m ->
-         Some
-           (M.update
-              (fun m ->
-                 Some (List.fold_left
-                         (fun m c -> M.add c.Update.name c.Update.data m) m columns))
-              M.empty key m))
+         (M.modify
+            (fun m ->
+               List.fold_left
+                 (fun m c -> M.add c.Update.name c.Update.data m)
+                 m columns)
+            M.empty key m))
       M.empty table tx.added;
   return ()
 
 let delete_columns tx table key cols =
   tx.added <-
-    M.update
+    M.modify_if_found
       (fun m ->
-         Some
-           (M.update
-             (fun m ->
-                Some (List.fold_left (fun m c -> M.remove c m) m cols))
-             M.empty
-             key m))
-      M.empty table tx.added;
-  if M.is_empty (M.find_default M.empty table tx.added |> M.find_default M.empty key) then
-    tx.added_keys <- M.update (fun s -> Some (S.remove key s)) S.empty table tx.added_keys;
+         (M.modify
+             (fun m -> List.fold_left (fun m c -> M.remove c m) m cols)
+             M.empty key m))
+      table tx.added;
+  if M.is_empty (M.find_default M.empty table tx.added |>
+                 M.find_default M.empty key) then
+    tx.added_keys <- M.modify_if_found (S.remove key) table tx.added_keys;
   tx.deleted <-
-    M.update
+    M.modify
       (fun m ->
-         Some
-           (M.update
-              (fun s -> Some (List.fold_left (fun s c -> S.add c s) s cols))
-              S.empty
-              key m))
+         M.modify
+           (fun s -> List.fold_left (fun s c -> S.add c s) s cols)
+           S.empty key m)
       M.empty table tx.deleted;
   return ()
 
@@ -898,7 +889,8 @@ let delete_key tx table key =
   match_lwt get_columns tx table key Data.All_columns with
       None -> return ()
     | Some (_, columns) ->
-        lwt () = delete_columns tx table key (List.map (fun c -> c.Data.name) columns) in
-          tx.deleted_keys <- M.update (fun s -> Some (S.add key s))
-                               S.empty table tx.deleted_keys;
+        lwt () = delete_columns tx table key
+                   (List.map (fun c -> c.Data.name) columns)
+        in
+          tx.deleted_keys <- M.modify (S.add key) S.empty table tx.deleted_keys;
           return ()
