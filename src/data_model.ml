@@ -447,6 +447,13 @@ let exists_key tx table =
     end
   end
 
+type 'a fold_result =
+    Continue
+  | Skip_key
+  | Continue_with of 'a
+  | Skip_key_with of 'a
+  | Finish_fold of 'a
+
 let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
   let buf = ref "" in
   let table_buf = ref "" and table_len = ref 0 in
@@ -459,6 +466,14 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
            String_util.cmp_substrings
              !key_buf 0 !key_len
              k 0 (String.length k) >= 0) in
+
+  let next_key () =
+    let s = String.create (!key_len + 1) in
+      String.blit !key_buf 0 s 0 !key_len;
+      s.[!key_len] <- '\000';
+      s in
+
+  let datum_key_buf = Bytea.create 13 in
 
   let rec do_fold_over_data acc =
     if not (IT.valid it) then
@@ -479,16 +494,24 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
           else if at_or_past_upto_key () then
             return acc
           else begin
-            match (f acc it ~key_buf:!key_buf ~key_len:!key_len
-                     ~column_buf:!column_buf ~column_len:!column_len)
-            with
-                (* TODO: allow to
-                 * * skip key
-                 * * finish recursion
-                 * by using sum type like
-                 *   Skip_to_key of 'acc * key | Finish of 'acc
-                 * | Continue of 'a | Continue_no_next of 'a *)
-                x -> IT.next it; do_fold_over_data x
+            let r = f acc it ~key_buf:!key_buf ~key_len:!key_len
+                     ~column_buf:!column_buf ~column_len:!column_len
+            in
+              (* seeking to next datum/key/etc *)
+              begin match r with
+                  Continue | Continue_with _ -> IT.next it;
+                | Skip_key | Skip_key_with _ ->
+                    Encoding.encode_datum_key datum_key_buf tx.ks
+                      ~table ~key:(next_key ()) ~column:"";
+                    IT.seek it
+                      (Bytea.unsafe_string datum_key_buf) 0
+                      (Bytea.length datum_key_buf)
+                | Finish_fold _ -> ()
+              end;
+              match r with
+                  Continue | Skip_key -> do_fold_over_data acc
+                | Continue_with x | Skip_key_with x -> do_fold_over_data x
+                | Finish_fold x -> return x
           end
       end
     end in
@@ -526,53 +549,43 @@ let get_keys tx table ?(max_keys = max_int) = function
              exists_key k)
           s
       in return (List.take max_keys (S.to_list s))
+
   | Data.Key_range { Data.first; up_to } ->
       (* we recover all the keys added in the transaction *)
       let s = M.find_default S.empty table tx.added_keys in
       let s = S.subset ?first ?up_to s in
       (* now s contains the added keys in the wanted range *)
-      let deleted_keys = M.find_default S.empty table tx.deleted_keys in
+
+      let is_key_deleted =
+        let s = M.find_default S.empty table tx.deleted_keys in
+          if S.is_empty s then
+            (fun buf len -> false)
+          else
+            (fun buf len -> S.mem (String.sub buf 0 len) s) in
+
       let is_column_deleted = is_column_deleted tx table in
-      let module M = struct exception Finished of S.t end in
       let keys_on_disk_kept = ref 0 in
-      let prev_key = Bytea.create 13 in
+
       let fold_datum s it
             ~key_buf ~key_len
             ~column_buf ~column_len =
-        (* TODO: optimize by caching previous key, ignoring new entry
-         * if same key *)
         if !keys_on_disk_kept >= max_keys then
-          raise (M.Finished s)
-        else
-          (* check if it's the same key as before
-           * (i.e., just another column) * *)
-          if String_util.cmp_substrings
-               (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
-               key_buf 0 key_len = 0 then
-            s
+          Finish_fold s
+        else begin
+          (* check if the key is deleted *)
+          if is_key_deleted key_buf key_len then
+            Continue
+          (* check if the column has been deleted *)
+          else if is_column_deleted ~key_buf ~key_len ~column_buf ~column_len then
+            Continue
+          (* if neither the key nor the column were deleted *)
           else begin
-            Bytea.clear prev_key;
-            Bytea.add_substring prev_key key_buf 0 key_len;
-            let k = String.sub key_buf 0 key_len in
-              if S.mem k deleted_keys then
-                s
-              (* check if the column has been deleted *)
-              else if is_column_deleted ~key_buf ~key_len ~column_buf ~column_len then
-                s
-              (* if neither the key nor the column were deleted *)
-              else begin
-                incr keys_on_disk_kept;
-                S.add k s
-              end
-            (* TODO: seek to the datum_key corresponding to a successor
-             * of the key when the key has been repeated more than
-             * THRESHOLD times. *)
+            incr keys_on_disk_kept;
+            Skip_key_with (S.add (String.sub key_buf 0 key_len) s)
           end
+        end
       in
-        (try_lwt
-           fold_over_data tx table fold_datum s
-             ~first_key:first ~up_to_key:up_to
-         with M.Finished s -> return s) >|=
+        (fold_over_data tx table fold_datum s ~first_key:first ~up_to_key:up_to) >|=
         S.to_list >|= List.take max_keys
 
 let merge_rev cmp l1 l2 =
@@ -652,7 +665,6 @@ let get_slice_aux
 
   in match key_range with
     Data.Keys l ->
-      let module T = struct exception Done of Data.column list end in
       let l =
         List.filter
           (fun k -> not (S.mem k (M.find_default S.empty table tx.deleted_keys)))
@@ -669,10 +681,10 @@ let get_slice_aux
                  if is_column_deleted
                       ~key_buf:key ~key_len:(String.length key)
                       ~column_buf ~column_len then
-                   rev_cols
+                   Continue
                  (* also skip non-selected columns *)
                  else if not (column_selected column_buf column_len) then
-                   rev_cols
+                   Continue
                  (* otherwise, if the column is not deleted and is selected *)
                  else begin
                    incr columns_selected;
@@ -680,15 +692,14 @@ let get_slice_aux
                    let col = String.sub column_buf 0 column_len in
                    let timestamp = Data.No_timestamp in
                    let rev_cols = { Data.name = col; data; timestamp; } :: rev_cols in
-                     if !columns_selected >= max_columns then raise (T.Done rev_cols)
-                     else rev_cols
+                     if !columns_selected >= max_columns then
+                       Finish_fold rev_cols
+                     else Continue_with rev_cols
                  end in
 
                lwt rev_cols1 =
-                 try_lwt
-                   fold_over_data tx table fold_datum []
-                     ~first_key:(Some key) ~up_to_key:(Some (key ^ "\000"))
-                 with T.Done l -> return l in
+                 fold_over_data tx table fold_datum []
+                     ~first_key:(Some key) ~up_to_key:(Some (key ^ "\000")) in
 
                let rev_cols2 =
                  M.fold
@@ -715,18 +726,15 @@ let get_slice_aux
       in return (last_key, List.rev key_data_list)
 
     | Data.Key_range { Data.first; up_to } ->
-        let module T = struct
-          exception Done of ((string * Data.column list) list * Data.column list)
-        end in
-
         let first_pass = ref true in
         let keys_so_far = ref 0 in
         let prev_key = Bytea.create 13 in
-        let ncols = ref 0 in
+        let cols_in_this_key = ref 0 in
+        let cols_kept = ref 0 in
 
         let fold_datum ((key_data_list, key_data) as acc)
               it ~key_buf ~key_len ~column_buf ~column_len =
-          let ((key_data_list, key_data) as acc) =
+          let ((key_data_list, key_data) as acc') =
             if String_util.cmp_substrings
                  (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
                  key_buf 0 key_len = 0
@@ -734,34 +742,41 @@ let get_slice_aux
               acc
             else begin
               (* new key, increment count and copy the key to prev_key *)
-                ncols := 0;
+                cols_kept := 0;
+                cols_in_this_key := 0;
                 incr keys_so_far;
-                let key_data_list =
+                let acc' =
                   match key_data with
-                      _ :: _ ->
-                        (Bytea.contents prev_key, key_data) :: key_data_list
-                    | [] ->
-                        if not !first_pass && keep_columnless_keys then
-                          (Bytea.contents prev_key, key_data) :: key_data_list
-                        else key_data_list
+                    _ :: _ ->
+                      ((Bytea.contents prev_key, key_data) :: key_data_list, [])
+                  | [] ->
+                      if not !first_pass && keep_columnless_keys then
+                        ((Bytea.contents prev_key, key_data) :: key_data_list, [])
+                      else acc
                 in
                   Bytea.clear prev_key;
                   Bytea.add_substring prev_key key_buf 0 key_len;
-                  (key_data_list, [])
+                  acc'
             end
 
           in
             first_pass := false;
+            incr cols_in_this_key;
             (* see if we already have enough columns for this key*)
-            if !ncols >= max_columns then acc
-
-            else if not (column_selected column_buf column_len) then begin
-              (* skip *)
-              acc
+            if !cols_kept >= max_columns then begin
+              (* seeking is very expensive, so we only do it when it looks
+               * like the key has got a lot of columns *)
+              if !cols_in_this_key - max_columns < 50 then (* FIXME: determine constant *)
+                (if acc == acc' then Continue else Continue_with acc')
+              else
+                (if acc == acc' then Skip_key else Skip_key_with acc')
+            end else if not (column_selected column_buf column_len) then begin
+              (* skip column *)
+              (if acc == acc' then Continue else Continue_with acc')
             end else if is_column_deleted ~key_buf ~key_len ~column_buf ~column_len then
-              acc
+              (if acc == acc' then Continue else Continue_with acc')
             else begin
-              let () = incr ncols in
+              let () = incr cols_kept in
               let data = IT.get_value it in
               let col = String.sub column_buf 0 column_len in
               let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
@@ -772,16 +787,15 @@ let get_slice_aux
                  * already have enough  *)
                 (* we cannot use >= because further columns for the same key
                  * could follow *)
-                if !keys_so_far > max_keys then raise (T.Done acc)
-                else acc
+                if !keys_so_far > max_keys then Finish_fold acc
+                else Continue_with acc
             end
         in
 
         lwt rev_key_data_list1 =
           lwt l1, d1 =
-            try_lwt fold_over_data tx table fold_datum ([], [])
+            fold_over_data tx table fold_datum ([], [])
               ~first_key:first ~up_to_key:up_to
-            with T.Done x -> return x
           in match d1 with
               [] when not !first_pass && keep_columnless_keys ->
                 return ((Bytea.contents prev_key, d1) :: l1)
