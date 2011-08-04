@@ -447,12 +447,12 @@ let exists_key tx table =
     end
   end
 
-let fold_over_data_aux it tx table f acc first up_to =
+let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
   let buf = ref "" in
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
-  let at_or_past_upto = match up_to with
+  let at_or_past_upto_key = match up_to_key with
       None -> (fun () -> false)
     | Some k ->
         (fun () ->
@@ -476,7 +476,7 @@ let fold_over_data_aux it tx table f acc first up_to =
           if not (is_same_value table table_buf table_len) then
             return acc
           (* check if we're at or past up_to *)
-          else if at_or_past_upto () then
+          else if at_or_past_upto_key () then
             return acc
           else begin
             match (f acc it ~key_buf:!key_buf ~key_len:!key_len
@@ -496,23 +496,23 @@ let fold_over_data_aux it tx table f acc first up_to =
   (* jump to first entry *)
   let first_datum_key =
     Encoding.encode_datum_key_to_string tx.ks ~table
-      ~key:(Option.default "" first) ~column:""
+      ~key:(Option.default "" first_key) ~column:""
   in
     IT.seek it first_datum_key 0 (String.length first_datum_key);
     do_fold_over_data acc
 
-let fold_over_data tx table f acc first up_to =
+let fold_over_data tx table f acc ~first_key ~up_to_key =
   match tx.iter_pool with
       None ->
         let it = RA.iterator tx.access in
           try_lwt
-            fold_over_data_aux it tx table f acc first up_to
+            fold_over_data_aux it tx table f acc ~first_key ~up_to_key
           finally
             IT.close it;
             return ()
     | Some pool ->
         Lwt_pool.use pool
-          (fun it -> fold_over_data_aux it tx table f acc first up_to)
+          (fun it -> fold_over_data_aux it tx table f acc ~first_key ~up_to_key)
 
 let get_keys tx table ?(max_keys = max_int) = function
     Data.Keys l ->
@@ -570,7 +570,8 @@ let get_keys tx table ?(max_keys = max_int) = function
           end
       in
         (try_lwt
-           fold_over_data tx table fold_datum s first up_to
+           fold_over_data tx table fold_datum s
+             ~first_key:first ~up_to_key:up_to
          with M.Finished s -> return s) >|=
         S.to_list >|= List.take max_keys
 
@@ -686,7 +687,7 @@ let get_slice_aux
                lwt rev_cols1 =
                  try_lwt
                    fold_over_data tx table fold_datum []
-                     (Some key) (Some (key ^ "\000"))
+                     ~first_key:(Some key) ~up_to_key:(Some (key ^ "\000"))
                  with T.Done l -> return l in
 
                let rev_cols2 =
@@ -778,7 +779,8 @@ let get_slice_aux
 
         lwt rev_key_data_list1 =
           lwt l1, d1 =
-            try_lwt fold_over_data tx table fold_datum ([], []) first up_to
+            try_lwt fold_over_data tx table fold_datum ([], [])
+              ~first_key:first ~up_to_key:up_to
             with T.Done x -> return x
           in match d1 with
               [] when not !first_pass && keep_columnless_keys ->
