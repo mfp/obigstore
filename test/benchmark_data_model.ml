@@ -103,7 +103,7 @@ let bm_sequential_read ~max_keys ?(max_columns = 10) dir =
       n_columns := !n_columns +
                    List.fold_left (fun s kd -> s + List.length kd.D.Data.columns) 0 l;
       match last_key with
-        | Some k when len = max_keys -> read_from tx (Some k)
+        | Some k when len = max_keys -> read_from tx (Some (k ^ "\000"))
         | _ -> return () in
   let dt =
     Lwt_unix.run
