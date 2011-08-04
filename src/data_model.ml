@@ -305,19 +305,21 @@ type transaction =
       mutable deleted : S.t M.t M.t; (* table -> key -> column set *)
       access : L.read_access;
       repeatable_read : bool;
+      iter_pool : L.iterator Lwt_pool.t option;
       ks : keyspace;
     }
 
 let tx_key = Lwt.new_key ()
 
-let transaction_aux make_access ks f =
+let transaction_aux make_access_and_iters ks f =
   match Lwt.get tx_key with
     | None -> begin
-        let access, repeatable_read = make_access ks.ks_db.db None in
+        let access, iter_pool, repeatable_read =
+          make_access_and_iters ks.ks_db None in
         let tx =
           { added_keys = M.empty; deleted_keys = M.empty;
             added = M.empty; deleted = M.empty;
-            access; repeatable_read; ks;
+            access; repeatable_read; iter_pool; ks;
           } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
         let b = L.Batch.make () in
@@ -354,8 +356,9 @@ let transaction_aux make_access ks f =
           return y
       end
     | Some parent_tx ->
-        let access, repeatable_read = make_access ks.ks_db.db (Some parent_tx) in
-        let tx = { parent_tx with access; repeatable_read; } in
+        let access, iter_pool, repeatable_read =
+          make_access_and_iters ks.ks_db (Some parent_tx) in
+        let tx = { parent_tx with access; iter_pool; repeatable_read; } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
           parent_tx.deleted_keys <- tx.deleted_keys;
           parent_tx.added <- tx.added;
@@ -366,15 +369,20 @@ let transaction_aux make_access ks f =
 let read_committed_transaction f =
   transaction_aux
     (fun db -> function
-         None -> (L.read_access db, false)
-       | Some tx -> (tx.access, false))
+         None -> (L.read_access db.db, None, false)
+       | Some tx -> (tx.access, tx.iter_pool, false))
     f
 
 let repeatable_read_transaction f =
   transaction_aux
     (fun db -> function
-         Some tx when tx.repeatable_read -> (tx.access, true)
-       | _ -> (L.Snapshot.read_access (L.Snapshot.make db), true))
+         Some { access; repeatable_read = true; iter_pool = Some pool; _} ->
+           (access, Some pool, true)
+       | _ ->
+           let access = L.Snapshot.read_access (L.Snapshot.make db.db) in
+           let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
+                        (fun () -> return (RA.iterator access))
+           in (access, Some pool, true))
     f
 
 let (|>) x f = f x
@@ -439,9 +447,7 @@ let exists_key tx table =
     end
   end
 
-let fold_over_data tx table f acc first up_to =
-  let it = RA.iterator tx.access in
-
+let fold_over_data_aux it tx table f acc first up_to =
   let buf = ref "" in
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
@@ -493,11 +499,20 @@ let fold_over_data tx table f acc first up_to =
       ~key:(Option.default "" first) ~column:""
   in
     IT.seek it first_datum_key 0 (String.length first_datum_key);
-    try_lwt
-      do_fold_over_data acc
-    finally
-      IT.close it;
-      return ()
+    do_fold_over_data acc
+
+let fold_over_data tx table f acc first up_to =
+  match tx.iter_pool with
+      None ->
+        let it = RA.iterator tx.access in
+          try_lwt
+            fold_over_data_aux it tx table f acc first up_to
+          finally
+            IT.close it;
+            return ()
+    | Some pool ->
+        Lwt_pool.use pool
+          (fun it -> fold_over_data_aux it tx table f acc first up_to)
 
 let get_keys tx table ?(max_keys = max_int) = function
     Data.Keys l ->
