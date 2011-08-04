@@ -88,11 +88,16 @@ let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
         (Int64.to_float size_on_disk /. total_data_size');
       tmp_dir
 
-let bm_sequential_read ~max_keys ?(max_columns = 10) dir =
+let bm_sequential_read ?(read_committed = false) ~max_keys ?(max_columns = 10) dir =
   let db = Data_model.open_db dir in
   let ks = D.register_keyspace db "ks1" in
   let n_keys = ref 0 in
   let n_columns = ref 0 in
+
+  let transaction =
+    if read_committed then D.read_committed_transaction
+    else D.repeatable_read_transaction in
+
   let rec read_from tx first =
     lwt (last_key, l) =
       D.get_slice tx "dummy" ~max_keys ~max_columns
@@ -107,9 +112,10 @@ let bm_sequential_read ~max_keys ?(max_columns = 10) dir =
         | _ -> return () in
   let dt =
     Lwt_unix.run
-      (time (fun () -> D.read_committed_transaction ks (fun tx -> read_from tx None)))
+      (time (fun () -> transaction ks (fun tx -> read_from tx None)))
   in
-    printf "Seq read (slice %4d): %9d keys %9d columns in %8.5fs (%d/s) (%d/s)\n%!"
+    printf "Seq read %s (slice %4d): %9d keys %9d columns in %8.5fs (%d/s) (%d/s)\n%!"
+      (if read_committed then "RC" else "RR")
       max_keys
       !n_keys !n_columns dt
       (truncate (float !n_keys /. dt))
@@ -121,10 +127,10 @@ let () =
   in
     Test_00util.keep_tmp := false;
     print_endline "";
-    bm_sequential_read ~max_keys:1000 db_dir;
-    bm_sequential_read ~max_keys:500 db_dir;
-    bm_sequential_read ~max_keys:200 db_dir;
-    bm_sequential_read ~max_keys:100 db_dir;
-    bm_sequential_read ~max_keys:50 db_dir;
-    bm_sequential_read ~max_keys:20 db_dir;
-    bm_sequential_read ~max_keys:1 db_dir;
+    let slices = [ 1000; 500; 200; 100; 50; 20; 10; 1 ] in
+      List.iter
+        (fun read_committed ->
+           List.iter
+             (fun max_keys -> bm_sequential_read ~read_committed ~max_keys db_dir)
+             slices)
+        [ true; false ]
