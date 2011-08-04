@@ -126,11 +126,16 @@ let () =
     run_put_colums_bm ~rounds:10 ~iterations:10000 ~batch_size:1000 ~avg_cols:10
   in
     Test_00util.keep_tmp := false;
-    print_endline "";
-    let slices = [ 1000; 500; 200; 100; 50; 20; 10; 1 ] in
-      List.iter
-        (fun read_committed ->
-           List.iter
-             (fun max_keys -> bm_sequential_read ~read_committed ~max_keys db_dir)
-             slices)
-        [ true; false ]
+    List.iter
+      (fun max_columns ->
+         printf "\nmax_columns: %d\n" max_columns;
+         pr_separator ();
+         List.iter
+           (fun read_committed ->
+              List.iter
+                (fun max_keys ->
+                   bm_sequential_read
+                     ~max_columns ~read_committed ~max_keys db_dir)
+                [ 1000; 500; 200; 100; 50; 20; 10; 1 ])
+           [ true; false ])
+      [ 1; 5; 10; 100 ]
