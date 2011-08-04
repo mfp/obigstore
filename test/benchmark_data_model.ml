@@ -88,15 +88,14 @@ let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
         (Int64.to_float size_on_disk /. total_data_size');
       tmp_dir
 
-let bm_sequential_read dir =
+let bm_sequential_read ~max_keys ?(max_columns = 10) dir =
   let db = Data_model.open_db dir in
   let ks = D.register_keyspace db "ks1" in
   let n_keys = ref 0 in
   let n_columns = ref 0 in
-  let max_keys = 50 in
   let rec read_from tx first =
     lwt (last_key, l) =
-      D.get_slice tx "dummy" ~max_keys ~max_columns:10
+      D.get_slice tx "dummy" ~max_keys ~max_columns
         (D.Data.Key_range { D.Data.first; up_to = None })
         D.Data.All_columns in
     let len = List.length l in
@@ -110,8 +109,9 @@ let bm_sequential_read dir =
     Lwt_unix.run
       (time (fun () -> D.read_committed_transaction ks (fun tx -> read_from tx None)))
   in
-    printf "Seq read: %9d keys in %8.5fs (%d/s)  \
+    printf "Seq read (slice keys: %d): %9d keys in %8.5fs (%d/s)  \
             %9d columns in %8.5fs (%d/s)\n%!"
+      max_keys
       !n_keys dt (truncate (float !n_keys /. dt))
       !n_columns dt (truncate (float !n_columns /. dt))
 
@@ -121,6 +121,9 @@ let () =
   in
     Test_00util.keep_tmp := false;
     print_endline "";
-    for i = 1 to 10 do
-      bm_sequential_read db_dir;
-    done
+    bm_sequential_read ~max_keys:1000 db_dir;
+    bm_sequential_read ~max_keys:500 db_dir;
+    bm_sequential_read ~max_keys:200 db_dir;
+    bm_sequential_read ~max_keys:100 db_dir;
+    bm_sequential_read ~max_keys:50 db_dir;
+    bm_sequential_read ~max_keys:20 db_dir
