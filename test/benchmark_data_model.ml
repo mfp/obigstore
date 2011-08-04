@@ -126,4 +126,5 @@ let () =
     bm_sequential_read ~max_keys:200 db_dir;
     bm_sequential_read ~max_keys:100 db_dir;
     bm_sequential_read ~max_keys:50 db_dir;
-    bm_sequential_read ~max_keys:20 db_dir
+    bm_sequential_read ~max_keys:20 db_dir;
+    bm_sequential_read ~max_keys:1 db_dir;
