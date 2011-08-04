@@ -109,11 +109,11 @@ let bm_sequential_read ~max_keys ?(max_columns = 10) dir =
     Lwt_unix.run
       (time (fun () -> D.read_committed_transaction ks (fun tx -> read_from tx None)))
   in
-    printf "Seq read (slice keys: %d): %9d keys in %8.5fs (%d/s)  \
-            %9d columns in %8.5fs (%d/s)\n%!"
+    printf "Seq read (slice %4d): %9d keys %9d columns in %8.5fs (%d/s) (%d/s)\n%!"
       max_keys
-      !n_keys dt (truncate (float !n_keys /. dt))
-      !n_columns dt (truncate (float !n_columns /. dt))
+      !n_keys !n_columns dt
+      (truncate (float !n_keys /. dt))
+      (truncate (float !n_columns /. dt))
 
 let () =
   let db_dir =
