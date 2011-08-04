@@ -465,7 +465,8 @@ let fold_over_data tx table f acc first up_to =
           else if at_or_past_upto () then
             return acc
           else begin
-            match (f acc it ~key_buf ~key_len ~column_buf ~column_len)
+            match (f acc it ~key_buf:!key_buf ~key_len:!key_len
+                     ~column_buf:!column_buf ~column_len:!column_len)
             with
                 (* TODO: allow to
                  * * skip key
@@ -520,18 +521,16 @@ let get_keys tx table ?(max_keys = max_int) = function
            * (i.e., just another column) * *)
           if String_util.cmp_substrings
                (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
-               !key_buf 0 !key_len = 0 then
+               key_buf 0 key_len = 0 then
             s
           else begin
             Bytea.clear prev_key;
-            Bytea.add_substring prev_key !key_buf 0 !key_len;
-            let k = String.sub !key_buf 0 !key_len in
+            Bytea.add_substring prev_key key_buf 0 key_len;
+            let k = String.sub key_buf 0 key_len in
               if S.mem k deleted_keys then
                 s
               (* check if the column has been deleted *)
-              else if is_column_deleted
-                        ~key_buf:!key_buf ~key_len:!key_len
-                        ~column_buf:!column_buf ~column_len:!column_len then
+              else if is_column_deleted ~key_buf ~key_len ~column_buf ~column_len then
                 s
               (* if neither the key nor the column were deleted *)
               else begin
@@ -641,16 +640,16 @@ let get_slice_aux
                  (* must skip deleted columns *)
                  if is_column_deleted
                       ~key_buf:key ~key_len:(String.length key)
-                      ~column_buf:!column_buf ~column_len:!column_len then
+                      ~column_buf ~column_len then
                    rev_cols
                  (* also skip non-selected columns *)
-                 else if not (column_selected !column_buf !column_len) then
+                 else if not (column_selected column_buf column_len) then
                    rev_cols
                  (* otherwise, if the column is not deleted and is selected *)
                  else begin
                    incr columns_selected;
                    let data = IT.get_value it in
-                   let col = String.sub !column_buf 0 !column_len in
+                   let col = String.sub column_buf 0 column_len in
                    let timestamp = Data.No_timestamp in
                    let rev_cols = { Data.name = col; data; timestamp; } :: rev_cols in
                      if !columns_selected >= max_columns then raise (T.Done rev_cols)
@@ -702,7 +701,7 @@ let get_slice_aux
           let ((key_data_list, key_data) as acc) =
             if String_util.cmp_substrings
                  (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
-                 !key_buf 0 !key_len = 0
+                 key_buf 0 key_len = 0
             then
               acc
             else begin
@@ -719,7 +718,7 @@ let get_slice_aux
                         else key_data_list
                 in
                   Bytea.clear prev_key;
-                  Bytea.add_substring prev_key !key_buf 0 !key_len;
+                  Bytea.add_substring prev_key key_buf 0 key_len;
                   (key_data_list, [])
             end
 
@@ -728,18 +727,15 @@ let get_slice_aux
             (* see if we already have enough columns for this key*)
             if !ncols >= max_columns then acc
 
-            else if not (column_selected !column_buf !column_len) then begin
+            else if not (column_selected column_buf column_len) then begin
               (* skip *)
               acc
-            end else if is_column_deleted
-               ~key_buf:!key_buf ~key_len:!key_len
-               ~column_buf:!column_buf ~column_len:!column_len
-            then
+            end else if is_column_deleted ~key_buf ~key_len ~column_buf ~column_len then
               acc
             else begin
               let () = incr ncols in
               let data = IT.get_value it in
-              let col = String.sub !column_buf 0 !column_len in
+              let col = String.sub column_buf 0 column_len in
               let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
 
               let key_data = col_data :: key_data in
