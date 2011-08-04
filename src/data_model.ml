@@ -485,7 +485,11 @@ let fold_over_data tx table f acc first up_to =
       ~key:(Option.default "" first) ~column:""
   in
     IT.seek it first_datum_key 0 (String.length first_datum_key);
-    do_fold_over_data acc
+    try_lwt
+      do_fold_over_data acc
+    finally
+      IT.close it;
+      return ()
 
 let get_keys tx table ?(max_keys = max_int) = function
     Data.Keys l ->
