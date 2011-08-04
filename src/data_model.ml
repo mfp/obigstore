@@ -507,6 +507,7 @@ let get_keys tx table ?(max_keys = max_int) = function
       let is_column_deleted = is_column_deleted tx table in
       let module M = struct exception Finished of S.t end in
       let keys_on_disk_kept = ref 0 in
+      let prev_key = Bytea.create 13 in
       let fold_datum s it
             ~key_buf ~key_len
             ~column_buf ~column_len =
@@ -515,22 +516,32 @@ let get_keys tx table ?(max_keys = max_int) = function
         if !keys_on_disk_kept >= max_keys then
           raise (M.Finished s)
         else
-          let k = String.sub !key_buf 0 !key_len in
-            if S.mem k deleted_keys then
-              s
-            (* check if the column has been deleted *)
-            else if is_column_deleted
-                      ~key_buf:!key_buf ~key_len:!key_len
-                      ~column_buf:!column_buf ~column_len:!column_len then
-              s
-            (* if neither the key nor the column were deleted *)
-            else begin
-              incr keys_on_disk_kept;
-              S.add k s
-            end
-          (* TODO: seek to the datum_key corresponding to a successor
-           * of the key when the key has been repeated more than
-           * THRESHOLD times. *)
+          (* check if it's the same key as before
+           * (i.e., just another column) * *)
+          if String_util.cmp_substrings
+               (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
+               !key_buf 0 !key_len = 0 then
+            s
+          else begin
+            Bytea.clear prev_key;
+            Bytea.add_substring prev_key !key_buf 0 !key_len;
+            let k = String.sub !key_buf 0 !key_len in
+              if S.mem k deleted_keys then
+                s
+              (* check if the column has been deleted *)
+              else if is_column_deleted
+                        ~key_buf:!key_buf ~key_len:!key_len
+                        ~column_buf:!column_buf ~column_len:!column_len then
+                s
+              (* if neither the key nor the column were deleted *)
+              else begin
+                incr keys_on_disk_kept;
+                S.add k s
+              end
+            (* TODO: seek to the datum_key corresponding to a successor
+             * of the key when the key has been repeated more than
+             * THRESHOLD times. *)
+          end
       in
         (try_lwt
            fold_over_data tx table fold_datum s first up_to

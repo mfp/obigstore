@@ -237,7 +237,7 @@ let test_get_keys_max_keys db =
   let ks = D.register_keyspace db "test_get_keys_max_keys" in
   let key_name i = sprintf "%03d" i in
     put_slice ks "tbl"
-      (List.init 10 (fun i -> (key_name i, [ "x", "" ]))) >>
+      (List.init 10 (fun i -> (key_name i, [ "x", ""; "y", "" ]))) >>
     D.read_committed_transaction ks
       (fun tx ->
          get_key_range ks "tbl" >|=
@@ -249,7 +249,7 @@ let test_get_keys_max_keys db =
          get_key_range ks "tbl" ~first:"008" ~max_keys:5 >|=
            aeq_string_list ["008"; "009"] >>
          D.delete_key tx "tbl" "001" >>
-         D.delete_columns tx "tbl" "003" ["x"] >>
+         D.delete_columns tx "tbl" "003" ["x"; "y"] >>
          D.delete_columns tx "tbl" "002" ["xxxx"] >>
          get_key_range ks "tbl" ~max_keys:3 >|=
            aeq_string_list ["000"; "002"; "004"]) >>
