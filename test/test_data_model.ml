@@ -59,7 +59,7 @@ let test_custom_comparator db =
 
   let encode ks (table, key, column) =
     let b = Bytea.create 13 in
-      D.Encoding.encode_datum_key b ks ~table ~key ~column;
+      D.Encoding.encode_datum_key b ks ~table ~key ~column ~timestamp:Int64.min_int;
       Bytea.contents b in
   let cmp ks1 a ks2 b = D.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
   let printer (tbl, key, col) =

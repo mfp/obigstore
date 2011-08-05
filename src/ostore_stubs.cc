@@ -2,10 +2,31 @@
 #include <leveldb/db.h>
 #include <leveldb/comparator.h>
 
+#if defined(OS_MACOSX)
+  #include <machine/endian.h>
+#elif defined(OS_SOLARIS)
+  #include <sys/isa_defs.h>
+  #ifdef _LITTLE_ENDIAN
+    #define LITTLE_ENDIAN
+  #else
+    #define BIG_ENDIAN
+  #endif
+#else
+  #include <endian.h>
+#endif
+
+#ifdef LITTLE_ENDIAN
+#define IS_LITTLE_ENDIAN true
+#else
+#define IS_LITTLE_ENDIAN (__BYTE_ORDER == __LITTLE_ENDIAN)
+#endif
+
 extern "C" {
+
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
+#include <caml/alloc.h>
 
 const char cMetadata_prefix = 0;
 const char cDatum_prefix = 1;
@@ -83,7 +104,15 @@ class OStoreComparator1 : public leveldb::Comparator {
                 leveldb::Slice col_a(a.data() + 2 + tlen_a + klen_a, clen_a),
                                col_b(b.data() + 2 + tlen_b + klen_b, clen_b);
 
-                return(col_a.compare(col_b));
+                int colcmp = col_a.compare(col_b);
+                if (colcmp) return colcmp;
+
+                // FIXME: unaligned read
+                // compare timestamps
+                int64_t *ts_a = (int64_t *)(a.data() + 2 + tlen_a + klen_a + clen_a),
+                        *ts_b = (int64_t *)(a.data() + 2 + tlen_b + klen_b + clen_b);
+
+                return (*ts_a > *ts_b ? 1 : *ts_a < *ts_b ? -1 : 0);
 
                 break;
             }
@@ -119,6 +148,46 @@ ostore_apply_custom_comparator(value s1, value s2)
                 d2(String_val(s2), string_length(s2));
 
  CAMLreturn(Val_int(comparator1.Compare(d1, d2)));
+}
+
+CAMLprim value
+ostore_bytea_blit_int64_complement_le(value dst, value off, value n)
+{
+ int64_t v = Int64_val(n);
+
+#ifdef IS_LITTLE_ENDIAN
+ // FIXME: non-aligned writes
+ int64_t *p = (int64_t *)(String_val(dst) + Int_val(off));
+ *p = v ^ -1;
+#else
+ char *d = String_val(dst);
+ char *s = (char *)&v;
+
+ d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
+ d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
+#endif
+
+ return(Val_unit);
+}
+
+CAMLprim value
+ostore_decode_int64_complement_le(value s, value off)
+{
+#ifdef IS_LITTLE_ENDIAN
+  int64_t p = *((int64_t *)(String_val(s) + Int_val(off))) ^ -1;
+  return(caml_copy_int64(p));
+#else
+  char *s = String_val(s) + Int_val(off);
+  union {
+      int64_t ll;
+      unsigned char c[8];
+  } x;
+
+  x.c[0] = s[7]; x.c[1] = s[6]; x.c[2] = s[5]; x.c[3] = x[4];
+  x.c[4] = s[3]; x.c[5] = s[2]; x.c[6] = s[1]; x.c[7] = x[0];
+
+  return(caml_copy_int64(x.ll));
+#endif
 }
 
 }

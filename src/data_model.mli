@@ -136,5 +136,5 @@ val apply_custom_comparator : string -> string -> int
 module Encoding :
 sig
   val encode_datum_key : Bytea.t -> keyspace ->
-    table:string -> key:string -> column:string -> unit
+    table:string -> key:string -> column:string -> timestamp:Int64.t -> unit
 end

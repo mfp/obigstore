@@ -72,9 +72,18 @@ struct
   and timestamp = No_timestamp | Auto_timestamp | Timestamp of Int64.t
 end
 
-
 module Encoding =
 struct
+  module TS : sig
+    type timestamp_buf = private string
+    val make_timestamp_buf : unit -> timestamp_buf
+  end = struct
+    type timestamp_buf = string
+    let make_timestamp_buf () = String.create 8
+  end
+
+  include TS
+
   let version = 0
 
   let keyspace_table_prefix = "00"
@@ -89,18 +98,20 @@ struct
 
   (* datum key format:
    * '1' uint8(keyspace) string(table) string(key) string(column)
+   * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
    * var_int(key_len) var_int(col_len) uint8(tbl_len)
    * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
    * uint8(version)
    * *)
 
-  let encode_datum_key dst ks ~table ~key ~column =
+  let encode_datum_key dst ks ~table ~key ~column ~timestamp =
     Bytea.clear dst;
     Bytea.add_char dst '1';
     Bytea.add_byte dst ks.ks_id;
       Bytea.add_string dst table;
       Bytea.add_string dst key;
       Bytea.add_string dst column;
+      Bytea.add_int64_complement_le dst timestamp;
       let off = Bytea.length dst in
         Bytea.add_vint dst (String.length key);
         let klen_len = Bytea.length dst - off in
@@ -112,11 +123,17 @@ struct
             Bytea.add_byte dst version
 
   let encode_table_successor dst ks table =
-    encode_datum_key dst ks ~table:(table ^ "\000") ~key:"" ~column:""
+    encode_datum_key dst ks ~table:(table ^ "\000") ~key:"" ~column:"" ~timestamp:Int64.min_int
 
-  let encode_datum_key_to_string ks ~table ~key ~column =
+  external ostore_decode_int64_complement_le : string -> int -> Int64.t =
+    "ostore_decode_int64_complement_le"
+
+  let decode_timestamp (s : timestamp_buf) o =
+    ostore_decode_int64_complement_le (s :> string) o
+
+  let encode_datum_key_to_string ks ~table ~key ~column ~timestamp =
     let b = Bytea.create 13 in
-      encode_datum_key b ks ~table ~key ~column;
+      encode_datum_key b ks ~table ~key ~column ~timestamp;
       Bytea.contents b
 
   let encode_table_successor_to_string ks table =
@@ -136,6 +153,7 @@ struct
         ?table_buf ?table_len
         ?key_buf ?key_len
         ?column_buf ?column_len
+        ?timestamp_buf
         datum_key len =
     if datum_key.[0] <> '1' then false else
     let last_byte = Char.code datum_key.[len - 2] in
@@ -144,7 +162,10 @@ struct
     let t_len = Char.code datum_key.[len - 3] in
     let c_len = decode_var_int_at datum_key (len - 3 - clen_len) in
     let k_len = decode_var_int_at datum_key (len - 3 - clen_len - klen_len) in
-      if 2 + t_len + c_len + k_len + clen_len + klen_len + 1 + 1 + 1 <> len then
+    let expected_len =
+      2 + t_len + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1
+    in
+      if expected_len <> len then
         false
       else begin
         begin match table_buf, table_len with
@@ -170,6 +191,11 @@ struct
                 b := String.create c_len;
               String.blit datum_key (2 + t_len + k_len) !b 0 c_len;
               l := c_len
+        end;
+        begin match timestamp_buf with
+            None -> ()
+          | Some (b : timestamp_buf) ->
+              String.blit datum_key (2 + t_len + k_len + c_len) (b :> string) 0 8;
         end;
         true
       end
@@ -223,7 +249,8 @@ let list_tables ks =
     match String.sub !table_buf 0 !table_len with
         "" ->
           let datum_key =
-            Encoding.encode_datum_key_to_string ks ~table:"" ~key:"" ~column:""
+            Encoding.encode_datum_key_to_string ks
+              ~table:"" ~key:"" ~column:"" ~timestamp:Int64.min_int
           in IT.seek it datum_key 0 (String.length datum_key);
       | table ->
           let datum_key = Encoding.encode_table_successor_to_string ks table in
@@ -246,9 +273,10 @@ let list_tables ks =
 
 let table_size_on_disk ks table =
   L.get_approximate_size ks.ks_db.db
-    (Encoding.encode_datum_key_to_string ks ~table ~key:"" ~column:"")
+    (Encoding.encode_datum_key_to_string ks ~table ~key:"" ~column:"" ~timestamp:Int64.min_int)
     (Encoding.encode_datum_key_to_string ks ~table
-       ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255")
+       ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
+       ~timestamp:Int64.zero)
 
 module S =
 struct
@@ -336,7 +364,8 @@ let transaction_aux make_access_and_iters ks f =
                  (fun key s ->
                     S.iter
                       (fun column ->
-                         Encoding.encode_datum_key datum_key ks ~table ~key ~column;
+                         Encoding.encode_datum_key datum_key ks ~table ~key ~column
+                           ~timestamp:Int64.min_int;
                          L.Batch.delete_substring b
                            (Bytea.unsafe_string datum_key) 0
                            (Bytea.length datum_key))
@@ -349,7 +378,8 @@ let transaction_aux make_access_and_iters ks f =
                  (fun key m ->
                     M.iter
                       (fun column v ->
-                         Encoding.encode_datum_key datum_key ks ~table ~key ~column;
+                         Encoding.encode_datum_key datum_key ks ~table ~key ~column
+                           ~timestamp:Int64.min_int;
                          L.Batch.put_substring b
                            (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
                            v 0 (String.length v))
@@ -428,7 +458,8 @@ let exists_key tx table =
   let is_column_deleted = is_column_deleted tx table
 
   in begin fun key ->
-    Encoding.encode_datum_key datum_key tx.ks ~table ~key ~column:"";
+    Encoding.encode_datum_key datum_key tx.ks ~table ~key ~column:""
+      ~timestamp:Int64.min_int;
     IT.seek it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
     if not (IT.valid it) then
       false
@@ -506,7 +537,7 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
                   Continue | Continue_with _ -> IT.next it;
                 | Skip_key | Skip_key_with _ ->
                     Encoding.encode_datum_key datum_key_buf tx.ks
-                      ~table ~key:(next_key ()) ~column:"";
+                      ~table ~key:(next_key ()) ~column:"" ~timestamp:Int64.min_int;
                     IT.seek it
                       (Bytea.unsafe_string datum_key_buf) 0
                       (Bytea.length datum_key_buf)
@@ -523,7 +554,7 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
   (* jump to first entry *)
   let first_datum_key =
     Encoding.encode_datum_key_to_string tx.ks ~table
-      ~key:(Option.default "" first_key) ~column:""
+      ~key:(Option.default "" first_key) ~column:"" ~timestamp:Int64.min_int
   in
     IT.seek it first_datum_key 0 (String.length first_datum_key);
     do_fold_over_data acc
