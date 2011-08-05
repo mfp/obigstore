@@ -69,7 +69,7 @@ struct
   type column_data = { name : Data.column_name; data : string;
                        timestamp : timestamp }
 
-  and timestamp = No_timestamp | Auto_timestamp | Timestamp of Int64.t
+  and timestamp = Auto_timestamp | Timestamp of Int64.t
 end
 
 module Encoding =
@@ -362,6 +362,7 @@ let transaction_aux make_access_and_iters ks f =
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
         let b = L.Batch.make () in
         let datum_key = Bytea.create 13 in
+        let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
           (* TODO: should iterate in Lwt monad so we can yield every once in a
            * while*)
           M.iter
@@ -371,7 +372,7 @@ let transaction_aux make_access_and_iters ks f =
                     S.iter
                       (fun column ->
                          Encoding.encode_datum_key datum_key ks ~table ~key ~column
-                           ~timestamp:Int64.min_int;
+                           ~timestamp;
                          L.Batch.delete_substring b
                            (Bytea.unsafe_string datum_key) 0
                            (Bytea.length datum_key))
@@ -384,8 +385,11 @@ let transaction_aux make_access_and_iters ks f =
                  (fun key m ->
                     M.iter
                       (fun column v ->
+                         (* FIXME: should save timestamp provided in
+                          * put_columns and use it here if it wasn't
+                          * Auto_timestamp *)
                          Encoding.encode_datum_key datum_key ks ~table ~key ~column
-                           ~timestamp:Int64.min_int;
+                           ~timestamp;
                          L.Batch.put_substring b
                            (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
                            v 0 (String.length v))

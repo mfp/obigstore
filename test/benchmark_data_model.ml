@@ -5,7 +5,7 @@ open Printf
 module D = Data_model
 module List = struct include BatList include List end
 
-let mk_col ?(timestamp = D.Update.No_timestamp) ~name data =
+let mk_col ?(timestamp = D.Update.Auto_timestamp) ~name data =
   { D.Update.name; data; timestamp; }
 
 let time f =

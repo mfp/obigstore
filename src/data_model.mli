@@ -45,7 +45,7 @@ sig
   type column_data = { name : Data.column_name; data : string;
                        timestamp : timestamp }
 
-  and timestamp = No_timestamp | Auto_timestamp | Timestamp of Int64.t
+  and timestamp = Auto_timestamp | Timestamp of Int64.t
 end
 
 val open_db : string -> db

@@ -27,7 +27,7 @@ let rd_col (name, data) =
   { DD.name; data; timestamp = DD.No_timestamp }
 
 let column_without_timestamp (name, data) =
-  { DU.name; data; timestamp = DU.No_timestamp }
+  { DU.name; data; timestamp = DU.Auto_timestamp }
 
 let put tx tbl key l =
   D.put_columns tx tbl key
@@ -129,10 +129,10 @@ let test_list_tables db =
         (fun tx ->
            D.put_columns tx "tbl1" "somekey"
              [ { DU.name = "somecol"; data = "";
-                 timestamp = DU.No_timestamp; }; ] >>
+                 timestamp = DU.Auto_timestamp; }; ] >>
            D.put_columns tx "tbl2" "someotherkey"
              [ { DU.name = "someothercol"; data = "xxx";
-                 timestamp = DU.No_timestamp; }; ]) in
+                 timestamp = DU.Auto_timestamp; }; ]) in
     aeq_string_list ["tbl1"; "tbl2"] (D.list_tables ks1);
     aeq_string_list [] (D.list_tables ks2);
     return ()
