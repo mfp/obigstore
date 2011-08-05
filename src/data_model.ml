@@ -150,10 +150,10 @@ struct
     in loop s off 0 0
 
   let decode_datum_key
-        ?table_buf ?table_len
-        ?key_buf ?key_len
-        ?column_buf ?column_len
-        ?timestamp_buf
+        ~table_buf_r ~table_len_r
+        ~key_buf_r ~key_len_r
+        ~column_buf_r ~column_len_r
+        ~timestamp_buf
         datum_key len =
     if datum_key.[0] <> '1' then false else
     let last_byte = Char.code datum_key.[len - 2] in
@@ -168,7 +168,7 @@ struct
       if expected_len <> len then
         false
       else begin
-        begin match table_buf, table_len with
+        begin match table_buf_r, table_len_r with
             None, _ | _, None -> ()
           | Some b, Some l ->
                 if String.length !b < t_len then
@@ -176,7 +176,7 @@ struct
                 String.blit datum_key 2 !b 0 t_len;
                 l := t_len
         end;
-        begin match key_buf, key_len with
+        begin match key_buf_r, key_len_r with
             None, _ | _, None -> ()
           | Some b, Some l ->
               if String.length !b < k_len then
@@ -184,7 +184,7 @@ struct
               String.blit datum_key (2 + t_len) !b 0 k_len;
               l := k_len
         end;
-        begin match column_buf, column_len with
+        begin match column_buf_r, column_len_r with
             None, _ | _,  None -> ()
           | Some b, Some l ->
               if String.length !b < c_len then
@@ -244,6 +244,8 @@ let list_tables ks =
   let it = L.iterator ks.ks_db.db in
   let table_buf = ref "" in
   let table_len = ref 0 in
+  let table_buf_r = Some table_buf in
+  let table_len_r = Some table_len in
 
   let jump_to_next_table () =
     match String.sub !table_buf 0 !table_len with
@@ -261,7 +263,11 @@ let list_tables ks =
     if not (IT.valid it) then acc
     else begin
       let k = IT.get_key it in
-        if not (Encoding.decode_datum_key ~table_buf ~table_len
+        if not (Encoding.decode_datum_key
+                  ~table_buf_r ~table_len_r
+                  ~key_buf_r:None ~key_len_r:None
+                  ~column_buf_r:None ~column_len_r:None
+                  ~timestamp_buf:None
                   k (String.length k))
         then
           collect_tables acc
@@ -455,6 +461,9 @@ let exists_key tx table =
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
+  let table_buf_r = Some table_buf and table_len_r = Some table_len in
+  let key_buf_r = Some key_buf and key_len_r = Some key_len in
+  let column_buf_r = Some column_buf and column_len_r = Some column_len in
   let is_column_deleted = is_column_deleted tx table
 
   in begin fun key ->
@@ -467,8 +476,8 @@ let exists_key tx table =
       let len = IT.fill_key it buf in
       let ok =
         Encoding.decode_datum_key
-          ~table_buf ~table_len ~key_buf ~key_len
-          ~column_buf ~column_len
+          ~table_buf_r ~table_len_r ~key_buf_r ~key_len_r
+          ~column_buf_r ~column_len_r ~timestamp_buf:None
           !buf len
       in
         if not ok then false
@@ -494,6 +503,10 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
+  let table_buf_r = Some table_buf and table_len_r = Some table_len in
+  let key_buf_r = Some key_buf and key_len_r = Some key_len in
+  let column_buf_r = Some column_buf and column_len_r = Some column_len in
+
   let at_or_past_upto_key = match up_to_key with
       None -> (fun () -> false)
     | Some k ->
@@ -516,9 +529,10 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
     else begin
       let len = IT.fill_key it buf in
         if not (Encoding.decode_datum_key
-                  ~table_buf ~table_len
-                  ~key_buf ~key_len
-                  ~column_buf ~column_len
+                  ~table_buf_r ~table_len_r
+                  ~key_buf_r ~key_len_r
+                  ~column_buf_r ~column_len_r
+                  ~timestamp_buf:None
                   !buf len)
         then return acc (* if this happens, we must have hit the end of the data area *)
         else begin
