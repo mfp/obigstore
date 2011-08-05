@@ -791,8 +791,14 @@ let get_slice_aux
                  * already have enough  *)
                 (* we cannot use >= because further columns for the same key
                  * could follow *)
-                if !keys_so_far > max_keys then Finish_fold acc
-                else Continue_with acc
+                if !keys_so_far > max_keys then
+                  Finish_fold acc
+                (* alternatively, if we're in the last key, and have enough
+                 * columns, finish *)
+                else if !keys_so_far = max_keys && !cols_kept >= max_columns then
+                  Finish_fold acc
+                else
+                  Continue_with acc
             end
         in
 
