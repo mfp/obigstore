@@ -75,6 +75,8 @@ end
 
 module Encoding =
 struct
+  let version = 0
+
   let keyspace_table_prefix = "00"
   let keyspace_table_key ksname = "00" ^ ksname
 
@@ -89,6 +91,7 @@ struct
    * '1' uint8(keyspace) string(table) string(key) string(column)
    * var_int(key_len) var_int(col_len) uint8(tbl_len)
    * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
+   * uint8(version)
    * *)
 
   let encode_datum_key dst ks ~table ~key ~column =
@@ -105,7 +108,8 @@ struct
           Bytea.add_vint dst (String.length column);
           let clen_len = Bytea.length dst - off in
             Bytea.add_byte dst (String.length table);
-            Bytea.add_byte dst ((klen_len lsl 3) lor clen_len)
+            Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
+            Bytea.add_byte dst version
 
   let encode_table_successor dst ks table =
     encode_datum_key dst ks ~table:(table ^ "\000") ~key:"" ~column:""
@@ -134,13 +138,13 @@ struct
         ?column_buf ?column_len
         datum_key len =
     if datum_key.[0] <> '1' then false else
-    let last_byte = Char.code datum_key.[len - 1] in
+    let last_byte = Char.code datum_key.[len - 2] in
     let clen_len = last_byte land 0x7 in
     let klen_len = (last_byte lsr 3) land 0x7 in (* safer *)
-    let t_len = Char.code datum_key.[len - 2] in
-    let c_len = decode_var_int_at datum_key (len - 2 - clen_len) in
-    let k_len = decode_var_int_at datum_key (len - 2 - clen_len - klen_len) in
-      if 2 + t_len + c_len + k_len + clen_len + klen_len + 1 + 1 <> len then
+    let t_len = Char.code datum_key.[len - 3] in
+    let c_len = decode_var_int_at datum_key (len - 3 - clen_len) in
+    let k_len = decode_var_int_at datum_key (len - 3 - clen_len - klen_len) in
+      if 2 + t_len + c_len + k_len + clen_len + klen_len + 1 + 1 + 1 <> len then
         false
       else begin
         begin match table_buf, table_len with

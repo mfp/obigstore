@@ -48,8 +48,8 @@ class OStoreComparator1 : public leveldb::Comparator {
                 if(kscmp) return kscmp;
 
                 // then compare table names
-                int tlen_a = a[sa - 2],
-                    tlen_b = b[sb - 2];
+                int tlen_a = a[sa - 3],
+                    tlen_b = b[sb - 3];
 
                 leveldb::Slice ta(a.data() + 2, tlen_a),
                                tb(b.data() + 2, tlen_b);
@@ -59,7 +59,7 @@ class OStoreComparator1 : public leveldb::Comparator {
                 // then decode column and key lengths, then compare the
                 // latter, then the former
 
-                int last_a = a[sa - 1], last_b = b[sb - 1];
+                int last_a = a[sa - 2], last_b = b[sb - 2];
                 int clen_len_a = last_a & 0x7,
                     clen_len_b = last_b & 0x7;
                 int klen_len_a = (last_a >> 3) & 0x7,
@@ -67,8 +67,8 @@ class OStoreComparator1 : public leveldb::Comparator {
 
                 int64_t klen_a, klen_b;
 
-                klen_a = decode_var_int(a.data() + sa - 2 - clen_len_a - klen_len_a);
-                klen_b = decode_var_int(b.data() + sb - 2 - clen_len_b - klen_len_b);
+                klen_a = decode_var_int(a.data() + sa - 3 - clen_len_a - klen_len_a);
+                klen_b = decode_var_int(b.data() + sb - 3 - clen_len_b - klen_len_b);
 
                 leveldb::Slice key_a(a.data() + 2 + tlen_a, klen_a),
                                key_b(b.data() + 2 + tlen_b, klen_b);
@@ -77,8 +77,8 @@ class OStoreComparator1 : public leveldb::Comparator {
                 if(keycmp) return keycmp;
 
                 int64_t clen_a, clen_b;
-                clen_a = decode_var_int(a.data() + sa - 2 - clen_len_a);
-                clen_b = decode_var_int(b.data() + sb - 2 - clen_len_b);
+                clen_a = decode_var_int(a.data() + sa - 3 - clen_len_a);
+                clen_b = decode_var_int(b.data() + sb - 3 - clen_len_b);
 
                 leveldb::Slice col_a(a.data() + 2 + tlen_a + klen_a, clen_a),
                                col_b(b.data() + 2 + tlen_b + klen_b, clen_b);
