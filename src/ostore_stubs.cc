@@ -105,14 +105,7 @@ class OStoreComparator1 : public leveldb::Comparator {
                                col_b(b.data() + 2 + tlen_b + klen_b, clen_b);
 
                 int colcmp = col_a.compare(col_b);
-                if (colcmp) return colcmp;
-
-                // FIXME: unaligned read
-                // compare timestamps
-                uint64_t *ts_a = (uint64_t *)(a.data() + 2 + tlen_a + klen_a + clen_a),
-                         *ts_b = (uint64_t *)(a.data() + 2 + tlen_b + klen_b + clen_b);
-
-                return (*ts_a > *ts_b ? 1 : *ts_a < *ts_b ? -1 : 0);
+                return colcmp;
 
                 break;
             }
