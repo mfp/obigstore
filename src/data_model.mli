@@ -77,12 +77,17 @@ val get_keys :
   ?max_keys:int ->
   Data.key_range -> string list Lwt.t
 
-(** [get_slice tx table ?max_keys ?max_columns key_range column_range] returns
-  * a data slice corresponding to the keys included in the [key_range] which
-  * contain at least one of the columns specified in the [column_range] *)
+(** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
+  *  key_range column_range] returns a data slice corresponding to the keys
+  * included in the [key_range] which contain at least one of the columns
+  * specified in the [column_range].
+  * @param max_keys return no more than [max_keys] keys
+  * @param max_columns return no more than [max_columns] columns per key
+  * @param decode_timestamp whether to decode the timestamp (default: false)
+  *  *)
 val get_slice :
   transaction -> Data.table ->
-  ?max_keys:int -> ?max_columns:int ->
+  ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
   Data.key_range -> Data.column_range -> Data.slice Lwt.t
 
 (** [get_slice_values tx table key_range ["col1"; "col2"]]
@@ -102,7 +107,7 @@ val get_slice_values :
   * selected key, [None] otherwise. *)
 val get_columns :
   transaction -> Data.table ->
-  ?max_columns:int ->
+  ?max_columns:int -> ?decode_timestamps:bool ->
   Data.key -> Data.column_range ->
   (Data.column_name * (Data.column list)) option Lwt.t
 

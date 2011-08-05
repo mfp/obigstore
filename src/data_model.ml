@@ -128,8 +128,8 @@ struct
   external ostore_decode_int64_complement_le : string -> int -> Int64.t =
     "ostore_decode_int64_complement_le"
 
-  let decode_timestamp (s : timestamp_buf) o =
-    ostore_decode_int64_complement_le (s :> string) o
+  let decode_timestamp (s : timestamp_buf) =
+    ostore_decode_int64_complement_le (s :> string) 0
 
   let encode_datum_key_to_string ks ~table ~key ~column ~timestamp =
     let b = Bytea.create 13 in
@@ -506,6 +506,8 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
   let table_buf_r = Some table_buf and table_len_r = Some table_len in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
+  let timestamp_buf = Encoding.make_timestamp_buf () in
+  let some_timestamp_buf = Some timestamp_buf in
 
   let at_or_past_upto_key = match up_to_key with
       None -> (fun () -> false)
@@ -532,7 +534,7 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
                   ~table_buf_r ~table_len_r
                   ~key_buf_r ~key_len_r
                   ~column_buf_r ~column_len_r
-                  ~timestamp_buf:None
+                  ~timestamp_buf:some_timestamp_buf
                   !buf len)
         then return acc (* if this happens, we must have hit the end of the data area *)
         else begin
@@ -545,6 +547,7 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
           else begin
             let r = f acc it ~key_buf:!key_buf ~key_len:!key_len
                      ~column_buf:!column_buf ~column_len:!column_len
+                     ~timestamp_buf
             in
               (* seeking to next datum/key/etc *)
               begin match r with
@@ -617,7 +620,7 @@ let get_keys tx table ?(max_keys = max_int) = function
 
       let fold_datum s it
             ~key_buf ~key_len
-            ~column_buf ~column_len =
+            ~column_buf ~column_len ~timestamp_buf =
         if !keys_on_disk_kept >= max_keys then
           Finish_fold s
         else begin
@@ -677,8 +680,9 @@ let filter_map_merge cmp map merge ~limit l1 l2 =
 let get_slice_aux
       postproc_keydata get_keydata_key keep_columnless_keys
       tx table
-      ?(max_keys = max_int)
-      ?(max_columns = max_int)
+      ~max_keys
+      ~max_columns
+      ~decode_timestamps
       key_range column_range =
   let column_selected = match column_range with
       Data.All_columns -> (fun ~buf ~len -> true)
@@ -725,7 +729,9 @@ let get_slice_aux
              else
                let columns_selected = ref 0 in
 
-               let fold_datum rev_cols it ~key_buf ~key_len ~column_buf ~column_len =
+               let fold_datum rev_cols it
+                     ~key_buf ~key_len ~column_buf ~column_len
+                     ~timestamp_buf =
                  (* must skip deleted columns *)
                  if is_column_deleted
                       ~key_buf:key ~key_len:(String.length key)
@@ -739,7 +745,9 @@ let get_slice_aux
                    incr columns_selected;
                    let data = IT.get_value it in
                    let col = String.sub column_buf 0 column_len in
-                   let timestamp = Data.No_timestamp in
+                   let timestamp = match decode_timestamps with
+                       false -> Data.No_timestamp
+                     | true -> Data.Timestamp (Encoding.decode_timestamp timestamp_buf) in
                    let rev_cols = { Data.name = col; data; timestamp; } :: rev_cols in
                      if !columns_selected >= max_columns then
                        Finish_fold rev_cols
@@ -754,7 +762,7 @@ let get_slice_aux
                  M.fold
                    (fun col data l ->
                       if column_selected col (String.length col) then
-                        { Data.name = col; data; timestamp = Data.No_timestamp} :: l
+                        { Data.name = col; data; timestamp = Data.No_timestamp } :: l
                       else l)
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
@@ -782,7 +790,7 @@ let get_slice_aux
         let cols_kept = ref 0 in
 
         let fold_datum ((key_data_list, key_data) as acc)
-              it ~key_buf ~key_len ~column_buf ~column_len =
+              it ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf =
           let ((key_data_list, key_data) as acc') =
             if String_util.cmp_substrings
                  (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
@@ -828,7 +836,10 @@ let get_slice_aux
               let () = incr cols_kept in
               let data = IT.get_value it in
               let col = String.sub column_buf 0 column_len in
-              let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
+              let timestamp = match decode_timestamps with
+                  false -> Data.No_timestamp
+                | true -> Data.Timestamp (Encoding.decode_timestamp timestamp_buf) in
+              let col_data = { Data.name = col; data; timestamp; } in
 
               let key_data = col_data :: key_data in
               let acc = (key_data_list, key_data) in
@@ -895,7 +906,9 @@ let get_slice_aux
           | [] -> None
         in return (last_key, List.rev rev_key_data_list)
 
-let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range =
+let get_slice tx table
+      ?(max_keys = max_int) ?(max_columns = max_int)
+      ?(decode_timestamps = false) key_range column_range =
   let postproc_keydata (key, rev_cols) =
     match rev_cols with
       | _ :: _ as l when max_columns > 0 ->
@@ -907,9 +920,10 @@ let get_slice tx table ?max_keys ?(max_columns = max_int) key_range column_range
   let get_keydata_key { Data.key; _ } = key
 
   in get_slice_aux postproc_keydata get_keydata_key false tx table
-      ?max_keys ~max_columns key_range column_range
+      ~max_keys ~max_columns ~decode_timestamps key_range column_range
 
-let get_slice_values tx table ?max_keys key_range columns =
+let get_slice_values tx table
+      ?(max_keys = max_int) key_range columns =
   let postproc_keydata (key, cols) =
     let l =
       List.map
@@ -922,10 +936,15 @@ let get_slice_values tx table ?max_keys key_range columns =
   let get_keydata_key (key, _) = key
 
   in get_slice_aux postproc_keydata get_keydata_key true tx table
-       ?max_keys key_range (Data.Columns columns)
+       ~max_keys ~max_columns:(List.length columns)
+       ~decode_timestamps:false key_range (Data.Columns columns)
 
-let get_columns tx table ?max_columns key column_range =
-  match_lwt get_slice tx table ?max_columns (Data.Keys [key]) column_range with
+let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
+                key column_range =
+  match_lwt
+    get_slice tx table ~max_columns ?decode_timestamps
+      (Data.Keys [key]) column_range
+  with
     | (_, { Data.last_column = last_column;
             columns = ((_ :: _ as columns)) } :: _ ) ->
         return (Some (last_column, columns))
@@ -937,7 +956,9 @@ let get_column_values tx table key columns =
     | _ -> assert false
 
 let get_column tx table key column_name =
-  match_lwt get_columns tx table key (Data.Columns [column_name]) with
+  match_lwt
+    get_columns tx table key ~decode_timestamps:true (Data.Columns [column_name])
+  with
       Some (_, c :: _) -> return (Some (c.Data.data, c.Data.timestamp))
     | _ -> return None
 
@@ -987,7 +1008,10 @@ let delete_columns tx table key cols =
   return ()
 
 let delete_key tx table key =
-  match_lwt get_columns tx table key Data.All_columns with
+  match_lwt
+    get_columns tx table ~max_columns:max_int ~decode_timestamps:false
+      key Data.All_columns
+  with
       None -> return ()
     | Some (_, columns) ->
         lwt () = delete_columns tx table key
