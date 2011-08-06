@@ -422,7 +422,7 @@ let fold_over_data tx table f acc ~first_key ~up_to_key =
           (fun it -> fold_over_data_aux it tx table f acc ~first_key ~up_to_key)
 
 let get_keys tx table ?(max_keys = max_int) = function
-    Data.Keys l ->
+    Keys l ->
       let exists_key = exists_key tx table in
       let s = S.of_list l in
       let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
@@ -434,7 +434,7 @@ let get_keys tx table ?(max_keys = max_int) = function
           s
       in return (List.take max_keys (S.to_list s))
 
-  | Data.Key_range { Data.first; up_to } ->
+  | Key_range { first; up_to } ->
       (* we recover all the keys added in the transaction *)
       let s = M.find_default S.empty table tx.added_keys in
       let s = S.subset ?first ?up_to s in
@@ -517,8 +517,8 @@ let get_slice_aux
       ~decode_timestamps
       key_range column_range =
   let column_selected = match column_range with
-      Data.All_columns -> (fun ~buf ~len -> true)
-    | Data.Columns l ->
+      All_columns -> (fun ~buf ~len -> true)
+    | Columns l ->
         if List.length l < 5 then (* TODO: determine threshold *)
           (fun ~buf ~len ->
              List.exists
@@ -533,13 +533,13 @@ let get_slice_aux
                  else String.sub buf 0 len
                in S.mem c s)
         end
-    | Data.Column_range r ->
-        let cmp_first = match r.Data.first with
+    | Column_range r ->
+        let cmp_first = match r.first with
             None -> (fun ~buf ~len -> true)
           | Some x ->
               (fun ~buf ~len ->
                  String_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
-        let cmp_up_to = match r.Data.up_to with
+        let cmp_up_to = match r.up_to with
             None -> (fun ~buf ~len -> true)
           | Some x ->
               (fun ~buf ~len ->
@@ -549,7 +549,7 @@ let get_slice_aux
   let is_column_deleted = is_column_deleted tx table
 
   in match key_range with
-    Data.Keys l ->
+    Keys l ->
       let l =
         List.filter
           (fun k -> not (S.mem k (M.find_default S.empty table tx.deleted_keys)))
@@ -578,9 +578,9 @@ let get_slice_aux
                    let data = IT.get_value it in
                    let col = String.sub column_buf 0 column_len in
                    let timestamp = match decode_timestamps with
-                       false -> Data.No_timestamp
-                     | true -> Data.Timestamp (Datum_key.decode_timestamp timestamp_buf) in
-                   let rev_cols = { Data.name = col; data; timestamp; } :: rev_cols in
+                       false -> No_timestamp
+                     | true -> Timestamp (Datum_key.decode_timestamp timestamp_buf) in
+                   let rev_cols = { name = col; data; timestamp; } :: rev_cols in
                      if !columns_selected >= max_columns then
                        Finish_fold rev_cols
                      else Continue_with rev_cols
@@ -594,7 +594,7 @@ let get_slice_aux
                  M.fold
                    (fun col data l ->
                       if column_selected col (String.length col) then
-                        { Data.name = col; data; timestamp = Data.No_timestamp } :: l
+                        { name = col; data; timestamp = No_timestamp } :: l
                       else l)
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
@@ -602,7 +602,7 @@ let get_slice_aux
 
                let cols =
                  merge_rev
-                   (fun c1 c2 -> String.compare c1.Data.name c2.Data.name)
+                   (fun c1 c2 -> String.compare c1.name c2.name)
                    rev_cols1 rev_cols2
 
                in match postproc_keydata (key, List.rev cols) with
@@ -614,7 +614,7 @@ let get_slice_aux
         | [] -> None
       in return (last_key, List.rev key_data_list)
 
-    | Data.Key_range { Data.first; up_to } ->
+    | Key_range { first; up_to } ->
         let first_pass = ref true in
         let keys_so_far = ref 0 in
         let prev_key = Bytea.create 13 in
@@ -669,9 +669,9 @@ let get_slice_aux
               let data = IT.get_value it in
               let col = String.sub column_buf 0 column_len in
               let timestamp = match decode_timestamps with
-                  false -> Data.No_timestamp
-                | true -> Data.Timestamp (Datum_key.decode_timestamp timestamp_buf) in
-              let col_data = { Data.name = col; data; timestamp; } in
+                  false -> No_timestamp
+                | true -> Timestamp (Datum_key.decode_timestamp timestamp_buf) in
+              let col_data = { name = col; data; timestamp; } in
 
               let key_data = col_data :: key_data in
               let acc = (key_data_list, key_data) in
@@ -709,7 +709,7 @@ let get_slice_aux
                  M.fold
                    (fun col data l ->
                       if column_selected col (String.length col) then
-                        let col_data = { Data.name = col; data; timestamp = Data.No_timestamp} in
+                        let col_data = { name = col; data; timestamp = No_timestamp} in
                           col_data :: l
                       else l)
                    key_data_in_mem
@@ -728,7 +728,7 @@ let get_slice_aux
             (fun (k, rev_cols1) (_, rev_cols2) ->
                let cols =
                  merge_rev
-                   (fun c1 c2 -> String.compare c1.Data.name c2.Data.name)
+                   (fun c1 c2 -> String.compare c1.name c2.name)
                    rev_cols1 rev_cols2
                in (k, List.rev cols))
             ~limit:max_keys key_data_list1 key_data_list2 in
@@ -745,11 +745,11 @@ let get_slice tx table
     match rev_cols with
       | _ :: _ as l when max_columns > 0 ->
           let columns = List.take max_columns (List.rev l) in
-          let last_column = (List.last columns).Data.name in
-            Some ({ Data.key; last_column; columns; })
+          let last_column = (List.last columns).name in
+            Some ({ key; last_column; columns; })
       | _ -> None in
 
-  let get_keydata_key { Data.key; _ } = key
+  let get_keydata_key { key; _ } = key
 
   in get_slice_aux postproc_keydata get_keydata_key false tx table
       ~max_keys ~max_columns ~decode_timestamps key_range column_range
@@ -760,7 +760,7 @@ let get_slice_values tx table
     let l =
       List.map
         (fun column ->
-           try Some (List.find (fun c -> c.Data.name = column) cols).Data.data
+           try Some (List.find (fun c -> c.name = column) cols).data
            with Not_found -> None)
         columns
     in Some (key, l) in
@@ -769,29 +769,29 @@ let get_slice_values tx table
 
   in get_slice_aux postproc_keydata get_keydata_key true tx table
        ~max_keys ~max_columns:(List.length columns)
-       ~decode_timestamps:false key_range (Data.Columns columns)
+       ~decode_timestamps:false key_range (Columns columns)
 
 let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
                 key column_range =
   match_lwt
     get_slice tx table ~max_columns ?decode_timestamps
-      (Data.Keys [key]) column_range
+      (Keys [key]) column_range
   with
-    | (_, { Data.last_column = last_column;
+    | (_, { last_column = last_column;
             columns = ((_ :: _ as columns)) } :: _ ) ->
         return (Some (last_column, columns))
     | _ -> return None
 
 let get_column_values tx table key columns =
-  match_lwt get_slice_values tx table (Data.Keys [key]) columns with
+  match_lwt get_slice_values tx table (Keys [key]) columns with
     | (_, (_, l):: _) -> return l
     | _ -> assert false
 
 let get_column tx table key column_name =
   match_lwt
-    get_columns tx table key ~decode_timestamps:true (Data.Columns [column_name])
+    get_columns tx table key ~decode_timestamps:true (Columns [column_name])
   with
-      Some (_, c :: _) -> return (Some (c.Data.data, c.Data.timestamp))
+      Some (_, c :: _) -> return (Some (c.data, c.timestamp))
     | _ -> return None
 
 let put_columns tx table key columns =
@@ -804,7 +804,7 @@ let put_columns tx table key columns =
          else
            M.modify_if_found
              (fun s ->
-                List.fold_left (fun s c -> S.remove c.Update.name s) s columns)
+                List.fold_left (fun s c -> S.remove c.name s) s columns)
              key m)
       table tx.deleted;
   tx.added <-
@@ -813,7 +813,7 @@ let put_columns tx table key columns =
          (M.modify
             (fun m ->
                List.fold_left
-                 (fun m c -> M.add c.Update.name c.Update.data m)
+                 (fun m c -> M.add c.name c.data m)
                  m columns)
             M.empty key m))
       M.empty table tx.added;
@@ -842,12 +842,12 @@ let delete_columns tx table key cols =
 let delete_key tx table key =
   match_lwt
     get_columns tx table ~max_columns:max_int ~decode_timestamps:false
-      key Data.All_columns
+      key All_columns
   with
       None -> return ()
     | Some (_, columns) ->
         lwt () = delete_columns tx table key
-                   (List.map (fun c -> c.Data.name) columns)
+                   (List.map (fun c -> c.name) columns)
         in
           tx.deleted_keys <- M.modify (S.add key) S.empty table tx.deleted_keys;
           return ()

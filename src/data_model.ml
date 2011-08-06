@@ -1,50 +1,38 @@
 
 (** {2 Type definitions} *)
 
-module Data =
-struct
-  type table = string
+type table = string
 
-  type key = string
+type key = string
 
-  type column = { name : column_name; data : string; timestamp : timestamp; }
+type column = { name : column_name; data : string; timestamp : timestamp; }
 
-  and column_name = string
+and column_name = string
 
-  and timestamp = No_timestamp | Timestamp of Int64.t
+and timestamp = No_timestamp | Timestamp of Int64.t
 
-  type key_data = { key : key; last_column : string; columns : column list }
+type key_data = { key : key; last_column : string; columns : column list }
 
-  type slice = key option * key_data list (** last_key * data *)
+type slice = key option * key_data list (** last_key * data *)
 
-  (** Range representing elements between [first] (inclusive) and [up_to]
-    * (exclusive). If [first] is not provided, the range starts with the first
-    * available element; likewise, if [up_to] is not provided, the elements
-    * until the last one are selected. *)
-  type range =
-    {
-      first : string option;
-      up_to : string option;
-    }
+(** Range representing elements between [first] (inclusive) and [up_to]
+  * (exclusive). If [first] is not provided, the range starts with the first
+  * available element; likewise, if [up_to] is not provided, the elements
+  * until the last one are selected. *)
+type range =
+  {
+    first : string option;
+    up_to : string option;
+  }
 
-  type key_range =
-      Key_range of range
-    | Keys of string list
+type key_range =
+    Key_range of range
+  | Keys of string list
 
-  type column_range =
-      All_columns
-    | Columns of string list
-    | Column_range of range
-end
-
-(** {2 Types used for updates } *)
-module Update =
-struct
-  type column_data = { name : Data.column_name; data : string;
-                       timestamp : timestamp }
-
-  and timestamp = Auto_timestamp | Timestamp of Int64.t
-end
+type column_range =
+    All_columns
+  | Columns of string list
+  | Column_range of range
 
 (* {2 Data model } *)
 
@@ -60,10 +48,10 @@ sig
   val keyspace_name : keyspace -> string
   val keyspace_id : keyspace -> int
 
-  val list_tables : keyspace -> Data.table list
+  val list_tables : keyspace -> table list
 
   (** @return approximate size on disk of the data for the given table. *)
-  val table_size_on_disk : keyspace -> Data.table -> Int64.t
+  val table_size_on_disk : keyspace -> table -> Int64.t
 
   (** {3 Transactions} *)
   type transaction
@@ -77,9 +65,9 @@ sig
   (** {3 Read operations} *)
 
   val get_keys :
-    transaction -> Data.table ->
+    transaction -> table ->
     ?max_keys:int ->
-    Data.key_range -> string list Lwt.t
+    key_range -> string list Lwt.t
 
   (** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
     *  key_range column_range] returns a data slice corresponding to the keys
@@ -90,51 +78,51 @@ sig
     * @param decode_timestamp whether to decode the timestamp (default: false)
     *  *)
   val get_slice :
-    transaction -> Data.table ->
+    transaction -> table ->
     ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
-    Data.key_range -> Data.column_range -> Data.slice Lwt.t
+    key_range -> column_range -> slice Lwt.t
 
   (** [get_slice_values tx table key_range ["col1"; "col2"]]
     * returns [Some last_key, l] if at least a key was selected, where [l] is
     * an associative list whose elements are pairs containing the key and a list
     * of value options corresponding to the requested columns (in the order they
     * were given to [get_slice_values]). A key is selected if:
-    * * it is specified in a [Data.Keys l] range
-    * * it exists in the given [Data.Key_range r] range *)
+    * * it is specified in a [Keys l] range
+    * * it exists in the given [Key_range r] range *)
   val get_slice_values :
-    transaction -> Data.table ->
+    transaction -> table ->
     ?max_keys:int ->
-    Data.key_range -> Data.column_name list ->
-    (Data.key option * (Data.key * string option list) list) Lwt.t
+    key_range -> column_name list ->
+    (key option * (key * string option list) list) Lwt.t
 
   (** @return [Some last_column_name, column_list] if any column exists for the
     * selected key, [None] otherwise. *)
   val get_columns :
-    transaction -> Data.table ->
+    transaction -> table ->
     ?max_columns:int -> ?decode_timestamps:bool ->
-    Data.key -> Data.column_range ->
-    (Data.column_name * (Data.column list)) option Lwt.t
+    key -> column_range ->
+    (column_name * (column list)) option Lwt.t
 
   (** [get_column_values tx table key columns] returns the data associated to
     * the given [columns] (if existent). If [key] doesn't exist (that is, it has
     * got no associated columns), all the values will be [None]. *)
   val get_column_values :
-    transaction -> Data.table ->
-    Data.key -> Data.column_name list ->
+    transaction -> table ->
+    key -> column_name list ->
     string option list Lwt.t
 
   val get_column :
-    transaction -> Data.table ->
-    Data.key -> Data.column_name -> (string * Data.timestamp) option Lwt.t
+    transaction -> table ->
+    key -> column_name -> (string * timestamp) option Lwt.t
 
   (** {3} Write operations *)
 
   val put_columns :
-    transaction -> Data.table -> Data.key -> Update.column_data list ->
+    transaction -> table -> key -> column list ->
     unit Lwt.t
 
   val delete_columns :
-    transaction -> Data.table -> Data.key -> Data.column_name list -> unit Lwt.t
+    transaction -> table -> key -> column_name list -> unit Lwt.t
 
-  val delete_key : transaction -> Data.table -> Data.key -> unit Lwt.t
+  val delete_key : transaction -> table -> key -> unit Lwt.t
 end
