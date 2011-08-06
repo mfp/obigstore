@@ -2,11 +2,13 @@
 open Lwt
 open Printf
 
-module D = Data_model
+module D = Storage
+module DD = Data_model.Data
+module DU = Data_model.Update
 module List = struct include BatList include List end
 
-let mk_col ?(timestamp = D.Update.Auto_timestamp) ~name data =
-  { D.Update.name; data; timestamp; }
+let mk_col ?(timestamp = DU.Auto_timestamp) ~name data =
+  { DU.name; data; timestamp; }
 
 let time f =
   let t0 = Unix.gettimeofday () in
@@ -43,18 +45,18 @@ let make_row_dummy ?(avg_cols=10) () =
 
 let row_data_size (key, cols) =
   String.length key +
-  List.fold_left (fun s c -> s + String.length c.D.Update.data) 0 cols
+  List.fold_left (fun s c -> s + String.length c.DU.data) 0 cols
 
 let row_data_size_with_colnames (key, cols) =
   row_data_size (key, cols) +
-  List.fold_left (fun s c -> s + String.length c.D.Update.name) 0 cols
+  List.fold_left (fun s c -> s + String.length c.DU.name) 0 cols
 
 let pr_separator () =
   print_endline (String.make 80 '-')
 
 let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
   let tmp_dir = Test_00util.make_temp_dir () in
-  let db = Data_model.open_db tmp_dir in
+  let db = D.open_db tmp_dir in
   let ks = D.register_keyspace db "ks1" in
     printf "column insertion time (%d row batches, %d columns avg)\n"
       batch_size avg_cols;
@@ -89,7 +91,7 @@ let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
       tmp_dir
 
 let bm_sequential_read ?(read_committed = false) ~max_keys ?(max_columns = 10) dir =
-  let db = Data_model.open_db dir in
+  let db = D.open_db dir in
   let ks = D.register_keyspace db "ks1" in
   let n_keys = ref 0 in
   let n_columns = ref 0 in
@@ -101,12 +103,12 @@ let bm_sequential_read ?(read_committed = false) ~max_keys ?(max_columns = 10) d
   let rec read_from tx first =
     lwt (last_key, l) =
       D.get_slice tx "dummy" ~max_keys ~max_columns
-        (D.Data.Key_range { D.Data.first; up_to = None })
-        D.Data.All_columns in
+        (DD.Key_range { DD.first; up_to = None })
+        DD.All_columns in
     let len = List.length l in
       n_keys := !n_keys + len;
       n_columns := !n_columns +
-                   List.fold_left (fun s kd -> s + List.length kd.D.Data.columns) 0 l;
+                   List.fold_left (fun s kd -> s + List.length kd.DD.columns) 0 l;
       match last_key with
         | Some k when len = max_keys -> read_from tx (Some (k ^ "\000"))
         | _ -> return () in

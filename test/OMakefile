@@ -12,7 +12,7 @@ OCAML_LIBS[] +=
     ../src/ostore
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
-OCamlProgram(benchmark_data_model, test_00util benchmark_data_model)
+OCamlProgram(benchmark_storage, test_00util benchmark_storage)
 
 .PHONY: test
 test: test.opt

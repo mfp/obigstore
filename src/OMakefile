@@ -8,8 +8,10 @@ CFLAGS += -g -Wall -O2 -Ilibs/ocaml-leveldb/leveldb/include -fPIC
 
 OBJECTS[] =
   bytea
-  string_util
   data_model
+  datum_key
+  storage
+  string_util
 
 ostore_stubs.o: ostore_stubs.cc
 

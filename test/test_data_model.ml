@@ -6,9 +6,9 @@ open OUnit
 
 module List = struct include BatList include List end
 
-module D = Data_model
-module DD = D.Data
-module DU = D.Update
+module D = Storage
+module DD = Data_model.Data
+module DU = Data_model.Update
 
 let string_of_column c =
   sprintf "{ name = %S; data = %S; }" c.DD.name c.DD.data
@@ -59,9 +59,10 @@ let test_custom_comparator db =
 
   let encode ks (table, key, column) =
     let b = Bytea.create 13 in
-      D.Encoding.encode_datum_key b ks ~table ~key ~column ~timestamp:Int64.min_int;
+      Datum_key.encode_datum_key b (D.keyspace_id ks)
+        ~table ~key ~column ~timestamp:Int64.min_int;
       Bytea.contents b in
-  let cmp ks1 a ks2 b = D.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
+  let cmp ks1 a ks2 b = Datum_key.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
   let printer (tbl, key, col) =
     sprintf "{ table = %S; key = %S; column = %S }" tbl key col in
   let ksname () ks = D.keyspace_name ks in
