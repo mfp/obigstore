@@ -1,5 +1,6 @@
-
 module String = struct include String include BatString end
+
+type ks = int
 
 external custom_comparator_ : unit ->  LevelDB.comparator =
   "ostore_custom_comparator"
