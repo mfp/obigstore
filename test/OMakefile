@@ -18,4 +18,4 @@ OCamlProgram(benchmark_storage, test_00util benchmark_storage)
 test: test.opt
 	./test.opt -verbose
 
-.DEFAULT: test$(EXE) benchmark_data_model$(EXE)
+.DEFAULT: test$(EXE) benchmark_storage$(EXE)
