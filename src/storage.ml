@@ -112,6 +112,16 @@ let table_size_on_disk ks table =
        ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
        ~timestamp:Int64.zero)
 
+let key_range_size_on_disk ks table ?first ?up_to () =
+  L.get_approximate_size ks.ks_db.db
+    (Datum_key.encode_datum_key_to_string ks.ks_id
+       ~table ~key:(Option.default "" first) ~column:"" ~timestamp:Int64.min_int)
+    (Datum_key.encode_datum_key_to_string ks.ks_id
+       ~table
+       ~key:(Option.default "\255\255\255\255\255\255" up_to)
+       ~column:"\255\255\255\255\255\255"
+       ~timestamp:Int64.zero)
+
 module S =
 struct
   include Set.Make(String)
