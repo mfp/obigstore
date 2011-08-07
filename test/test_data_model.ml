@@ -9,6 +9,13 @@ module List = struct include BatList include List end
 module D = Storage
 module DM = Data_model
 
+let string_of_key_range = function
+    DM.Keys l -> sprintf "Keys %s" (string_of_list (sprintf "%S") l)
+  | DM.Key_range { DM.first; up_to } ->
+      sprintf "Key_range { first: %s; up_to: %s }"
+        (string_of_option (sprintf "%S") first)
+        (string_of_option (sprintf "%S") up_to)
+
 let string_of_column c =
   sprintf "{ name = %S; data = %S; }" c.DM.name c.DM.data
 
@@ -256,6 +263,56 @@ let test_get_keys_max_keys db =
       (fun tx ->
          get_key_range ks "tbl" ~max_keys:4 >|=
            aeq_string_list ["000"; "002"; "004"; "005"])
+
+let test_count_keys db =
+  let ks1 = D.register_keyspace db "test_get_keys_ranges" in
+  let ks2 = D.register_keyspace db "test_get_keys_ranges2" in
+
+  let count_key_range ks ?first ?last tbl =
+    D.read_committed_transaction ks
+      (fun tx -> D.count_keys tx tbl (key_range ?first ?last ())) in
+
+  let aeq_nkeys ks ?first ?last tbl expected =
+    let msg =
+      sprintf
+        "number of keys for %s" (string_of_key_range (key_range ?first ?last ()))
+    in
+      count_key_range ks tbl ?first ?last >|= aeq_int ~msg expected in
+
+    aeq_nkeys ks1 "tbl1" 0 >>
+    aeq_nkeys ks2 "tbl1" 0 >>
+
+    D.read_committed_transaction ks1
+      (fun tx ->
+         Lwt_list.iter_s
+           (fun k -> put tx "tbl1" k ["name", k])
+           ["a"; "ab"; "b"; "cde"; "d"; "e"; "f"; "g"]) >>
+
+    aeq_nkeys ks2 "tbl1" 0 >>
+    aeq_nkeys ks1 "tbl1" 8 >> (* ["a"; "ab"; "b"; "cde"; "d"; "e"; "f"; "g"] *)
+    aeq_nkeys ks1 "tbl1" ~last:"c" 3 >> (* ["a"; "ab"; "b"; ] *)
+    aeq_nkeys ks1 "tbl1" ~first:"c" ~last:"c" 0 >>
+    aeq_nkeys ks1 "tbl1" ~first:"c" ~last:"f" 4 >> (* [ "cde"; "d"; "e"; "f" ] *)
+    aeq_nkeys ks1 "tbl1" ~first:"b" 6 >> (* [ "b"; "cde"; "d"; "e"; "f"; "g" ] *)
+
+    D.read_committed_transaction ks1
+      (fun tx ->
+         put tx "tbl1" "fg" ["x", ""] >>
+         put tx "tbl1" "x" ["x", ""] >>
+         aeq_nkeys ks1 "tbl1" ~first:"e" 5 >> (* [ "e"; "f"; "fg"; "g"; "x" ] *)
+         aeq_nkeys ks1 "tbl1" ~first:"f" ~last:"g" 3 >> (* [ "f"; "fg"; "g"; ] *)
+         begin try_lwt
+           D.read_committed_transaction ks1
+             (fun tx ->
+                D.delete_columns tx "tbl1" "fg" ["x"] >>
+                D.delete_columns tx "tbl1" "xx" ["x"] >>
+                put tx "tbl1" "fgh" ["x", ""] >>
+                put tx "tbl1" "xx" ["x", ""] >>
+                aeq_nkeys ks1 "tbl1" ~first:"f" 5 >> (* [ "f"; "fgh"; "g"; "x"; "xx" ] *)
+                raise Exit)
+         with Exit -> return ()
+         end >>
+         aeq_nkeys ks1 "tbl1" ~first:"e" 5) (* [ "e"; "f"; "fg"; "g"; "x" ] *)
 
 let aeq_slice ?msg (last_key, data) actual =
   aeq ?msg string_of_slice
@@ -668,6 +725,7 @@ let tests =
     "get_keys discrete keys", test_get_keys_discrete;
     "get_keys honors max_keys", test_get_keys_max_keys;
     "get_keys with delete/put", test_get_keys_with_del_put;
+    "count_keys", test_count_keys;
     "get_slice discrete", test_get_slice_discrete;
     "get_slice key range", test_get_slice_key_range;
     "get_slice honors max_keys", test_get_slice_max_keys;

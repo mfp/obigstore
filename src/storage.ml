@@ -431,7 +431,7 @@ let fold_over_data tx table f acc ~first_key ~up_to_key =
         Lwt_pool.use pool
           (fun it -> fold_over_data_aux it tx table f acc ~first_key ~up_to_key)
 
-let get_keys_aux tx table ?(max_keys = max_int) = function
+let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
     Keys l ->
       let exists_key = exists_key tx table in
       let s = S.of_list l in
@@ -442,7 +442,7 @@ let get_keys_aux tx table ?(max_keys = max_int) = function
              S.mem k (M.find_default S.empty table tx.added_keys) ||
              exists_key k)
           s
-      in return s
+      in return (map_f s)
 
   | Key_range { first; up_to } ->
       (* we recover all the keys added in the transaction *)
@@ -460,11 +460,11 @@ let get_keys_aux tx table ?(max_keys = max_int) = function
       let is_column_deleted = is_column_deleted tx table in
       let keys_on_disk_kept = ref 0 in
 
-      let fold_datum s it
+      let fold_datum acc it
             ~key_buf ~key_len
             ~column_buf ~column_len ~timestamp_buf =
         if !keys_on_disk_kept >= max_keys then
-          Finish_fold s
+          Finish_fold acc
         else begin
           (* check if the key is deleted *)
           if is_key_deleted key_buf key_len then
@@ -475,17 +475,28 @@ let get_keys_aux tx table ?(max_keys = max_int) = function
           (* if neither the key nor the column were deleted *)
           else begin
             incr keys_on_disk_kept;
-            Skip_key_with (S.add (String.sub key_buf 0 key_len) s)
+            Skip_key_with (fold_f acc key_buf key_len);
           end
         end
       in
-        fold_over_data tx table fold_datum s ~first_key:first ~up_to_key:up_to
+        fold_over_data tx table fold_datum (init_f s) ~first_key:first ~up_to_key:up_to
 
 let get_keys tx table ?(max_keys = max_int) range =
-  get_keys_aux tx table ~max_keys range >|= S.to_list >|= List.take max_keys
+  get_keys_aux
+    (fun s -> s)
+    (fun s -> s)
+    (fun s key_buf key_len -> S.add (String.sub key_buf 0 key_len) s)
+    tx table ~max_keys range >|= S.to_list >|= List.take max_keys
 
 let count_keys tx table range =
-  get_keys_aux tx table ~max_keys:max_int range >|= S.cardinal
+  let s = ref S.empty in
+  get_keys_aux
+    (fun _s -> s := _s; S.cardinal _s)
+    (fun s -> S.cardinal s)
+    (fun n key_buf key_len ->
+       if S.mem (String.sub key_buf 0 key_len) !s then n
+       else (n + 1))
+    tx table ~max_keys:max_int range
 
 let merge_rev cmp l1 l2 =
   let rec loop_merge_rev cmp acc l1 l2 =

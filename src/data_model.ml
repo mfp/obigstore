@@ -75,7 +75,7 @@ sig
 
   (** Count the keys in the given range: [count_keys tx table range] is
     * functionality equivalent to [get_keys tx table range >|= List.length]
-    * but somewhat more efficient, by a constant factor. *)
+    * but somewhat faster, by a constant factor, and more memory-efficient. *)
   val count_keys : transaction -> table -> key_range -> Int64.t Lwt.t
 
   (** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
