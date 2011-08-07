@@ -67,10 +67,16 @@ sig
 
   (** {3 Read operations} *)
 
+  (** Return up to [max_keys] keys (default: [max_int]) in the given range. *)
   val get_keys :
     transaction -> table ->
     ?max_keys:int ->
     key_range -> string list Lwt.t
+
+  (** Count the keys in the given range: [count_keys tx table range] is
+    * functionality equivalent to [get_keys tx table range >|= List.length]
+    * but somewhat more efficient, by a constant factor. *)
+  val count_keys : transaction -> table -> key_range -> Int64.t Lwt.t
 
   (** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
     *  key_range column_range] returns a data slice corresponding to the keys

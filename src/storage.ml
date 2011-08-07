@@ -431,7 +431,7 @@ let fold_over_data tx table f acc ~first_key ~up_to_key =
         Lwt_pool.use pool
           (fun it -> fold_over_data_aux it tx table f acc ~first_key ~up_to_key)
 
-let get_keys tx table ?(max_keys = max_int) = function
+let get_keys_aux tx table ?(max_keys = max_int) = function
     Keys l ->
       let exists_key = exists_key tx table in
       let s = S.of_list l in
@@ -442,7 +442,7 @@ let get_keys tx table ?(max_keys = max_int) = function
              S.mem k (M.find_default S.empty table tx.added_keys) ||
              exists_key k)
           s
-      in return (List.take max_keys (S.to_list s))
+      in return s
 
   | Key_range { first; up_to } ->
       (* we recover all the keys added in the transaction *)
@@ -479,8 +479,13 @@ let get_keys tx table ?(max_keys = max_int) = function
           end
         end
       in
-        (fold_over_data tx table fold_datum s ~first_key:first ~up_to_key:up_to) >|=
-        S.to_list >|= List.take max_keys
+        fold_over_data tx table fold_datum s ~first_key:first ~up_to_key:up_to
+
+let get_keys tx table ?(max_keys = max_int) range =
+  get_keys_aux tx table ~max_keys range >|= S.to_list >|= List.take max_keys
+
+let count_keys tx table range =
+  get_keys_aux tx table ~max_keys:max_int range >|= S.cardinal
 
 let merge_rev cmp l1 l2 =
   let rec loop_merge_rev cmp acc l1 l2 =
