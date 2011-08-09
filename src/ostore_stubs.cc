@@ -156,7 +156,7 @@ ostore_bytea_blit_int64_complement_le(value dst, value off, value n)
  int64_t *p = (int64_t *)(&Byte_u(dst, Long_val(off)));
  *p = v ^ -1;
 #else
- char *d = String_val(dst);
+ char *d = &Byte_u(dst, Long_val(off));
  char *s = (char *)&v;
 
  d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
