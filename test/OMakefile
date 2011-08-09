@@ -5,7 +5,7 @@ OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
 	      -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src
 OCAML_BYTE_LINK_FLAGS =
 
-OCAMLINCLUDES += ../src
+OCAMLINCLUDES += ../src ../src/libs/ocaml-leveldb/src
 
 OCAML_LIBS[] +=
     ../src/libs/ocaml-leveldb/src/leveldb
@@ -13,6 +13,12 @@ OCAML_LIBS[] +=
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
 OCamlProgram(benchmark_storage, test_00util benchmark_storage)
+
+toplevel: $(addsuffix .cma, $(OCAML_LIBS))
+    echo $(CAML_LD_LIBRARY_PATH)
+    ocamlfind ocamlmktop $(mapprefix -package, $(OCAMLPACKS)) \
+	-cc g++ -ccopt -Wno-write-strings -thread -linkpkg \
+	-verbose -o toplevel -cclib -L. $^
 
 .PHONY: test
 test: test.opt

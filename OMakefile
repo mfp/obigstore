@@ -14,7 +14,11 @@ OCAMLOPTFLAGS += -inline 100
 
 OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax
 
-setenv(CAML_LD_LIBRARY_PATH, $(absname $(file $(ROOT)/src/libs/ocaml-leveldb/src)))
+LD_PATHS[] =
+	$(ROOT)/src/libs/ocaml-leveldb/src
+	$(ROOT)/src
+
+setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 
 .SUBDIRS: src test
 
