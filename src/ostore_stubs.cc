@@ -1,6 +1,7 @@
 
 #include <leveldb/db.h>
 #include <leveldb/comparator.h>
+#include "crc.h"
 
 #if defined(OS_MACOSX)
   #include <machine/endian.h>
@@ -184,5 +185,62 @@ ostore_decode_int64_complement_le(value s, value off)
   return(caml_copy_int64(x.ll));
 #endif
 }
+
+static uint32_t
+update_crc32c(uint32_t crc, const uint8_t *buf, size_t size)
+{
+ crc ^= 0xFFFFFFFF;
+ while(size--) {
+     crc = (crc >> 8) ^ crc32ctable[(crc ^ *buf++) & 0xFF];
+ }
+ crc ^= 0xFFFFFFFF;
+ return crc;
+}
+
+CAMLprim value
+ostore_crc32c_string(value s)
+{
+ CAMLparam1(s);
+ CAMLlocal1(ret);
+
+ ret = caml_alloc_string(4);
+ uint32_t *p = (uint32_t *) String_val(ret);
+ *p = update_crc32c(0, &Byte_u(s, 0), string_length(s));
+ CAMLreturn(ret);
+}
+
+CAMLprim value
+ostore_crc32c_init(value unit)
+{
+ CAMLparam0();
+ CAMLlocal1(ret);
+ ret = caml_alloc_string(4);
+ char *p = String_val(ret);
+ for(int i = 0; i < 4; i++) p[i] = 0;
+
+ CAMLreturn(ret);
+}
+
+CAMLprim value
+ostore_crc32c_update(value t, value s, value off, value len)
+{
+ uint32_t *p = (uint32_t *)String_val(s);
+ update_crc32c(*p, &Byte_u(s, Long_val(off)), Long_val(len));
+ return Val_unit;
+}
+
+CAMLprim value
+ostore_crc32c_ensure_lsb(value t)
+{
+ #ifndef IS_LITTLE_ENDIAN
+ const uint8_t *p = &Byte_u(t, 0);
+ uint8_t n;
+ n = p[0]; p[0] = p[3]; p[3] = n;
+ n = p[1]; p[1] = p[2]; p[2] = n;
+ #endif
+
+ return Val_unit;
+}
+
 
 }

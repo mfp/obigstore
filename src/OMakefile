@@ -8,6 +8,7 @@ CFLAGS += -g -Wall -O2 -Ilibs/ocaml-leveldb/leveldb/include -fPIC
 
 OBJECTS[] =
   bytea
+  crc32c
   data_model
   datum_key
   storage
