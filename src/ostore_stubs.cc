@@ -153,7 +153,7 @@ ostore_bytea_blit_int64_complement_le(value dst, value off, value n)
 
 #ifdef IS_LITTLE_ENDIAN
  // FIXME: non-aligned writes
- int64_t *p = (int64_t *)(String_val(dst) + Int_val(off));
+ int64_t *p = (int64_t *)(&Byte_u(dst, Long_val(off)));
  *p = v ^ -1;
 #else
  char *d = String_val(dst);
@@ -170,10 +170,10 @@ CAMLprim value
 ostore_decode_int64_complement_le(value s, value off)
 {
 #ifdef IS_LITTLE_ENDIAN
-  int64_t p = *((int64_t *)(String_val(s) + Int_val(off))) ^ -1;
+  int64_t p = *((int64_t *)(&Byte_u(s, Long_val(off)))) ^ -1;
   return(caml_copy_int64(p));
 #else
-  char *s = String_val(s) + Int_val(off);
+  uint8_t *s = &Byte_u(s, Int_val(off));
   union {
       int64_t ll;
       unsigned char c[8];
