@@ -100,7 +100,7 @@ let list_tables ks =
                   ~timestamp_buf:None
                   k (String.length k))
         then
-          collect_tables acc
+          acc
         else
           collect_tables ((String.sub !table_buf 0 !table_len) :: acc)
     end
