@@ -41,6 +41,9 @@ let read_keyspaces db =
 
 let open_db basedir =
   let db = L.open_db ~comparator:Datum_key.custom_comparator basedir in
+    (* ensure we have a end_of_db record *)
+    if not (L.mem db Datum_key.end_of_db_key) then
+      L.put ~sync:true db Datum_key.end_of_db_key (String.make 8 '\000');
     { basedir; db; keyspaces = read_keyspaces db; }
 
 let close_db t = L.close t.db

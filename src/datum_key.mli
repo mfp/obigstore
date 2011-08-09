@@ -24,6 +24,9 @@ val keyspace_table_prefix : string
   * [name]. *)
 val keyspace_table_key : string -> string
 
+(** Key guaranteed to be the last record in the DB. *)
+val end_of_db_key : string
+
 (** [decode_keyspace_table_name leveldbkey] returns the keyspace name if the
   * [leveldbkey] is a valid keyspace table key (i.e., is prefixed by
   * [keyspace_table_prefix]. *)

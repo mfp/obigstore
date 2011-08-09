@@ -25,6 +25,8 @@ let version = 0
 let keyspace_table_prefix = "00"
 let keyspace_table_key ksname = "00" ^ ksname
 
+let end_of_db_key = String.make 8 (Char.chr 0xFF)
+
 let decode_keyspace_table_name k =
   if String.slice k ~last:(String.length keyspace_table_prefix) <>
      keyspace_table_prefix then
