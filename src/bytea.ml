@@ -131,10 +131,19 @@ let add_rev_vint b n =
 external ostore_bytea_blit_int64_complement_le : string -> int -> Int64.t -> unit =
   "ostore_bytea_blit_int64_complement_le" "noalloc"
 
+external ostore_bytea_blit_int32_le : string -> int -> int -> unit =
+  "ostore_bytea_blit_int_as_i32_le" "noalloc"
+
 let add_int64_complement_le b n =
   let new_position = b.position + 8 in
   if new_position > b.length then resize b 8;
   ostore_bytea_blit_int64_complement_le b.buffer b.position n;
   b.position <- new_position
+
+let add_int32_le b n =
+  let new_position = b.position + 8 in
+    if new_position > b.length then resize b 8;
+    ostore_bytea_blit_int32_le b.buffer b.position n;
+    b.position <- new_position
 
 let unsafe_string b = b.buffer
