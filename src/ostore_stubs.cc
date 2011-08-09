@@ -60,7 +60,9 @@ class OStoreComparator1 : public leveldb::Comparator {
         if(!sb && sa) return 1;
         if(!sa && !sb) return 0;
 
-        if(a[0] != b[0]) return (a[0] - b[0]);
+        // need some care here: cannot do a[0] - b[0] because they are signed
+        // chars
+        if(a[0] != b[0]) return a.compare(b);
 
         switch(a[0]) {
             case '1': {

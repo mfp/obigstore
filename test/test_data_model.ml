@@ -62,14 +62,16 @@ let test_custom_comparator db =
   let ks = D.register_keyspace db "test_custom_comparator" in
   let ks2 = D.register_keyspace db "test_custom_comparator2" in
 
-  let encode ks (table, key, column) =
+  let encode ks (table, key, column, timestamp) =
     let b = Bytea.create 13 in
       Datum_key.encode_datum_key b (D.keyspace_id ks)
-        ~table ~key ~column ~timestamp:Int64.min_int;
+        ~table ~key ~column ~timestamp;
       Bytea.contents b in
-  let cmp ks1 a ks2 b = Datum_key.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
-  let printer (tbl, key, col) =
-    sprintf "{ table = %S; key = %S; column = %S }" tbl key col in
+  let cmp ks1 a ks2 b =
+    Datum_key.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
+  let printer (tbl, key, col, ts) =
+    sprintf
+      "{ table = %S; key = %S; column = %S, timestamp = %Ld }" tbl key col ts in
   let ksname () ks = D.keyspace_name ks in
   let aeq ?(ks1 = ks) ?(ks2 = ks) a b =
               match cmp ks1 a ks2 b with
@@ -95,22 +97,60 @@ let test_custom_comparator db =
     aeq ?ks1:ks2 ?ks2 b b;
     aeq ?ks1:ks2 ?ks2 a a;
     agt ?ks1 ?ks2 a b;
-    alt ?ks1:ks2 ?ks2:ks1 b a
-  in
-    agt ~ks1:ks2 ("", "", "") ("", "", "");
-    agt ~ks1:ks2 ("", "", "") ("x", "", "");
-    agt ~ks1:ks2 ("a", "b", "c") ("a", "b", "d");
-    agt ~ks1:ks2 ("a", "b", "c") ("a", "c", "c");
-    agt ~ks1:ks2 ("a", "b", "c") ("b", "b", "c");
-    agt ("x", "", "") ("a", "", "");
-    agt ("", "x", "") ("", "", "");
-    agt ("", "x", "") ("", "", "");
-    agt ("\000", "", "") ("", "", "");
-    agt ("\000", "", "") ("", "\000", "");
-    agt ("\000", "", "") ("", "\000", "b");
-    agt ("1", "\000", "") ("1", "", "\000");
-    agt ("1", "1\000", "") ("1", "1", "\000");
-    agt ("tbl", "k\000", "2") ("tbl", "k", "\0003");
+    alt ?ks1:ks2 ?ks2:ks1 b a in
+  let t = 0L in
+    agt ~ks1:ks2 ("", "", "", t) ("", "", "", t);
+    agt ~ks1:ks2 ("", "", "", t) ("x", "", "", t);
+    agt ~ks1:ks2 ("a", "b", "c", t) ("a", "b", "d", t);
+    agt ~ks1:ks2 ("a", "b", "c", t) ("a", "c", "c", t);
+    agt ~ks1:ks2 ("a", "b", "c", t) ("b", "b", "c", t);
+    agt ("x", "", "", t) ("a", "", "", t);
+    agt ("", "x", "", t) ("", "", "", t);
+    agt ("", "x", "", t) ("", "", "", t);
+    agt ("\000", "", "", t) ("", "", "", t);
+    agt ("\000", "", "", t) ("", "\000", "", t);
+    agt ("\000", "", "", t) ("", "\000", "b", t);
+    agt ("1", "\000", "", t) ("1", "", "\000", t);
+    agt ("1", "1\000", "", t) ("1", "1", "\000", t);
+    agt ("tbl", "k\000", "2", t) ("tbl", "k", "\0003", t);
+    agt ("t", "d", "x", 0L) ("t", "d", "", Int64.min_int);
+    agt ("t", "d", "d", 0L) ("t", "d", "", 0L);
+    agt ("t", "d", "d", Int64.min_int) ("t", "d", "", 0L);
+    agt ("t", "d", "d", Int64.min_int) ("t", "d", "", Int64.min_int);
+    return ()
+
+let test_custom_comparator_non_datum db =
+  let txt rev = if rev then "not " else "" in
+  let alt ?(rev=false) x y =
+    aeq_bool
+      ~msg:(sprintf "%S should %sbe LT %S" x (txt rev) y)
+      (not rev) (Datum_key.apply_custom_comparator x y < 0) in
+  let agt ?(rev=false) x y =
+    aeq_bool
+      ~msg:(sprintf "%S should %sbe GT %S" x (txt rev) y)
+      (not rev) (Datum_key.apply_custom_comparator x y > 0) in
+  let aeq ?(rev=false) x y =
+    aeq_bool
+      ~msg:(sprintf "%S should %sbe EQ %S" x (txt rev) y)
+      (not rev) (Datum_key.apply_custom_comparator x y = 0) in
+  let rev = true in
+  let alt x y = alt x y; agt y x; aeq ~rev x y in
+    aeq "" "";
+    alt "" "1";
+    alt "" "\255";
+    alt "1033232" "\255";
+    alt "\255" "\255\000";
+    (* null column with zero timestamp vs. non-null column *)
+    alt "1\001tbld\000\000\000\000\000\000\000\128\001\000\003\t\000"
+        "1\001tbldd%d]\000\000V\251\255\001\001\003\t\000";
+    (* diff timestamps, but nonetheless equal datum_keys *)
+    aeq
+      "1\001tbldd\212<\015\017\254U\251\255\001\001\003\t\000"
+      "1\001tbldd\135;\015\017\254U\251\255\001\001\003\t\000";
+    (* unrelated keys *)
+    alt
+      "1\001tblcc\187\215\205\226\253U\251\255\001\001\003\t\000"
+      "1\001tbldd@\214\205\226\253U\251\255\001\001\003\t\000";
     return ()
 
 let test_keyspace_management db =
@@ -719,6 +759,7 @@ let tests =
   List.map (fun (n, f) -> n >:: test_with_db f)
   [
     "custom comparator", test_custom_comparator;
+    "custom comparator (2)", test_custom_comparator_non_datum;
     "keyspace management", test_keyspace_management;
     "list tables", test_list_tables;
     "get_keys ranges", test_get_keys_ranges;
