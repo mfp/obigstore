@@ -1,3 +1,6 @@
 [submodule "src/libs/ocaml-leveldb"]
 	path = src/libs/ocaml-leveldb
 	url = git://github.com/mfp/ocaml-leveldb.git
+[submodule "src/libs/extprot"]
+	path = src/libs/extprot
+	url = git://github.com/mfp/extprot.git

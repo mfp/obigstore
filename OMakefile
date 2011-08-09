@@ -5,7 +5,7 @@ BYTE_ENABLED = true
 
 .PHONY: clean
 
-.SUBDIRS: src/libs/ocaml-leveldb
+.SUBDIRS: src/libs/ocaml-leveldb src/libs/extprot
 
 OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread
