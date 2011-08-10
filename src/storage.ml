@@ -499,7 +499,7 @@ let count_keys tx table range =
     (fun n key_buf key_len ->
        if S.mem (String.sub key_buf 0 key_len) !s then n
        else (n + 1))
-    tx table ~max_keys:max_int range
+    tx table ~max_keys:max_int range >|= Int64.of_int
 
 let merge_rev cmp l1 l2 =
   let rec loop_merge_rev cmp acc l1 l2 =

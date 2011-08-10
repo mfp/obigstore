@@ -317,7 +317,7 @@ let test_count_keys db =
       sprintf
         "number of keys for %s" (string_of_key_range (key_range ?first ?last ()))
     in
-      count_key_range ks tbl ?first ?last >|= aeq_int ~msg expected in
+      count_key_range ks tbl ?first ?last >|= Int64.to_int >|= aeq_int ~msg expected in
 
     aeq_nkeys ks1 "tbl1" 0 >>
     aeq_nkeys ks2 "tbl1" 0 >>
