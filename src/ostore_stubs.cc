@@ -167,6 +167,27 @@ ostore_bytea_blit_int64_complement_le(value dst, value off, value n)
 }
 
 CAMLprim value
+ostore_bytea_blit_int64_le(value dst, value off, value n)
+{
+ int64_t v = Int64_val(n);
+
+#ifdef IS_LITTLE_ENDIAN
+ // FIXME: non-aligned writes
+ int64_t *p = (int64_t *)(&Byte_u(dst, Long_val(off)));
+ *p = v;
+#else
+ char *d = &Byte_u(dst, Long_val(off));
+ char *s = (char *)&v;
+
+ d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
+ d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
+#endif
+
+ return(Val_unit);
+}
+
+
+CAMLprim value
 ostore_bytea_blit_int_as_i32_le(value dst, value off, value n)
 {
  int32_t v = Long_val(n);
