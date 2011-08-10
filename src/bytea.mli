@@ -19,5 +19,6 @@ val add_vint : t -> int -> unit
 val add_rev_vint : t -> int -> unit
 
 val add_int64_complement_le : t -> Int64.t -> unit
+val add_int32_le : t -> int -> unit
 
 val unsafe_string : t -> string
