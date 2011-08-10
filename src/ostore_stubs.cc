@@ -208,6 +208,27 @@ ostore_bytea_blit_int_as_i32_le(value dst, value off, value n)
 }
 
 CAMLprim value
+ostore_decode_int64_le(value s, value off)
+{
+#ifdef IS_LITTLE_ENDIAN
+  int64_t p = *((int64_t *)(&Byte_u(s, Long_val(off)))) ^ -1;
+  return(caml_copy_int64(p));
+#else
+  uint8_t *s = &Byte_u(s, Int_val(off));
+  union {
+      int64_t ll;
+      unsigned char c[8];
+  } x;
+
+  x.c[0] = s[7]; x.c[1] = s[6]; x.c[2] = s[5]; x.c[3] = x[4];
+  x.c[4] = s[3]; x.c[5] = s[2]; x.c[6] = s[1]; x.c[7] = x[0];
+
+  return(caml_copy_int64(x.ll ^ -1));
+#endif
+}
+
+
+CAMLprim value
 ostore_decode_int64_complement_le(value s, value off)
 {
 #ifdef IS_LITTLE_ENDIAN

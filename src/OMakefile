@@ -12,6 +12,7 @@ OBJECTS[] =
   data_model
   datum_key
   protocol
+  protocol_payload
   storage
   string_util
 
