@@ -1,5 +1,5 @@
 
-OCAMLINCLUDES += libs/ocaml-leveldb/src
+OCAMLINCLUDES += libs/ocaml-leveldb/src libs/extprot/runtime
 
 CFLAGS += -g -Wall -O2 -Ilibs/ocaml-leveldb/leveldb/include -fPIC
 
@@ -11,8 +11,12 @@ OBJECTS[] =
   crc32c
   data_model
   datum_key
+  protocol
   storage
   string_util
+
+request.ml: request.proto
+	./libs/extprot/extprotc $<
 
 ostore_stubs.o: ostore_stubs.cc
 

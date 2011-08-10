@@ -1,0 +1,79 @@
+
+type opt 'a = None | Some 'a
+  options "ocaml.type_equals" = "option"
+
+type table = string
+
+type keyspace = int
+
+type max_keys = opt<int>
+type max_columns = max_keys
+type decode_timestamps = bool
+
+type key = string
+type column_name = string
+
+type range = 
+    { 
+      first : opt<string>;
+      up_to : opt<string>;
+    }
+  options "ocaml.type_equals" = "Data_model.range"
+
+type key_range =
+    Key_range range
+  | Keys [string]
+  options "ocaml.type_equals" = "Data_model.key_range"
+
+type column_range =
+    All_columns
+  | Columns [string]
+  | Column_range range
+  options "ocaml.type_equals" = "Data_model.column_range"
+
+type timestamp = No_timestamp | Timestamp long
+  options "ocaml.type_equals" = "Data_model.timestamp"
+
+type column =
+  { name : column_name; data : string; timestamp : timestamp; }
+  options "ocaml.type_equals" = "Data_model.column"
+
+message column_ = column
+
+type req = { keyspace : keyspace }
+
+message request =
+    Register_keyspace { name : string }
+  | List_keyspaces { prefix : string }
+  | List_tables req
+  | Table_size_on_disk { keyspace : keyspace; table : table }
+  | Key_range_size_on_disk { keyspace : keyspace; table : table;
+                             range : range }
+  | Begin req
+  | Commit req
+  | Abort req
+  | Get_keys { keyspace : keyspace; table : table; max_keys : max_keys;
+               key_range : key_range }
+  | Count_keys { keyspace : keyspace; table : table;
+                 key_range : key_range }
+  | Get_slice { keyspace : keyspace; table : table;
+                max_keys : max_keys; max_columns : max_columns;
+                decode_timestamps : bool; key_range : key_range;
+                column_range : column_range }
+  | Get_slice_values { keyspace : keyspace; table : table;
+                       max_keys : max_keys; key_range : key_range;
+                       columns : [column_name] }
+  | Get_columns { keyspace : keyspace; table : table; max_columns : max_columns;
+                  decode_timestamps : bool; key : key;
+                  column_range : column_range }
+  | Get_column_values { keyspace : keyspace; table : table;
+                        key : key; columns : [ column_name ] }
+  | Get_column { keyspace : keyspace; table : table; key : key;
+                 column : column_name; }
+  | Put_columns { keyspace : keyspace; table : table; key : key;
+                  columns : [ column ] }
+  | Delete_columns { keyspace : keyspace; table : table; key : key;
+                     columns : [ column_name ] }
+  | Delete_key { keyspace : keyspace; table : table; key : key }
+
+(* vim:set ft=omlet: *) 
