@@ -13,6 +13,11 @@ val reset : t -> unit
   * corresponding to an unsigned 32-bit integer in lsb order. *)
 val string : string -> string
 
+(** [substring s off len] computes the CRC32C of the substring of [s] starting
+  * at [off] of length [len]. The result is returned as a 4-byte
+  * string corresponding to an unsigned 32-bit integer in lsb order. *)
+val substring : string -> int -> int -> string
+
 val update : t -> string -> int -> int -> unit
 val update_unsafe : t -> string -> int -> int -> unit
 

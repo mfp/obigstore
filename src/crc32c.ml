@@ -24,6 +24,11 @@ let result t =
 
 let unsafe_result t = fix_endianness t; t
 
+let substring s off len =
+  let crc = create () in
+    update crc s off len;
+    unsafe_result crc
+
 let gb s n = Char.code (String.unsafe_get s n)
 let sb s n b = String.unsafe_set s n (Char.unsafe_chr b)
 
