@@ -54,7 +54,7 @@ sig
   val table_size_on_disk : keyspace -> table -> Int64.t
 
   val key_range_size_on_disk :
-    keyspace -> table -> ?first:string option -> ?up_to:string option -> Int64.t
+    keyspace -> ?first:string -> ?up_to:string -> table -> Int64.t
 
   (** {3 Transactions} *)
   type transaction
