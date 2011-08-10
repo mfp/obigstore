@@ -23,3 +23,11 @@ let result t =
     s
 
 let unsafe_result t = fix_endianness t; t
+
+let gb s n = Char.code (String.unsafe_get s n)
+let sb s n b = String.unsafe_set s n (Char.unsafe_chr b)
+
+let xor a b =
+  for i = 0 to min (String.length a) (String.length b) - 1 do
+    sb a i (gb a i lxor gb b i)
+  done

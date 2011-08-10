@@ -25,3 +25,7 @@ val result : t -> string
   * calculations (neither in the [update] nor the [result] families) until it
   * is {!reset}. *)
 val unsafe_result : t -> string
+
+(** [xor a b] updates [a] so that it reflects the result of XORing [a] and
+  * [b]. *)
+val xor : string -> string -> unit
