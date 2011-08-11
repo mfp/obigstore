@@ -7,8 +7,6 @@ module Make(D : Data_model.S)(P : PAYLOAD) =
 struct
   open Request
 
-  let sync_req_id = String.make 8 '\000'
-
   exception Abort_exn
   exception Commit_exn
 

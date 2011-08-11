@@ -7,6 +7,8 @@ type request_id = string
 
 exception Error of error
 
+let sync_req_id = String.make 8 '\000'
+
 let skip_buf = String.create 4096
 
 let rec skip ich count =
