@@ -17,7 +17,7 @@
 (*                                                                     *)
 (***********************************************************************)
 
-type t =
+type t = Extprot.Msg_buffer.t =
  {mutable buffer : string;
   mutable position : int;
   mutable length : int;

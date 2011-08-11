@@ -1,4 +1,4 @@
-type t
+type t = Extprot.Msg_buffer.t
 
 val create : int -> t
 val contents : t -> string
