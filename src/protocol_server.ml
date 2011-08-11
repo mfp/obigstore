@@ -108,19 +108,22 @@ struct
                     Lwt.with_value tx_key (Some tx)
                       (fun () ->
                          try_lwt
+                           P.return_ok ~buf:c.out_buf c.och ~request_id ()>>
                            service c
-                         with Commit_exn -> return ()))
-             with Abort_exn -> return ())
+                         with Commit_exn ->
+                           P.return_ok ~buf:c.out_buf c.och ~request_id ()))
+             with Abort_exn ->
+               P.return_ok ~buf:c.out_buf c.och ~request_id ())
     | Commit _ ->
         (* only commit if we're inside a tx *)
         begin match Lwt.get tx_key with
-            None -> return ()
+            None -> P.return_ok ~buf:c.out_buf c.och ~request_id ()
           | Some _ -> raise_lwt Commit_exn
         end
     | Abort _ ->
         (* only abort if we're inside a tx *)
         begin match Lwt.get tx_key with
-            None -> return ()
+            None -> P.return_ok ~buf:c.out_buf c.och ~request_id ()
           | Some _ -> raise_lwt Abort_exn
         end
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
