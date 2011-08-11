@@ -7,16 +7,6 @@ type request_id = string
 
 exception Error of error
 
-let add_string dst s =
-  Bytea.add_int32_le dst (String.length s);
-  Bytea.add_string dst s
-
-let add_frame_type = Bytea.add_int32_le
-
-let add_option f dst = function
-    None -> Bytea.add_byte dst 0
-  | Some x -> Bytea.add_byte dst 1; f dst x
-
 let skip_buf = String.create 4096
 
 let rec skip ich count =
