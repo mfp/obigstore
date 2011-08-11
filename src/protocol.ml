@@ -1,4 +1,5 @@
 
+open Printf
 open Lwt
 open Data_model
 
@@ -6,6 +7,17 @@ type error = Corrupted_frame | Bad_request | Unknown_keyspace | Other of int
 type request_id = string
 
 exception Error of error
+
+let string_of_error = function
+  | Corrupted_frame -> "Corrupted_frame"
+  | Bad_request -> "Bad_request"
+  | Unknown_keyspace  -> "Unknown_keyspace"
+  | Other n -> sprintf "(Other %d)" n
+
+let () =
+  Printexc.register_printer
+    (function Error x -> Some (sprintf "Error %s" (string_of_error x))
+       | _ -> None)
 
 let sync_req_id = String.make 8 '\000'
 
