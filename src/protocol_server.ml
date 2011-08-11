@@ -64,7 +64,7 @@ struct
   and respond c ~request_id r =
     match r with
       Register_keyspace { Register_keyspace.name } ->
-        let ks = D.register_keyspace c.db name in
+        lwt ks = D.register_keyspace c.db name in
         let idx =
           (* find keyspace idx in local table, register if not found *)
           try
@@ -78,24 +78,25 @@ struct
           P.return_keyspace ~buf:c.out_buf c.och ~request_id idx >>
           service c
     | List_keyspaces _ ->
-        P.return_keyspace_list ~buf:c.out_buf c.och ~request_id
-          (D.list_keyspaces c.db) >>
+        D.list_keyspaces c.db >>=
+          P.return_keyspace_list ~buf:c.out_buf c.och ~request_id >>
         service c
     | List_tables { Req.keyspace } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             P.return_table_list ~buf:c.out_buf c.och ~request_id (D.list_tables ks))
+             D.list_tables ks >>=
+             P.return_table_list ~buf:c.out_buf c.och ~request_id)
     | Table_size_on_disk { Table_size_on_disk.keyspace; table; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             P.return_table_size_on_disk ~buf:c.out_buf c.och ~request_id
-               (D.table_size_on_disk ks table))
+             D.table_size_on_disk ks table >>=
+             P.return_table_size_on_disk ~buf:c.out_buf c.och ~request_id)
     | Key_range_size_on_disk { Key_range_size_on_disk.keyspace; table; range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             P.return_key_range_size_on_disk ~buf:c.out_buf c.och ~request_id
-               (D.key_range_size_on_disk ks table
-                  ?first:range.first ?up_to:range.up_to))
+             D.key_range_size_on_disk ks table
+               ?first:range.first ?up_to:range.up_to >>=
+             P.return_key_range_size_on_disk ~buf:c.out_buf c.och ~request_id)
     | Begin { Req.keyspace; } ->
         (* FIXME: check if we have an open tx in another ks, and signal error
          * if so *)

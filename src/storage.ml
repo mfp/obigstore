@@ -26,6 +26,8 @@ type db =
 
 type keyspace = { ks_db : db; ks_name : string; ks_id : int }
 
+let (|>) x f = f x
+
 let read_keyspaces db =
   let h = Hashtbl.create 13 in
     L.iter_from
@@ -49,22 +51,23 @@ let open_db basedir =
 let close_db t = L.close t.db
 
 let list_keyspaces t =
-  List.sort String.compare (Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [])
+  Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>
+  List.sort String.compare |> return
 
 let register_keyspace t ks_name =
   try
-    { ks_db = t; ks_name; ks_id = Hashtbl.find t.keyspaces ks_name }
+    return { ks_db = t; ks_name; ks_id = Hashtbl.find t.keyspaces ks_name }
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ v id -> max v id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
       L.put ~sync:true t.db (Datum_key.keyspace_table_key ks_name) (string_of_int ks_id);
       Hashtbl.add t.keyspaces ks_name ks_id;
-      { ks_db = t; ks_name; ks_id; }
+      return { ks_db = t; ks_name; ks_id; }
 
 let get_keyspace t ks_name =
-  try
+  return begin try
     Some ({ ks_db = t; ks_name; ks_id = Hashtbl.find t.keyspaces ks_name })
-  with Not_found -> None
+  with Not_found -> None end
 
 let keyspace_name ks = ks.ks_name
 
@@ -105,7 +108,7 @@ let list_tables ks =
           collect_tables ((String.sub !table_buf 0 !table_len) :: acc)
     end
 
-  in List.rev (collect_tables [])
+  in return (List.rev (collect_tables []))
 
 let table_size_on_disk ks table =
   L.get_approximate_size ks.ks_db.db
@@ -113,7 +116,8 @@ let table_size_on_disk ks table =
        ~table ~key:"" ~column:"" ~timestamp:Int64.min_int)
     (Datum_key.encode_datum_key_to_string ks.ks_id
        ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
-       ~timestamp:Int64.zero)
+       ~timestamp:Int64.zero) |>
+  return
 
 let key_range_size_on_disk ks ?first ?up_to table =
   L.get_approximate_size ks.ks_db.db
@@ -123,7 +127,8 @@ let key_range_size_on_disk ks ?first ?up_to table =
        ~table
        ~key:(Option.default "\255\255\255\255\255\255" up_to)
        ~column:"\255\255\255\255\255\255"
-       ~timestamp:Int64.zero)
+       ~timestamp:Int64.zero) |>
+  return
 
 module S =
 struct
@@ -269,8 +274,6 @@ let repeatable_read_transaction f =
                         (fun () -> return (RA.iterator access))
            in (access, Some pool, true))
     f
-
-let (|>) x f = f x
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =

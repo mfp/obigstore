@@ -59,8 +59,8 @@ let put_slice ks tbl l =
     (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
 
 let test_custom_comparator db =
-  let ks = D.register_keyspace db "test_custom_comparator" in
-  let ks2 = D.register_keyspace db "test_custom_comparator2" in
+  lwt ks = D.register_keyspace db "test_custom_comparator" in
+  lwt ks2 = D.register_keyspace db "test_custom_comparator2" in
 
   let encode ks (table, key, column, timestamp) =
     let b = Bytea.create 13 in
@@ -154,22 +154,22 @@ let test_custom_comparator_non_datum db =
     return ()
 
 let test_keyspace_management db =
-  aeq_string_list [] (D.list_keyspaces db);
-  let k1 = D.register_keyspace db "foo" in
-  let k2 = D.register_keyspace db "bar" in
-    aeq_string_list ["bar"; "foo";] (D.list_keyspaces db);
-    aeq_some D.keyspace_name k1 (D.get_keyspace db "foo");
-    aeq_some D.keyspace_name k2 (D.get_keyspace db "bar");
+  D.list_keyspaces db >|= aeq_string_list [] >>
+  lwt k1 = D.register_keyspace db "foo" in
+  lwt k2 = D.register_keyspace db "bar" in
+  D.list_keyspaces db >|= aeq_string_list ["bar"; "foo";] >>
+  D.get_keyspace db "foo" >|= aeq_some D.keyspace_name k1 >>
+  D.get_keyspace db "bar" >|= aeq_some D.keyspace_name k2 >>
     return ()
 
 let test_list_tables db =
-  let ks1 = D.register_keyspace db "test_list_tables" in
-  let ks2 = D.register_keyspace db "test_list_tables2" in
-    aeq_string_list [] (D.list_tables ks1);
+  lwt ks1 = D.register_keyspace db "test_list_tables" in
+  lwt ks2 = D.register_keyspace db "test_list_tables2" in
+    D.list_tables ks1 >|= aeq_string_list [] >>
     lwt () =
       D.read_committed_transaction ks1
         (fun tx -> D.put_columns tx "tbl1" "somekey" []) in
-    aeq_string_list [] (D.list_tables ks1);
+    D.list_tables ks1 >|= aeq_string_list [] >>
     lwt () =
       D.read_committed_transaction ks1
         (fun tx ->
@@ -179,8 +179,8 @@ let test_list_tables db =
            D.put_columns tx "tbl2" "someotherkey"
              [ { DM.name = "someothercol"; data = "xxx";
                  timestamp = DM.No_timestamp; }; ]) in
-    aeq_string_list ["tbl1"; "tbl2"] (D.list_tables ks1);
-    aeq_string_list [] (D.list_tables ks2);
+    D.list_tables ks1 >|= aeq_string_list ["tbl1"; "tbl2"] >>
+    D.list_tables ks2 >|= aeq_string_list [] >>
     return ()
 
 let get_key_range ks ?max_keys ?first ?last tbl =
@@ -193,8 +193,8 @@ let get_keys ks tbl l =
     (fun tx -> D.get_keys tx tbl (DM.Keys l))
 
 let test_get_keys_ranges db =
-  let ks1 = D.register_keyspace db "test_get_keys_ranges" in
-  let ks2 = D.register_keyspace db "test_get_keys_ranges2" in
+  lwt ks1 = D.register_keyspace db "test_get_keys_ranges" in
+  lwt ks2 = D.register_keyspace db "test_get_keys_ranges2" in
 
     get_key_range ks1 "tbl1" >|= aeq_string_list [] >>
     get_key_range ks2 "tbl1" >|= aeq_string_list [] >>
@@ -243,7 +243,7 @@ let test_get_keys_ranges db =
            aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
 let test_get_keys_with_del_put db =
-  let ks = D.register_keyspace db "test_get_keys_with_del_put" in
+  lwt ks = D.register_keyspace db "test_get_keys_with_del_put" in
   let key_name i = sprintf "%03d" i in
     get_key_range ks "tbl" >|= aeq_string_list [] >>
     put_slice ks "tbl"
@@ -259,7 +259,7 @@ let test_get_keys_with_del_put db =
     get_key_range ks "tbl" >|= aeq_string_list ["000"; "002"; "004"]
 
 let test_get_keys_discrete db =
-  let ks1 = D.register_keyspace db "test_get_keys_discrete" in
+  lwt ks1 = D.register_keyspace db "test_get_keys_discrete" in
     get_keys ks1 "tbl" ["a"; "b"] >|= aeq_string_list [] >>
     D.read_committed_transaction ks1
       (fun tx ->
@@ -280,7 +280,7 @@ let test_get_keys_discrete db =
     get_keys ks1 "tbl" ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"]
 
 let test_get_keys_max_keys db =
-  let ks = D.register_keyspace db "test_get_keys_max_keys" in
+  lwt ks = D.register_keyspace db "test_get_keys_max_keys" in
   let key_name i = sprintf "%03d" i in
     put_slice ks "tbl"
       (List.init 10 (fun i -> (key_name i, [ "x", ""; "y", "" ]))) >>
@@ -305,8 +305,8 @@ let test_get_keys_max_keys db =
            aeq_string_list ["000"; "002"; "004"; "005"])
 
 let test_count_keys db =
-  let ks1 = D.register_keyspace db "test_get_keys_ranges" in
-  let ks2 = D.register_keyspace db "test_get_keys_ranges2" in
+  lwt ks1 = D.register_keyspace db "test_get_keys_ranges" in
+  lwt ks2 = D.register_keyspace db "test_get_keys_ranges2" in
 
   let count_key_range ks ?first ?last tbl =
     D.read_committed_transaction ks
@@ -376,7 +376,7 @@ let aeq_slice_columns ?msg x actual =
   aeq ?msg string_of_slice_columns x actual
 
 let test_get_slice_discrete db =
-  let ks = D.register_keyspace db "test_get_slice_discrete" in
+  lwt ks = D.register_keyspace db "test_get_slice_discrete" in
     put_slice ks "tbl"
       [
        "a", ["k", "kk"; "v", "vv"];
@@ -407,7 +407,7 @@ let test_get_slice_discrete db =
                "c", "w", [ "w", "ww" ]]))
 
 let test_get_slice_key_range db =
-  let ks = D.register_keyspace db "test_get_slice_key_range" in
+  lwt ks = D.register_keyspace db "test_get_slice_key_range" in
   let all = DM.All_columns in
     put_slice ks "tbl"
       [
@@ -433,7 +433,7 @@ let test_get_slice_key_range db =
                 "c", "w", [ "w", "ww" ] ]))
 
 let test_get_slice_max_keys db =
-  let ks = D.register_keyspace db "test_get_slice_max_keys" in
+  lwt ks = D.register_keyspace db "test_get_slice_max_keys" in
   let all = DM.All_columns in
     put_slice ks "tbl"
       (List.init 100 (fun i -> (sprintf "%03d" i, [ "x", "" ]))) >>
@@ -474,7 +474,7 @@ let test_get_slice_max_keys db =
                         "002", "x", ["x", ""]]))
 
 let test_get_slice_max_columns db =
-  let ks = D.register_keyspace db "test_get_slice_max_columns" in
+  lwt ks = D.register_keyspace db "test_get_slice_max_columns" in
     put_slice ks "tbl"
       (List.init 10
          (fun i -> (sprintf "%02d" i,
@@ -521,7 +521,7 @@ let test_get_slice_max_columns db =
                           "01", "10", ["0", ""; "10", "a"]]))
 
 let test_get_slice_column_ranges db =
-  let ks = D.register_keyspace db "test_get_slice_column_ranges" in
+  lwt ks = D.register_keyspace db "test_get_slice_column_ranges" in
   let expect tx =
     D.get_slice tx "tbl" ~max_keys:1
       (key_range ~first:"02" ~last:"03" ())
@@ -550,7 +550,7 @@ let test_get_slice_column_ranges db =
     D.read_committed_transaction ks expect
 
 let test_get_slice_nested_transactions db =
-  let ks = D.register_keyspace db "test_get_slice_nested_transactions" in
+  lwt ks = D.register_keyspace db "test_get_slice_nested_transactions" in
   let all = DM.All_columns in
     put_slice ks "tbl"
       [
@@ -587,7 +587,7 @@ let test_get_slice_nested_transactions db =
                "c", "c2", ["c1", ""; "c2", ""]]))
 
 let test_get_slice_read_tx_data db =
-  let ks = D.register_keyspace db "test_get_slice_read_tx_data" in
+  lwt ks = D.register_keyspace db "test_get_slice_read_tx_data" in
     put_slice ks "tbl" [ "a", ["0", ""; "1", ""]; "b", ["0", ""; "1", ""] ] >>
     D.read_committed_transaction ks
       (fun tx ->
@@ -611,7 +611,7 @@ let test_get_slice_read_tx_data db =
  *   key "foo\000" column "0"
  * *)
 let test_get_slice_tricky_columns db =
-  let ks = D.register_keyspace db "test_get_slice_tricky_columns" in
+  lwt ks = D.register_keyspace db "test_get_slice_tricky_columns" in
     put_slice ks "tbl"
       [ "k", [ "\0003", "" ];
         "k\000", [ "2", "" ] ] >>
@@ -623,7 +623,7 @@ let test_get_slice_tricky_columns db =
            aeq_slice (Some "k\000", [ "k\000", "2", [ "2", "" ] ]))
 
 let test_get_slice_values db =
-  let ks = D.register_keyspace db "test_get_slice_values" in
+  lwt ks = D.register_keyspace db "test_get_slice_values" in
   let add_data () =
     put_slice ks "tbl"
       [ "a", (List.init 10 (fun n -> (sprintf "%d" n, sprintf "a%d" n)));
@@ -649,7 +649,7 @@ let test_get_slice_values db =
     D.read_committed_transaction ks assertions
 
 let test_get_column_values db =
-  let ks = D.register_keyspace db "test_get_column_values" in
+  lwt ks = D.register_keyspace db "test_get_column_values" in
   let aeq ?msg =
     aeq ?msg (string_of_list (string_of_option (sprintf "%S")))
   in
@@ -670,7 +670,7 @@ let test_get_column_values db =
            aeq [Some "b1"; None])
 
 let test_delete_key db =
-  let ks = D.register_keyspace db "test_delete_key" in
+  lwt ks = D.register_keyspace db "test_delete_key" in
   let get_all tx = D.get_slice tx "tbl" (key_range ()) DM.All_columns in
     put_slice ks "tbl"
       [ "a", [ "x", ""; "y", ""; "z", "" ];
@@ -700,7 +700,7 @@ let get_all tx tbl =
   D.get_slice tx tbl (key_range ()) DM.All_columns
 
 let test_delete_columns db =
-  let ks = D.register_keyspace db "test_delete_columns" in
+  lwt ks = D.register_keyspace db "test_delete_columns" in
     put_slice ks "tbl"
       [ "a", [ "x", ""; "y", ""; "z", "" ];
         "b", [ "x", ""; "y", ""; "z", "" ]] >>
@@ -723,7 +723,7 @@ let test_delete_columns db =
              (Some "a", ["a", "y", ["y", ""]]))
 
 let test_put_columns db =
-  let ks = D.register_keyspace db "test_put_columns" in
+  lwt ks = D.register_keyspace db "test_put_columns" in
     put_slice ks "tbl"
       [ "a", [ "x", ""; "y", ""; "z", "" ];
         "b", [ "x", ""; "y", ""; "z", "" ]] >>

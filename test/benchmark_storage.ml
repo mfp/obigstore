@@ -53,10 +53,12 @@ let row_data_size_with_colnames (key, cols) =
 let pr_separator () =
   print_endline (String.make 80 '-')
 
+let run = Lwt_unix.run
+
 let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
   let tmp_dir = Test_00util.make_temp_dir () in
   let db = D.open_db tmp_dir in
-  let ks = D.register_keyspace db "ks1" in
+  let ks = run (D.register_keyspace db "ks1") in
     printf "column insertion time (%d row batches, %d columns avg)\n"
       batch_size avg_cols;
     pr_separator ();
@@ -66,7 +68,7 @@ let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
                         (make_row_dummy ~avg_cols) ks ~table:"dummy")
       in printf "%7d -> %7d    %8.5fs  (%.0f/s)   ~%Ld bytes\n%!"
            (i * iterations) ((i + 1) * iterations) dt (float iterations /. dt)
-           (D.table_size_on_disk ks "dummy")
+           (run (D.table_size_on_disk ks "dummy"))
     done;
     let compute_avg_size f =
       float
@@ -76,7 +78,7 @@ let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
       1000.  in
     let avg_row_size = compute_avg_size row_data_size in
     let avg_row_size' = compute_avg_size row_data_size_with_colnames in
-    let size_on_disk = D.table_size_on_disk ks "dummy" in
+    let size_on_disk = run (D.table_size_on_disk ks "dummy") in
     let total_data_size = avg_row_size *. float rounds *. float iterations in
     let total_data_size' = avg_row_size' *. float rounds *. float iterations in
       printf "\nTable size: %9Ld bytes\n\
@@ -91,7 +93,7 @@ let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols =
 
 let bm_sequential_read ?(read_committed = false) ~max_keys ?(max_columns = 10) dir =
   let db = D.open_db dir in
-  let ks = D.register_keyspace db "ks1" in
+  let ks = run (D.register_keyspace db "ks1") in
   let n_keys = ref 0 in
   let n_columns = ref 0 in
 

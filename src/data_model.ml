@@ -41,20 +41,20 @@ sig
   type db
   type keyspace
 
-  val list_keyspaces : db -> string list
-  val register_keyspace : db -> string -> keyspace
-  val get_keyspace : db -> string -> keyspace option
+  val list_keyspaces : db -> string list Lwt.t
+  val register_keyspace : db -> string -> keyspace Lwt.t
+  val get_keyspace : db -> string -> keyspace option Lwt.t
 
   val keyspace_name : keyspace -> string
   val keyspace_id : keyspace -> int
 
-  val list_tables : keyspace -> table list
+  val list_tables : keyspace -> table list Lwt.t
 
   (** @return approximate size on disk of the data for the given table. *)
-  val table_size_on_disk : keyspace -> table -> Int64.t
+  val table_size_on_disk : keyspace -> table -> Int64.t Lwt.t
 
   val key_range_size_on_disk :
-    keyspace -> ?first:string -> ?up_to:string -> table -> Int64.t
+    keyspace -> ?first:string -> ?up_to:string -> table -> Int64.t Lwt.t
 
   (** {3 Transactions} *)
   type transaction
