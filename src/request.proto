@@ -46,13 +46,13 @@ message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
   | List_keyspaces { prefix : string }
-  | List_tables req
+  | List_tables { keyspace : keyspace; }
   | Table_size_on_disk { keyspace : keyspace; table : table }
   | Key_range_size_on_disk { keyspace : keyspace; table : table;
                              range : range }
-  | Begin req
-  | Commit req
-  | Abort req
+  | Begin { keyspace : keyspace; }
+  | Commit { keyspace : keyspace; }
+  | Abort { keyspace : keyspace; }
   | Get_keys { keyspace : keyspace; table : table; max_keys : max_keys;
                key_range : key_range }
   | Count_keys { keyspace : keyspace; table : table;

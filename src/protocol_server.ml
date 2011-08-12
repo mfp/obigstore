@@ -105,7 +105,7 @@ struct
         D.list_keyspaces c.db >>=
           P.return_keyspace_list ~buf:c.out_buf c.och ~request_id >>
         service c
-    | List_tables { Req.keyspace } ->
+    | List_tables { List_tables.keyspace } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              D.list_tables ks >>=
@@ -121,7 +121,7 @@ struct
              D.key_range_size_on_disk ks table
                ?first:range.first ?up_to:range.up_to >>=
              P.return_key_range_size_on_disk ~buf:c.out_buf c.och ~request_id)
-    | Begin { Req.keyspace; } ->
+    | Begin { Begin.keyspace; } ->
         (* FIXME: check if we have an open tx in another ks, and signal error
          * if so *)
         with_keyspace c keyspace ~request_id

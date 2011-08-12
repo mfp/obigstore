@@ -65,7 +65,7 @@ struct
     get_response f ks.ks_db.ich
 
   let list_tables ks =
-    send_request ks.ks_db (List_tables { Req.keyspace = ks.ks_id; }) >>
+    send_request ks.ks_db (List_tables { List_tables.keyspace = ks.ks_id; }) >>
     read_result ks P.read_table_list
 
   let table_size_on_disk ks table =
@@ -81,15 +81,15 @@ struct
     read_result ks P.read_key_range_size_on_disk
 
   let read_committed_transaction ks f =
-    send_request ks.ks_db (Begin { Req.keyspace = ks.ks_id }) >>
+    send_request ks.ks_db (Begin { Begin.keyspace = ks.ks_id }) >>
     read_result ks P.read_ok >>
     try_lwt
       lwt y = f ks in
-        send_request ks.ks_db (Commit { Req.keyspace = ks.ks_id }) >>
+        send_request ks.ks_db (Commit { Commit.keyspace = ks.ks_id }) >>
         read_result ks P.read_ok >>
         return y
     with e ->
-      send_request ks.ks_db (Abort { Req.keyspace = ks.ks_id }) >>
+      send_request ks.ks_db (Abort { Abort.keyspace = ks.ks_id }) >>
       read_result ks P.read_ok >>
       raise_lwt e
 
