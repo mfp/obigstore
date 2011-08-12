@@ -1,7 +1,8 @@
 
 type t = string
 
-external create : unit -> t = "ostore_crc32c_init"
+let create () = String.copy "\000\000\000\000"
+
 external update_unsafe : t -> string -> int -> int -> unit = "ostore_crc32c_update" "noalloc"
 external string : string -> string = "ostore_crc32c_string"
 external fix_endianness : t -> unit = "ostore_crc32c_ensure_lsb" "noalloc"

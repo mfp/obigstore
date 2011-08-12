@@ -272,18 +272,6 @@ ostore_crc32c_string(value s)
 }
 
 CAMLprim value
-ostore_crc32c_init(value unit)
-{
- CAMLparam0();
- CAMLlocal1(ret);
- ret = caml_alloc_string(4);
- char *p = String_val(ret);
- for(int i = 0; i < 4; i++) p[i] = 0;
-
- CAMLreturn(ret);
-}
-
-CAMLprim value
 ostore_crc32c_update(value t, value s, value off, value len)
 {
  uint32_t *p = (uint32_t *)String_val(t);
