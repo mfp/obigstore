@@ -41,7 +41,7 @@ struct
     lwt request_id, len, crc = read_header c.ich in
       if request_id <> sync_req_id then begin
         (* ignore async request *)
-        skip c.ich len >> service c
+        skip c.ich (len + 4) >> service c
       end else
         service_request c ~request_id len crc
 
