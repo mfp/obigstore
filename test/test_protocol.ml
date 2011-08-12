@@ -18,7 +18,8 @@ struct
     let client = CLIENT.make ch2_in ch1_out in
       Lwt_unix.run begin
         try_lwt
-          Lwt.pick [f client; SERVER.service srv_client_handle]
+          ignore (try_lwt SERVER.service srv_client_handle with _ -> return ());
+          f client
         finally
           CLIENT.close client;
           Storage.close_db db;

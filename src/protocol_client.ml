@@ -28,25 +28,34 @@ struct
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     Protocol.write_msg t.och Protocol.sync_req_id t.buf
 
+  let get_response f ich =
+    lwt request_id, len, crc = Protocol.read_header ich in
+    (* FIXME: should check that f reads exactly [len] bytes *)
+    lwt x = f ich in
+    lwt crc2 = Lwt_io.read ~count:4 ich in
+    (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
+      return x
+
   let list_keyspaces t =
     send_request t (List_keyspaces { List_keyspaces.prefix = "" }) >>
-    P.read_keyspace_list t.ich
+    get_response P.read_keyspace_list t.ich
 
   let register_keyspace t name =
     send_request t (Register_keyspace { Register_keyspace.name; }) >>
-    lwt ks_id = P.read_keyspace t.ich in
+    lwt ks_id = get_response P.read_keyspace t.ich in
       return { ks_id; ks_name = name; ks_db = t; }
 
   let get_keyspace t name =
     send_request t (Get_keyspace { Get_keyspace.name; }) >>
-    match_lwt P.read_keyspace_maybe t.ich with
+    match_lwt get_response P.read_keyspace_maybe t.ich with
         None -> return None
       | Some ks_id -> return (Some { ks_id; ks_name = name; ks_db = t; })
 
   let keyspace_name ks = ks.ks_name
   let keyspace_id ks = ks.ks_id
 
-  let read_result ks f = f ks.ks_db.ich
+  let read_result ks f =
+    get_response f ks.ks_db.ich
 
   let list_tables ks =
     send_request ks.ks_db (List_tables { Req.keyspace = ks.ks_id; }) >>
