@@ -43,7 +43,8 @@ message column_ = column
 type req = { keyspace : keyspace }
 
 message request =
-    Register_keyspace { name : string }
+    Register_keyspace { name : string; }
+  | Get_keyspace { name : string; }
   | List_keyspaces { prefix : string }
   | List_tables req
   | Table_size_on_disk { keyspace : keyspace; table : table }

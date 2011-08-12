@@ -87,8 +87,14 @@ struct
               E.add_status b 0;
               E.add_int32_le b ks)
 
-  let read_keyspace =
-    reader D.get_int32_le
+  let read_keyspace = reader D.get_int32_le
+
+  let return_keyspace_maybe =
+    writer (fun b ks ->
+              E.add_status b 0;
+              E.add_option E.add_int32_le b ks)
+
+  let read_keyspace_maybe = reader (D.get_option D.get_int32_le)
 
   let return_keyspace_list =
     writer (fun b l ->

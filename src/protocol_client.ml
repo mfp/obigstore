@@ -38,9 +38,10 @@ struct
       return { ks_id; ks_name = name; ks_db = t; }
 
   let get_keyspace t name =
-    (* FIXME: should not register inconditionally *)
-    lwt ks = register_keyspace t name in
-      return (Some ks)
+    send_request t (Get_keyspace { Get_keyspace.name; }) >>
+    match_lwt P.read_keyspace_maybe t.ich with
+        None -> return None
+      | Some ks_id -> return (Some { ks_id; ks_name = name; ks_db = t; })
 
   let keyspace_name ks = ks.ks_name
   let keyspace_id ks = ks.ks_id

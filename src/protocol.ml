@@ -81,6 +81,7 @@ sig
   val unknown_keyspace : unit writer
 
   val return_keyspace : int writer
+  val return_keyspace_maybe : int option writer
   val return_keyspace_list : string list writer
   val return_table_list : string list writer
   val return_table_size_on_disk : Int64.t writer
@@ -95,6 +96,7 @@ sig
   val return_ok : unit writer
 
   val read_keyspace : int reader
+  val read_keyspace_maybe : int option reader
   val read_keyspace_list : string list reader
   val read_table_list : string list reader
   val read_table_size_on_disk : Int64.t reader

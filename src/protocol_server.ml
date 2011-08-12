@@ -75,6 +75,25 @@ struct
         in
           P.return_keyspace ~buf:c.out_buf c.och ~request_id idx >>
           service c
+    | Get_keyspace { Get_keyspace.name; } -> begin
+        match_lwt D.get_keyspace c.db name with
+            None -> P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id None >>
+                    service c
+          | Some ks ->
+              let idx =
+                (* find keyspace idx in local table, register if not found *)
+                try
+                  H.find c.rev_keyspaces (D.keyspace_id ks)
+                with Not_found ->
+                  let idx = H.length c.keyspaces in
+                    H.add c.keyspaces idx ks;
+                    H.add c.rev_keyspaces (D.keyspace_id ks) idx;
+                    idx
+              in
+                P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id
+                  (Some idx) >>
+                service c
+      end
     | List_keyspaces _ ->
         D.list_keyspaces c.db >>=
           P.return_keyspace_list ~buf:c.out_buf c.och ~request_id >>
