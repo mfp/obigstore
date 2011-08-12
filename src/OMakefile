@@ -31,6 +31,19 @@ ostore.cma ostore.a ostore.cmxa: ostore_stubs.o \
 	    $(OCamlLinkSort $(addsuffixes .cmo, $(OBJECTS))) \
 	    $(OCamlLinkSort $(addsuffixes .cmx, $(OBJECTS)))
 
+OCamlLibrary(ostore_server, server)
+
+section
+    OCAMLPACKS[] += unix extlib threads oUnit
+    OCAML_LIBS[] +=
+	libs/ocaml-leveldb/src/leveldb
+	libs/extprot/runtime/extprot
+	ostore
+	ostore_server
+    OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
+		  -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src
+    OCamlProgram(obigstore, run_server)
+
 toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
 	ocamlfind ocamlmktop \
 	    $(mapprefix -package, $(OCAMLPACKS)) \
@@ -40,6 +53,6 @@ toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
 	    libs/ocaml-leveldb/src/leveldb.cma ostore.cma \
 	    -linkpkg
 
-.DEFAULT: ostore.cma ostore.cmxa
+.DEFAULT: obigstore$(EXE) ostore.cma ostore.cmxa ostore_server.cmxa ostore_server.cma
 
 
