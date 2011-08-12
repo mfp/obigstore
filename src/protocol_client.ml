@@ -32,11 +32,16 @@ struct
     Lwt_io.atomic
       (fun ich ->
          lwt request_id, len, crc = Protocol.read_header ich in
-         (* FIXME: should check that f reads exactly [len] bytes *)
+         let pos = Lwt_io.position ich in
          lwt x = f ich in
-         lwt crc2 = Lwt_io.read ~count:4 ich in
-         (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
-           return x)
+         let pos2 = Lwt_io.position ich in
+         let len' = Int64.(to_int (sub pos2 pos)) in
+           if len' <> len then
+             raise_lwt (Protocol.Error (Protocol.Inconsistent_length (len, len')))
+           else
+             lwt crc2 = Lwt_io.read ~count:4 ich in
+             (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
+               return x)
 
   let list_keyspaces t =
     send_request t (List_keyspaces { List_keyspaces.prefix = "" }) >>
