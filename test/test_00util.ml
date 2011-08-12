@@ -2,6 +2,9 @@
 open Printf
 open OUnit
 
+module List = struct include List include BatList end
+module String = struct include String include BatString end
+
 let rounds = ref 1
 
 let keep_tmp = ref false
@@ -52,6 +55,18 @@ let aeq_list ?cmp f =
   assert_equal ~cmp:(cmp_list cmp) ~printer:(string_of_list f)
 
 let aeq_string_list = aeq_list (sprintf "%S")
+
+let range min max =
+  List.init (max - min + 1) (fun n -> n + min)
+
+let to_hex s =
+  String.concat " "
+    (List.map (fun c -> sprintf "%02x" (Char.code c))
+       (String.explode s))
+
+let mk_chr_str n = String.make 1 (Char.chr n)
+
+let string_of_bytes l = String.concat "" (List.map mk_chr_str l)
 
 let shuffle l =
   let a = Array.of_list l in

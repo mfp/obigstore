@@ -1,11 +1,6 @@
 open Printf
 open Test_00util
 open OUnit
-module List = struct include List include BatList end
-module String = struct include String include BatString end
-
-let range min max =
-  List.init (max - min + 1) (fun n -> n + min)
 
 let test_vectors =
   [
@@ -17,15 +12,6 @@ let test_vectors =
     range 0xC9 0xF0, [0x13; 0xD9; 0x29; 0x2B];
     range 0x01 0xF0, [0x75; 0xD3; 0xC5; 0x24];
   ]
-
-let mk_chr_str n = String.make 1 (Char.chr n)
-
-let mk_str l = String.concat "" (List.map mk_chr_str l)
-
-let to_hex s =
-  String.concat " "
-    (List.map (fun c -> sprintf "%02x" (Char.code c))
-       (String.explode s))
 
 let aeq_crc expected input =
   let check = assert_equal ~printer:to_hex in
@@ -48,8 +34,8 @@ let aeq_crc expected input =
 
 let test_crc32c () =
   let test (input, output) =
-    let input = mk_str input in
-    let output = mk_str output in
+    let input = string_of_bytes input in
+    let output = string_of_bytes output in
       aeq_crc output input
   in List.iter test test_vectors
 

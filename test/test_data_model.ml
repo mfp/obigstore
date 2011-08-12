@@ -4,8 +4,6 @@ open Lwt
 open Test_00util
 open OUnit
 
-module List = struct include BatList include List end
-
 module D = Storage
 module DM = Data_model
 
