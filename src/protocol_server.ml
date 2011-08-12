@@ -24,15 +24,16 @@ struct
         och : Lwt_io.output_channel;
         db : D.db;
         out_buf : Bytea.t;
+        debug : bool;
       }
 
   let tx_key = Lwt.new_key ()
 
-  let init db ich och =
+  let init ?(debug=false) db ich och =
     {
       keyspaces = H.create 13;
       rev_keyspaces = H.create 13;
-      ich; och; db;
+      ich; och; db; debug;
       out_buf = Bytea.create 1024;
     }
 
@@ -60,6 +61,7 @@ struct
           | Some r -> respond c ~request_id r
 
   and respond c ~request_id r =
+    if c.debug then Format.eprintf "Got request %a@." Request.pp r;
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks = D.register_keyspace c.db name in

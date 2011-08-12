@@ -12,20 +12,22 @@ struct
         och : Lwt_io.output_channel;
       }
 
-  let rec run_server db address port =
+  let rec run_server ?(debug=false) db address port =
     let rec accept_loop sock =
       begin try_lwt
         lwt (fd, addr) = Lwt_unix.accept sock in
+          if debug then eprintf "Got connection\n%!";
           Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
           ignore begin try_lwt
             let ich = Lwt_io.of_fd Lwt_io.input fd in
             let och = Lwt_io.of_fd Lwt_io.output fd in
               try_lwt
-                handle_connection db { ich; och; addr }
+                handle_connection ~debug db { ich; och; addr }
               finally
                 Lwt_io.abort och
           with e ->
-            try_lwt Lwt_unix.close fd with _ -> return ()
+            eprintf "Error with connection: %s\n%!" (Printexc.to_string e);
+            return ()
           end;
           return ()
       with e ->
@@ -41,6 +43,6 @@ struct
       Lwt_unix.listen sock 1024;
       accept_loop sock
 
-  and handle_connection db conn =
-    S.service (S.init db conn.ich conn.och)
+  and handle_connection ~debug db conn =
+    S.service (S.init ~debug db conn.ich conn.och)
 end

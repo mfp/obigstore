@@ -5,11 +5,13 @@ module S = Server.Make(Storage)(Protocol_payload.Version_0_0_0)
 
 let port = ref 12050
 let db_dir = ref None
+let debug = ref false
 
 let params =
   Arg.align
     [
       "-port", Arg.Set_int port, "PORT Port to listen at (default: 12050)";
+      "-debug", Arg.Set debug, " Dump debug info to stderr.";
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -32,4 +34,4 @@ let () =
                 exit 1
       | Some dir ->
           let db = Storage.open_db dir in
-            Lwt_unix.run (S.run_server db addr !port)
+            Lwt_unix.run (S.run_server ~debug:!debug db addr !port)
