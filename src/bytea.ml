@@ -150,8 +150,8 @@ let add_int64_le b n =
   b.position <- new_position
 
 let add_int32_le b n =
-  let new_position = b.position + 8 in
-    if new_position > b.length then resize b 8;
+  let new_position = b.position + 4 in
+    if new_position > b.length then resize b 4;
     ostore_bytea_blit_int32_le b.buffer b.position n;
     b.position <- new_position
 
