@@ -37,6 +37,11 @@ struct
       out_buf = Bytea.create 1024;
     }
 
+  let read_exactly c n =
+    let s = String.create n in
+      Lwt_io.read_into_exactly c.ich s 0 n >>
+      return s
+
   let rec service c =
     lwt request_id, len, crc = read_header c.ich in
       if request_id <> sync_req_id then begin
@@ -46,8 +51,8 @@ struct
         service_request c ~request_id len crc
 
   and service_request c ~request_id len crc =
-    lwt msg = Lwt_io.read c.ich ~count:len in
-    lwt crc2 = Lwt_io.read c.ich ~count:4 in
+    lwt msg = read_exactly c len in
+    lwt crc2 = read_exactly c 4 in
     let crc2' = Crc32c.string msg in
       Crc32c.xor crc2 crc;
       if crc2 <> crc2' then
