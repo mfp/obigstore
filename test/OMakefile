@@ -1,5 +1,5 @@
 
-OCAMLPACKS[] += unix threads oUnit
+OCAMLPACKS[] += unix extlib threads oUnit
 
 OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
 	      -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src
@@ -9,6 +9,7 @@ OCAMLINCLUDES += ../src ../src/libs/ocaml-leveldb/src
 
 OCAML_LIBS[] +=
     ../src/libs/ocaml-leveldb/src/leveldb
+    ../src/libs/extprot/runtime/extprot
     ../src/ostore
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)

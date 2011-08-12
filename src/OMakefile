@@ -15,6 +15,7 @@ OBJECTS[] =
   protocol_client
   protocol_server
   protocol_payload
+  request
   storage
   string_util
 
