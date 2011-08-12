@@ -13,7 +13,7 @@ OCAML_LIBS[] +=
     ../src/ostore
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
-OCamlProgram(benchmark_storage, test_00util benchmark_storage)
+OCamlProgram(benchmark, test_00util benchmark)
 
 toplevel: $(addsuffix .cma, $(OCAML_LIBS))
     echo $(CAML_LD_LIBRARY_PATH)
@@ -25,4 +25,4 @@ toplevel: $(addsuffix .cma, $(OCAML_LIBS))
 test: test.opt
 	./test.opt -verbose
 
-.DEFAULT: test$(EXE) benchmark_storage$(EXE)
+.DEFAULT: test$(EXE) benchmark$(EXE)
