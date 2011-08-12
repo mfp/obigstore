@@ -38,7 +38,9 @@ struct
 
     let get_string ich =
       lwt count = get_int32_le ich in
-        Lwt_io.read ~count ich
+      let s = String.create count in
+        Lwt_io.read_into_exactly ich s 0 count >>
+        return s
 
     let get_list ?(do_reverse = true) f ich =
       let rec loop_read_list acc f ich = function

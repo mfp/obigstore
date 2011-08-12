@@ -28,6 +28,11 @@ struct
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     Protocol.write_msg t.och Protocol.sync_req_id t.buf
 
+  let read_exactly ich n =
+    let s = String.create n in
+      Lwt_io.read_into_exactly ich s 0 n >>
+      return s
+
   let get_response f =
     Lwt_io.atomic
       (fun ich ->
@@ -39,7 +44,7 @@ struct
            if len' <> len then
              raise_lwt (Protocol.Error (Protocol.Inconsistent_length (len, len')))
            else
-             lwt crc2 = Lwt_io.read ~count:4 ich in
+             lwt crc2 = read_exactly ich 4 in
              (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
                return x)
 
