@@ -35,10 +35,12 @@ let rec skip ich count =
  * [crc payload XOR crc first 12 bytes]
  * *)
 
+let head = String.create 16
+
 let read_header ich =
-  lwt head = Lwt_io.read ~count:8 ich in
-  lwt crc = Lwt_io.read ~count:4 ich in
-    if Crc32c.string head <> crc then
+  Lwt_io.read_into_exactly ich head 0 16 >>
+  let crc = String.sub head 12 4 in
+    if Crc32c.substring head 0 12 <> crc then
       raise_lwt (Error Corrupted_frame)
     else begin
       let get s n = Char.code (String.unsafe_get s n) in
@@ -56,13 +58,13 @@ let write_msg och req_id msg =
   (* FIXME: ensure req_id's size is 8 *)
   Lwt_io.atomic
     (fun och ->
-      let header = Bytea.create 16 in
+      let header = Bytea.create 12 in
       let len = Bytea.length msg in
         Bytea.add_string header req_id;
         Bytea.add_int32_le header len;
         let crc = Crc32c.substring (Bytea.unsafe_string header) 0 12 in
-          Bytea.add_string header crc;
-          Lwt_io.write_from_exactly och (Bytea.unsafe_string header) 0 16 >>
+          Lwt_io.write_from_exactly och (Bytea.unsafe_string header) 0 12 >>
+          Lwt_io.write_from_exactly och crc 0 4 >>
           Lwt_io.write_from_exactly och (Bytea.unsafe_string msg) 0 len >>
           let crc2 = Crc32c.substring (Bytea.unsafe_string msg) 0 len in
             Crc32c.xor crc2 crc;
