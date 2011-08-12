@@ -28,13 +28,15 @@ struct
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     Protocol.write_msg t.och Protocol.sync_req_id t.buf
 
-  let get_response f ich =
-    lwt request_id, len, crc = Protocol.read_header ich in
-    (* FIXME: should check that f reads exactly [len] bytes *)
-    lwt x = f ich in
-    lwt crc2 = Lwt_io.read ~count:4 ich in
-    (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
-      return x
+  let get_response f =
+    Lwt_io.atomic
+      (fun ich ->
+         lwt request_id, len, crc = Protocol.read_header ich in
+         (* FIXME: should check that f reads exactly [len] bytes *)
+         lwt x = f ich in
+         lwt crc2 = Lwt_io.read ~count:4 ich in
+         (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
+           return x)
 
   let list_keyspaces t =
     send_request t (List_keyspaces { List_keyspaces.prefix = "" }) >>
