@@ -286,8 +286,8 @@ ostore_crc32c_init(value unit)
 CAMLprim value
 ostore_crc32c_update(value t, value s, value off, value len)
 {
- uint32_t *p = (uint32_t *)String_val(s);
- update_crc32c(*p, &Byte_u(s, Long_val(off)), Long_val(len));
+ uint32_t *p = (uint32_t *)String_val(t);
+ *p = update_crc32c(*p, &Byte_u(s, Long_val(off)), Long_val(len));
  return Val_unit;
 }
 

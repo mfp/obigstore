@@ -27,14 +27,30 @@ let to_hex s =
     (List.map (fun c -> sprintf "%02x" (Char.code c))
        (String.explode s))
 
-let aeq_crc ?msg expected actual =
-  assert_equal ?msg ~printer:to_hex expected actual
+let aeq_crc expected input =
+  let check = assert_equal ~printer:to_hex in
+    check ~msg:"Crc32c.string" expected (Crc32c.string input);
+    check ~msg:"Crc32c.substring" expected
+      (Crc32c.substring input 0 (String.length input));
+    let crc = Crc32c.create () in
+    let check_with_update () =
+      for i = 0 to String.length input - 1 do
+        Crc32c.update crc input i 1;
+      done;
+      check ~msg:"Crc32c.update followed by result"
+        expected (Crc32c.result crc);
+      check ~msg:"Crc32c.update followed by unsafe_result"
+        expected (Crc32c.unsafe_result crc)
+    in
+      check_with_update ();
+      Crc32c.reset crc;
+      check_with_update ()
 
 let test_crc32c () =
   let test (input, output) =
     let input = mk_str input in
     let output = mk_str output in
-      aeq_crc ~msg:"CRC32C output" output (Crc32c.string input)
+      aeq_crc output input
   in List.iter test test_vectors
 
 let () =
