@@ -5,12 +5,13 @@ BYTE_ENABLED = true
 
 .PHONY: clean
 
+OCAMLOPTFLAGS += -g -inline 100
+
 .SUBDIRS: src/libs/ocaml-leveldb src/libs/extprot
 
 OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread
 OCAMLFINDFLAGS += -syntax camlp4o
-OCAMLOPTFLAGS += -inline 100
 
 OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax
 
