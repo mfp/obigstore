@@ -16,6 +16,12 @@ struct
                             let equal a b = (a == b)
                           end)
 
+  let num_clients = ref 0
+
+  let dummy_auto_yield () = return ()
+
+  let auto_yielder = ref dummy_auto_yield
+
   type client_state =
       {
         keyspaces : D.keyspace H.t;
@@ -26,20 +32,33 @@ struct
         mutable in_buf : string;
         out_buf : Bytea.t;
         debug : bool;
-        auto_yield : unit -> unit Lwt.t;
       }
 
   let tx_key = Lwt.new_key ()
 
+  let setup_auto_yield t =
+    incr num_clients;
+    if !num_clients == 2 then begin
+      let f = Lwt_unix.auto_yield 0.5e-3 in
+        auto_yielder := f
+    end;
+    Gc.finalise
+      (fun _ ->
+         decr num_clients;
+         if !num_clients <= 1 then auto_yielder := dummy_auto_yield)
+      t
+
   let init ?(debug=false) db ich och =
-    {
-      keyspaces = H.create 13;
-      rev_keyspaces = H.create 13;
-      ich; och; db; debug;
-      out_buf = Bytea.create 1024;
-      in_buf = String.create 128;
-      auto_yield = Lwt_unix.auto_yield 5e-4;
-    }
+    let t =
+      {
+        keyspaces = H.create 13;
+        rev_keyspaces = H.create 13;
+        ich; och; db; debug;
+        out_buf = Bytea.create 1024;
+        in_buf = String.create 128;
+      }
+    in setup_auto_yield t;
+       t
 
   let read_exactly c n =
     let s = String.create n in
@@ -47,7 +66,7 @@ struct
       return s
 
   let rec service c =
-    c.auto_yield () >>
+    !auto_yielder () >>
     lwt request_id, len, crc = read_header c.ich in
       if request_id <> sync_req_id then begin
         (* ignore async request *)
