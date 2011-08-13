@@ -38,15 +38,25 @@ struct
       (fun ich ->
          lwt request_id, len, crc = Protocol.read_header ich in
          let pos = Lwt_io.position ich in
-         lwt x = f ich in
+         (* must read the trailing CRC even if there's an exn in f, lest we
+          * lose synchro *)
+         lwt result =
+           try_lwt
+             lwt x = f ich in
+               return (`OK x)
+           with e -> return (`EXN e) in
          let pos2 = Lwt_io.position ich in
-         let len' = Int64.(to_int (sub pos2 pos)) in
-           if len' <> len then
-             raise_lwt (Protocol.Error (Protocol.Inconsistent_length (len, len')))
-           else
-             lwt crc2 = read_exactly ich 4 in
-             (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
-               return x)
+         lwt crc2 = read_exactly ich 4 in
+           match result with
+               `OK x ->
+                 let len' = Int64.(to_int (sub pos2 pos)) in
+                   if len' <> len then
+                     raise_lwt (Protocol.Error
+                                  (Protocol.Inconsistent_length (len, len')))
+                   else
+                     (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
+                       return x
+             | `EXN e -> raise_lwt e)
 
   let list_keyspaces t =
     send_request t (List_keyspaces { List_keyspaces.prefix = "" }) >>
