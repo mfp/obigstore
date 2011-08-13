@@ -26,6 +26,7 @@ struct
         mutable in_buf : string;
         out_buf : Bytea.t;
         debug : bool;
+        auto_yield : unit -> unit Lwt.t;
       }
 
   let tx_key = Lwt.new_key ()
@@ -37,6 +38,7 @@ struct
       ich; och; db; debug;
       out_buf = Bytea.create 1024;
       in_buf = String.create 128;
+      auto_yield = Lwt_unix.auto_yield 5e-4;
     }
 
   let read_exactly c n =
@@ -45,6 +47,7 @@ struct
       return s
 
   let rec service c =
+    c.auto_yield () >>
     lwt request_id, len, crc = read_header c.ich in
       if request_id <> sync_req_id then begin
         (* ignore async request *)
