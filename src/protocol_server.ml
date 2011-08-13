@@ -71,8 +71,11 @@ struct
       if request_id <> sync_req_id then begin
         (* ignore async request *)
         skip c.ich (len + 4) >> service c
-      end else
-        serve_sync_request c ~request_id len crc
+      end else begin
+        serve_sync_request c ~request_id len crc >>
+        service c
+      end
+
 
   and serve_sync_request c ~request_id len crc =
     if String.length c.in_buf < len then c.in_buf <- String.create len;
@@ -105,12 +108,10 @@ struct
               H.add c.rev_keyspaces (D.keyspace_id ks) idx;
               idx
         in
-          P.return_keyspace ~buf:c.out_buf c.och ~request_id idx >>
-          service c
+          P.return_keyspace ~buf:c.out_buf c.och ~request_id idx
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.db name with
-            None -> P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id None >>
-                    service c
+            None -> P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id None
           | Some ks ->
               let idx =
                 (* find keyspace idx in local table, register if not found *)
@@ -123,13 +124,11 @@ struct
                     idx
               in
                 P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id
-                  (Some idx) >>
-                service c
+                  (Some idx)
       end
     | List_keyspaces _ ->
         D.list_keyspaces c.db >>=
-          P.return_keyspace_list ~buf:c.out_buf c.och ~request_id >>
-        service c
+          P.return_keyspace_list ~buf:c.out_buf c.och ~request_id
     | List_tables { List_tables.keyspace } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
@@ -231,15 +230,15 @@ struct
           let ks = try Some (H.find c.keyspaces keyspace_idx)
                    with Not_found -> None
           in begin match ks with
-              None -> P.unknown_keyspace c.och ~request_id () >> service c
-            | Some ks -> D.repeatable_read_transaction ks f >> service c
+              None -> P.unknown_keyspace c.och ~request_id ()
+            | Some ks -> D.repeatable_read_transaction ks f
           end
-      | Some tx -> f tx >> service c
+      | Some tx -> f tx
 
   and with_keyspace c ks_idx ~request_id f =
     let ks = try Some (H.find c.keyspaces ks_idx) with Not_found -> None in
       match ks with
-          None -> P.unknown_keyspace c.och ~request_id () >> service c
-        | Some ks -> f ks >> service c
+          None -> P.unknown_keyspace c.och ~request_id ()
+        | Some ks -> f ks
 end
 
