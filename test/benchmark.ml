@@ -27,7 +27,7 @@ struct
           let rows = List.init batch_size (fun _ -> make_row ()) in
             D.read_committed_transaction ks
               (fun tx ->
-                 Lwt_list.iter_p
+                 Lwt_list.iter_s
                    (fun (key, columns) -> D.put_columns tx table key columns)
                    rows)
         done
@@ -36,7 +36,7 @@ struct
       time begin fun () ->
         for_lwt i = 1 to iters / batch_size do
           let rows = List.init batch_size (fun _ -> make_row ()) in
-            Lwt_list.iter_p (fun _ -> return ()) rows
+            Lwt_list.iter_s (fun _ -> return ()) rows
         done
       end
     in return (insert_time -. overhead)
