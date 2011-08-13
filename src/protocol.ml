@@ -27,6 +27,9 @@ let () =
 
 let sync_req_id = String.make 8 '\000'
 
+let is_sync_req x = x ==
+  sync_req_id || String_util.strneq x 0 sync_req_id 0 8
+
 let skip_buf = String.create 4096
 
 let rec skip ich count =
