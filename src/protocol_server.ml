@@ -23,6 +23,7 @@ struct
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         db : D.db;
+        mutable in_buf : string;
         out_buf : Bytea.t;
         debug : bool;
       }
@@ -35,6 +36,7 @@ struct
       rev_keyspaces = H.create 13;
       ich; och; db; debug;
       out_buf = Bytea.create 1024;
+      in_buf = String.create 128;
     }
 
   let read_exactly c n =
@@ -48,18 +50,19 @@ struct
         (* ignore async request *)
         skip c.ich (len + 4) >> service c
       end else
-        service_request c ~request_id len crc
+        serve_sync_request c ~request_id len crc
 
-  and service_request c ~request_id len crc =
-    lwt msg = read_exactly c len in
+  and serve_sync_request c ~request_id len crc =
+    if String.length c.in_buf < len then c.in_buf <- String.create len;
+    Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
     lwt crc2 = read_exactly c 4 in
-    let crc2' = Crc32c.string msg in
+    let crc2' = Crc32c.substring c.in_buf 0 len in
       Crc32c.xor crc2 crc;
       if crc2 <> crc2' then
         P.bad_request c.och ~request_id ()
       else
         let m =
-          try Some (Extprot.Conv.deserialize Request.read msg)
+          try Some (Extprot.Conv.deserialize Request.read c.in_buf)
           with _ -> None
         in match m with
             None -> P.bad_request c.och ~request_id ()
