@@ -79,7 +79,8 @@ let write_msg och req_id msg =
           Lwt_io.write_from_exactly och (Bytea.unsafe_string msg) 0 len >>
           let crc2 = Crc32c.substring (Bytea.unsafe_string msg) 0 len in
             Crc32c.xor crc2 crc;
-            Lwt_io.write och crc2)
+            Lwt_io.write och crc2 >>
+            Lwt_io.flush och)
     och
 
 type 'a writer =
