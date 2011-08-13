@@ -49,13 +49,18 @@ let read_header ich =
     if Crc32c.substring head 0 12 <> crc then
       raise_lwt (Error Corrupted_frame)
     else begin
+      let req_id =
+        if String_util.cmp_substrings sync_req_id 0 8 head 0 8 = 0 then
+          sync_req_id
+        else
+          String.sub head 0 8 in
       let get s n = Char.code (String.unsafe_get s n) in
       let v0 = get head 8 in
       let v1 = get head 9 in
       let v2 = get head 10 in
       let v3 = get head 11 in
         (* FIXME: check overflow (x86 only, not x86-64) *)
-        return (String.sub head 0 8,
+        return (req_id,
                 v0 lor (v1 lsl 8) lor (v2 lsl 16) lor (v3 lsl 24),
                 crc)
     end
