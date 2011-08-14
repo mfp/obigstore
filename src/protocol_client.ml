@@ -37,6 +37,8 @@ struct
     val wakeup : result Lwt.u
   end
 
+  type ret = [`OK | `EXN of exn]
+
   type db = {
     mutable closed : bool;
     (* exception raised when we try to perform further requests against a
@@ -47,7 +49,7 @@ struct
     buf : Bytea.t;
     mutex : Lwt_mutex.t;
     pending_reqs : (module PENDING_RESPONSE) H.t;
-    wait_for_pending_responses : unit Lwt_condition.t;
+    wait_for_pending_responses : ret Lwt_condition.t;
     async_req_id : string;
   }
 
@@ -71,7 +73,7 @@ struct
   let close t =
     if not t.closed then begin
       t.closed <- true;
-      ignore (Lwt_io.close t.ich >> Lwt_io.close t.och);
+      ignore (try_lwt Lwt_io.abort t.ich >> Lwt_io.abort t.och with _ -> return ());
       send_exn_to_waiters t (Protocol.Error Protocol.Closed);
       H.clear t.pending_reqs;
     end
@@ -113,7 +115,7 @@ struct
                 end;
                 (* signal that we no longer have any pending responses *)
                 if H.length t.pending_reqs = 0 then
-                  Lwt_condition.broadcast t.wait_for_pending_responses ()
+                  Lwt_condition.broadcast t.wait_for_pending_responses `OK
 
               end else begin
                 (* wrong length *)
@@ -137,10 +139,12 @@ struct
       ignore begin try_lwt
         get_response_loop t
       with e ->
-        send_exn_to_waiters t e;
-        t.closed_exn <- Protocol.Error (Protocol.Exception e);
-        close t;
-        return ()
+        let exn = Protocol.Error (Protocol.Exception e) in
+          send_exn_to_waiters t exn;
+          t.closed_exn <- exn;
+          close t;
+          Lwt_condition.broadcast t.wait_for_pending_responses (`EXN exn);
+          return ()
       end;
       t
 
@@ -242,8 +246,11 @@ struct
       P.read_key_range_size_on_disk
 
   let wait_for_pending_responses t =
+    check_closed t >>
     if H.length t.pending_reqs <> 0 then begin
-      Lwt_condition.wait t.wait_for_pending_responses
+      match_lwt Lwt_condition.wait t.wait_for_pending_responses with
+          `OK -> return ()
+        | `EXN e -> raise_lwt e
     end else return ()
 
   let read_committed_transaction ks f =
