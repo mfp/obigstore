@@ -66,7 +66,7 @@ struct
       pr_separator ();
       for_lwt i = 0 to rounds - 1 do
         lwt dt =
-          bm_put_columns ~iters:iterations ~batch_size:1000
+          bm_put_columns ~iters:iterations ~batch_size
                           (make_row_dummy ~avg_cols) ks ~table:"dummy" in
         lwt size_on_disk = D.table_size_on_disk ks "dummy" in
           printf "%7d -> %7d    %8.5fs  (%.0f/s)   ~%Ld bytes\n%!"
@@ -125,43 +125,60 @@ struct
         (truncate (float !n_columns /. dt));
       return ()
 
-  let run () =
+  let run ~rounds ~iterations ~avg_cols ~batch_size
+          ~bm_put ~bm_seq_read ~bm_read_committed =
     lwt db = C.make_tmp_db () in
     lwt () =
-      run_put_colums_bm
-        ~rounds:10 ~iterations:10000 ~batch_size:1000 ~avg_cols:10 db
+      if not bm_put then return ()
+      else run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db
     in
       Test_00util.keep_tmp := false;
-      Lwt_list.iter_s
-        (fun max_columns ->
-           printf "\nmax_columns: %d\n" max_columns;
-           pr_separator ();
-           Lwt_list.iter_s
-             (fun read_committed ->
-                Lwt_list.iter_s
-                  (fun max_keys ->
-                     bm_sequential_read ~max_columns ~read_committed ~max_keys db)
-                  [ 1000; 500; 200; 100; 50; 20; 10; 1 ])
-             [ true; false ])
-        [ 1; 5; 10; 100 ]
+      if not bm_seq_read then
+        return ()
+      else begin
+        Lwt_list.iter_s
+          (fun max_columns ->
+             printf "\nmax_columns: %d\n" max_columns;
+             pr_separator ();
+             Lwt_list.iter_s
+               (fun read_committed ->
+                  Lwt_list.iter_s
+                    (fun max_keys ->
+                       bm_sequential_read ~max_columns ~read_committed ~max_keys db)
+                    [ 1000; 500; 200; 100; 50; 20; 10; 1 ])
+               (if bm_read_committed then [ true; false ] else [false]))
+          [ 1; 5; 10; 100 ]
+      end
 end
-
-module BM_Storage =
-  Make(Storage)
-    (struct
-       let make_tmp_db () =
-         let tmp_dir = Test_00util.make_temp_dir () in
-         let db = D.open_db tmp_dir in
-           return db
-     end)
 
 let server = ref "127.0.0.1"
 let port = ref 12050
 let remote_test = ref false
+let run_put = ref true
+let run_seq_read = ref true
+let db_dir = ref None
+let rounds = ref 10
+let iterations = ref 10000
+let batch_size = ref 1000
+let avg_cols = ref 10
 
 let params =
   Arg.align
     [
+      "-rounds", Arg.Set_int rounds,
+        "N Run N put_columns rounds (default: 10).";
+      "-iterations", Arg.Set_int iterations,
+        "N Insert N keys per round. (default: 10000)";
+      "-columns", Arg.Set_int avg_cols,
+        "N Insert N columns in average per key. (default: 10)";
+      "-batch-size", Arg.Set_int batch_size,
+        "N Insert N keys per batch insert. (default: 1000)";
+      "-put-only", Arg.Unit (fun () -> run_put := true; run_seq_read := false),
+        " Benchmark only put_columns.";
+      "-read-only", Arg.Unit (fun () -> run_put := false; run_seq_read := true),
+        " Benchmark only sequential read.";
+      "-dir", Arg.String (fun s -> db_dir := Some s; remote_test := false),
+        "PATH Run locally against LocalDB at PATH.";
       "-remote", Arg.Set remote_test, " Benchmark against server.";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
@@ -169,12 +186,29 @@ let params =
 
 module CLIENT = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 
-let usage_message = "Usage: benchmark_obigstore [options]"
+let usage_message = "Usage: benchmark [options]"
+
+module BM_Storage =
+  Make(Storage)
+    (struct
+       let make_tmp_db () =
+         let tmp_dir = match !db_dir with
+             None -> Test_00util.make_temp_dir ()
+           | Some d -> d in
+         let db = D.open_db tmp_dir in
+           return db
+     end)
 
 let () =
+  Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
   if not !remote_test then
-    Lwt_unix.run (BM_Storage.run ())
+    Lwt_unix.run
+      (BM_Storage.run
+         ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
+         ~batch_size:!batch_size
+         ~bm_put:!run_put ~bm_seq_read:!run_seq_read
+         ~bm_read_committed:true)
   else begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let module C =
@@ -184,5 +218,10 @@ let () =
             return (CLIENT.make ich och)
       end in
     let module BM = Make(CLIENT)(C) in
-      Lwt_unix.run (BM.run ())
+      Lwt_unix.run
+        (BM.run
+           ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
+           ~batch_size:!batch_size
+           ~bm_put:!run_put ~bm_seq_read:!run_seq_read
+           ~bm_read_committed:false)
   end
