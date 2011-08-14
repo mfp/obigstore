@@ -4,21 +4,23 @@ open Lwt
 open Data_model
 
 type error =
-      Corrupted_frame | Bad_request | Unknown_keyspace
-    | Inconsistent_length of int * int  (* expected, actual *)
-    | Other of int
+    Closed | Corrupted_frame | Bad_request | Unknown_keyspace
+  | Inconsistent_length of int * int  (* expected, actual *)
+  | Other of int | Exception of exn
 
 type request_id = string
 
 exception Error of error
 
 let string_of_error = function
+  | Closed -> "Closed"
   | Corrupted_frame -> "Corrupted_frame"
   | Bad_request -> "Bad_request"
   | Unknown_keyspace  -> "Unknown_keyspace"
   | Inconsistent_length (exp, act) ->
       sprintf "(Inconsistent_length (%d, %d))" exp act
   | Other n -> sprintf "(Other %d)" n
+  | Exception exn -> sprintf "(Exception %s)" (Printexc.to_string exn)
 
 let () =
   Printexc.register_printer
