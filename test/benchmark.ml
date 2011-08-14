@@ -27,7 +27,7 @@ struct
           let rows = List.init batch_size (fun _ -> make_row ()) in
             D.read_committed_transaction ks
               (fun tx ->
-                 Lwt_list.iter_s
+                 Lwt_list.iter_p
                    (fun (key, columns) -> D.put_columns tx table key columns)
                    rows)
         done
