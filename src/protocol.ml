@@ -20,11 +20,11 @@ let string_of_error = function
   | Inconsistent_length (exp, act) ->
       sprintf "(Inconsistent_length (%d, %d))" exp act
   | Other n -> sprintf "(Other %d)" n
-  | Exception exn -> sprintf "(Exception %s)" (Printexc.to_string exn)
+  | Exception exn -> sprintf "(Exception (%s))" (Printexc.to_string exn)
 
 let () =
   Printexc.register_printer
-    (function Error x -> Some (sprintf "Error %s" (string_of_error x))
+    (function Error x -> Some (sprintf "Protocol.Error %s" (string_of_error x))
        | _ -> None)
 
 let sync_req_id = String.make 8 '\000'
