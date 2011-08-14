@@ -32,6 +32,8 @@ struct
         mutable in_buf : string;
         out_buf : Bytea.t;
         debug : bool;
+        mutable pending_reqs : int;
+        wait_for_pending_reqs : unit Lwt_condition.t;
       }
 
   let tx_key = Lwt.new_key ()
@@ -56,6 +58,8 @@ struct
         ich; och; db; debug;
         out_buf = Bytea.create 1024;
         in_buf = String.create 128;
+        pending_reqs = 0;
+        wait_for_pending_reqs = Lwt_condition.create ();
       }
     in setup_auto_yield t;
        t
@@ -68,32 +72,46 @@ struct
   let rec service c =
     !auto_yielder () >>
     lwt request_id, len, crc = read_header c.ich in
-      if request_id <> sync_req_id then begin
-        (* ignore async request *)
-        skip c.ich (len + 4) >> service c
-      end else begin
-        serve_sync_request c ~request_id len crc >>
-        service c
-      end
+      match_lwt read_request c ~request_id len crc with
+          None -> service c
+        | Some r ->
+            (* if Protocol.is_sync_req request_id then begin *)
+            if true then begin
+              respond c ~buf:c.out_buf ~request_id r >>
+              service c
+            end else begin
+              ignore begin
+                c.pending_reqs <- c.pending_reqs + 1;
+                try_lwt
+                  respond c ~request_id r
+                finally
+                  c.pending_reqs <- c.pending_reqs - 1;
+                  if c.pending_reqs = 0 then
+                    Lwt_condition.broadcast c.wait_for_pending_reqs ();
+                  return ()
+              end;
+              service c
+            end
 
-
-  and serve_sync_request c ~request_id len crc =
+  and read_request c ~request_id len crc =
     if String.length c.in_buf < len then c.in_buf <- String.create len;
     Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
     lwt crc2 = read_exactly c 4 in
     let crc2' = Crc32c.substring c.in_buf 0 len in
       Crc32c.xor crc2 crc;
-      if crc2 <> crc2' then
-        P.bad_request c.och ~request_id ()
-      else
+      if crc2 <> crc2' then begin
+        P.bad_request c.och ~request_id () >>
+        return None
+      end else begin
         let m =
           try Some (Extprot.Conv.deserialize Request.read c.in_buf)
           with _ -> None
         in match m with
-            None -> P.bad_request c.och ~request_id ()
-          | Some r -> respond c ~request_id r
+            None -> P.bad_request c.och ~request_id () >> return None
+          | Some _ as x -> return x
+      end
 
-  and respond c ~request_id r =
+  and respond ?buf c ~request_id r =
     if c.debug then Format.eprintf "Got request %a@." Request.pp r;
     match r with
       Register_keyspace { Register_keyspace.name } ->
@@ -108,10 +126,10 @@ struct
               H.add c.rev_keyspaces (D.keyspace_id ks) idx;
               idx
         in
-          P.return_keyspace ~buf:c.out_buf c.och ~request_id idx
+          P.return_keyspace ?buf c.och ~request_id idx
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.db name with
-            None -> P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id None
+            None -> P.return_keyspace_maybe ?buf c.och ~request_id None
           | Some ks ->
               let idx =
                 (* find keyspace idx in local table, register if not found *)
@@ -123,31 +141,32 @@ struct
                     H.add c.rev_keyspaces (D.keyspace_id ks) idx;
                     idx
               in
-                P.return_keyspace_maybe ~buf:c.out_buf c.och ~request_id
+                P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some idx)
       end
     | List_keyspaces _ ->
         D.list_keyspaces c.db >>=
-          P.return_keyspace_list ~buf:c.out_buf c.och ~request_id
+          P.return_keyspace_list ?buf c.och ~request_id
     | List_tables { List_tables.keyspace } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              D.list_tables ks >>=
-             P.return_table_list ~buf:c.out_buf c.och ~request_id)
+             P.return_table_list ?buf c.och ~request_id)
     | Table_size_on_disk { Table_size_on_disk.keyspace; table; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              D.table_size_on_disk ks table >>=
-             P.return_table_size_on_disk ~buf:c.out_buf c.och ~request_id)
+             P.return_table_size_on_disk ?buf c.och ~request_id)
     | Key_range_size_on_disk { Key_range_size_on_disk.keyspace; table; range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              D.key_range_size_on_disk ks table
                ?first:range.first ?up_to:range.up_to >>=
-             P.return_key_range_size_on_disk ~buf:c.out_buf c.och ~request_id)
+             P.return_key_range_size_on_disk ?buf c.och ~request_id)
     | Begin { Begin.keyspace; } ->
         (* FIXME: check if we have an open tx in another ks, and signal error
          * if so *)
+        wait_for_pending_reqs c >>
         with_keyspace c keyspace ~request_id
           (fun ks ->
              try_lwt
@@ -156,73 +175,77 @@ struct
                     Lwt.with_value tx_key (Some tx)
                       (fun () ->
                          try_lwt
-                           P.return_ok ~buf:c.out_buf c.och ~request_id ()>>
+                           P.return_ok ?buf c.och ~request_id ()>>
                            service c
                          with Commit_exn ->
-                           P.return_ok ~buf:c.out_buf c.och ~request_id ()))
+                           wait_for_pending_reqs c >>
+                           P.return_ok ?buf c.och ~request_id ()))
              with Abort_exn ->
-               P.return_ok ~buf:c.out_buf c.och ~request_id ())
+               wait_for_pending_reqs c >>
+               P.return_ok ?buf c.och ~request_id ())
     | Commit _ ->
         (* only commit if we're inside a tx *)
         begin match Lwt.get tx_key with
-            None -> P.return_ok ~buf:c.out_buf c.och ~request_id ()
+            None -> P.return_ok ?buf c.och ~request_id ()
           | Some _ -> raise_lwt Commit_exn
         end
     | Abort _ ->
         (* only abort if we're inside a tx *)
         begin match Lwt.get tx_key with
-            None -> P.return_ok ~buf:c.out_buf c.och ~request_id ()
+            None -> P.return_ok ?buf c.och ~request_id ()
           | Some _ -> raise_lwt Abort_exn
         end
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_tx c keyspace ~request_id
           (fun tx -> D.get_keys tx table ?max_keys key_range >>=
-                     P.return_keys ~buf:c.out_buf c.och ~request_id)
+                     P.return_keys ?buf c.och ~request_id)
     | Count_keys { Count_keys.keyspace; table; key_range; } ->
         with_tx c keyspace ~request_id
           (fun tx -> D.count_keys tx table key_range >>=
-                     P.return_key_count ~buf:c.out_buf c.och ~request_id)
+                     P.return_key_count ?buf c.och ~request_id)
     | Get_slice { Get_slice.keyspace; table; max_keys; max_columns;
                   decode_timestamps; key_range; column_range; } ->
         with_tx c keyspace ~request_id
           (fun tx ->
              D.get_slice tx table ?max_keys ?max_columns ~decode_timestamps
                key_range column_range >>=
-             P.return_slice ~buf:c.out_buf c.och ~request_id)
+             P.return_slice ?buf c.och ~request_id)
     | Get_slice_values { Get_slice_values.keyspace; table; max_keys;
                          key_range; columns; } ->
         with_tx c keyspace ~request_id
           (fun tx ->
              D.get_slice_values tx table ?max_keys key_range columns >>=
-             P.return_slice_values ~buf:c.out_buf c.och ~request_id)
+             P.return_slice_values ?buf c.och ~request_id)
     | Get_columns { Get_columns.keyspace; table; max_columns;
                     decode_timestamps; key; column_range; } ->
         with_tx c keyspace ~request_id
           (fun tx ->
              D.get_columns tx table ?max_columns ~decode_timestamps
                key column_range >>=
-             P.return_columns ~buf:c.out_buf c.och ~request_id)
+             P.return_columns ?buf c.och ~request_id)
     | Get_column_values { Get_column_values.keyspace; table; key; columns; } ->
         with_tx c keyspace ~request_id
           (fun tx ->
              D.get_column_values tx table key columns >>=
-             P.return_column_values ~buf:c.out_buf c.och ~request_id)
+             P.return_column_values ?buf c.och ~request_id)
     | Get_column { Get_column.keyspace; table; key; column; } ->
         with_tx c keyspace ~request_id
           (fun tx -> D.get_column tx table key column >>=
-                     P.return_column ~buf:c.out_buf c.och ~request_id)
+                     P.return_column ?buf c.och ~request_id)
     | Put_columns { Put_columns.keyspace; table; key; columns } ->
+        (* P.return_ok ?buf c.och ~request_id () >> *)
+        (* service c *)
         with_tx c keyspace ~request_id
           (fun tx -> D.put_columns tx table key columns >>=
-                     P.return_ok ~buf:c.out_buf c.och ~request_id)
+                     P.return_ok ?buf c.och ~request_id)
     | Delete_columns { Delete_columns.keyspace; table; key; columns; } ->
         with_tx c keyspace ~request_id
           (fun tx -> D.delete_columns tx table key columns >>=
-                     P.return_ok ~buf:c.out_buf c.och ~request_id)
+                     P.return_ok ?buf c.och ~request_id)
     | Delete_key { Delete_key.keyspace; table; key; } ->
         with_tx c keyspace ~request_id
           (fun tx -> D.delete_key tx table key >>=
-                     P.return_ok ~buf:c.out_buf c.och ~request_id)
+                     P.return_ok ?buf c.och ~request_id)
 
   and with_tx c keyspace_idx ~request_id f =
     match Lwt.get tx_key with
@@ -240,5 +263,12 @@ struct
       match ks with
           None -> P.unknown_keyspace c.och ~request_id ()
         | Some ks -> f ks
+
+  and wait_for_pending_reqs c =
+    if c.pending_reqs = 0 then
+      return ()
+    else begin
+      Lwt_condition.wait c.wait_for_pending_reqs
+    end
 end
 
