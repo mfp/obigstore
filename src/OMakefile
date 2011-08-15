@@ -44,6 +44,8 @@ section
     OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
 		  -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src
     OCamlProgram(obigstore, run_server)
+    OCamlProgram(ob_dump, ob_dump)
+    OCamlProgram(ob_load, ob_load)
 
 toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
 	ocamlfind ocamlmktop \
@@ -54,6 +56,6 @@ toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
 	    libs/ocaml-leveldb/src/leveldb.cma ostore.cma \
 	    -linkpkg
 
-.DEFAULT: obigstore$(EXE) ostore.cma ostore.cmxa ostore_server.cmxa ostore_server.cma
+.DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE)
 
 
