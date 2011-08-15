@@ -69,6 +69,11 @@ external ostore_decode_int64_complement_le : string -> int -> Int64.t =
 let decode_timestamp (s : timestamp_buf) =
   ostore_decode_int64_complement_le (s :> string) 0
 
+let decode_timestamp' s =
+  if String.length s <> 8 then
+    invalid_arg "Datum_key.decode_timestamp': want string of length 8";
+  ostore_decode_int64_complement_le s 0
+
 let encode_datum_key_to_string ks ~table ~key ~column ~timestamp =
   let b = Bytea.create 13 in
     encode_datum_key b ks ~table ~key ~column ~timestamp;

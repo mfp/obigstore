@@ -92,6 +92,8 @@ type 'a writer =
   ?buf:Bytea.t -> Lwt_io.output_channel -> request_id:request_id -> 'a -> unit Lwt.t
 type 'a reader = Lwt_io.input_channel -> 'a Lwt.t
 
+type backup_cursor = string
+
 module type PAYLOAD =
 sig
   val bad_request : unit writer
@@ -111,6 +113,7 @@ sig
   val return_column_values : string option list writer
   val return_column : (string * timestamp) option writer
   val return_ok : unit writer
+  val return_backup_dump : (string * backup_cursor option) option writer
 
   val read_keyspace : int reader
   val read_keyspace_maybe : int option reader
@@ -126,4 +129,5 @@ sig
   val read_column_values : string option list reader
   val read_column : (string * timestamp) option reader
   val read_ok : unit reader
+  val read_backup_dump : (string * backup_cursor option) option reader
 end

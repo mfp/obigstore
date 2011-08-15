@@ -26,6 +26,8 @@ type db =
 
 type keyspace = { ks_db : db; ks_name : string; ks_id : int }
 
+type backup_cursor = Backup.cursor
+
 let (|>) x f = f x
 
 let read_keyspaces db =
@@ -191,6 +193,7 @@ type transaction =
       repeatable_read : bool;
       iter_pool : L.iterator Lwt_pool.t option;
       ks : keyspace;
+      batch : L.writebatch Lazy.t;
     }
 
 let tx_key = Lwt.new_key ()
@@ -204,9 +207,10 @@ let transaction_aux make_access_and_iters ks f =
           { added_keys = M.empty; deleted_keys = M.empty;
             added = M.empty; deleted = M.empty;
             access; repeatable_read; iter_pool; ks;
+            batch = lazy (L.Batch.make ());
           } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
-        let b = L.Batch.make () in
+        let b = Lazy.force tx.batch in
         let datum_key = Bytea.create 13 in
         let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
           (* TODO: should iterate in Lwt monad so we can yield every once in a
@@ -346,7 +350,7 @@ type 'a fold_result =
   | Skip_key_with of 'a
   | Finish_fold of 'a
 
-let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
+let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_key =
   let buf = ref "" in
   let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
@@ -419,23 +423,25 @@ let fold_over_data_aux it tx table f acc ~first_key ~up_to_key =
   (* jump to first entry *)
   let first_datum_key =
     Datum_key.encode_datum_key_to_string tx.ks.ks_id ~table
-      ~key:(Option.default "" first_key) ~column:"" ~timestamp:Int64.min_int
+      ~key:(Option.default "" first_key) ~column:first_column
+      ~timestamp:Int64.min_int
   in
     IT.seek it first_datum_key 0 (String.length first_datum_key);
     do_fold_over_data acc
 
-let fold_over_data tx table f acc ~first_key ~up_to_key =
+let fold_over_data tx table f ?first_column acc ~first_key ~up_to_key =
   match tx.iter_pool with
       None ->
         let it = RA.iterator tx.access in
           try_lwt
-            fold_over_data_aux it tx table f acc ~first_key ~up_to_key
+            fold_over_data_aux it tx table f acc ?first_column ~first_key ~up_to_key
           finally
             IT.close it;
             return ()
     | Some pool ->
         Lwt_pool.use pool
-          (fun it -> fold_over_data_aux it tx table f acc ~first_key ~up_to_key)
+          (fun it -> fold_over_data_aux it tx table f acc ?first_column
+                       ~first_key ~up_to_key)
 
 let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
     Keys l ->
@@ -883,3 +889,64 @@ let delete_key tx table key =
         in
           tx.deleted_keys <- M.modify (S.add key) S.empty table tx.deleted_keys;
           return ()
+
+let dump tx ?only_tables ?offset () =
+  let open Backup in
+  let max_chunk = 65536 in
+  let data = Bytea.create 13 in
+  lwt pending_tables = match offset with
+      Some c -> return c.bc_remaining_tables
+    | None -> (* FIXME: should use the tx's iterator to list the tables *)
+        list_tables tx.ks in
+  let curr_key, curr_col = match offset with
+      Some c -> Some c.bc_key, Some c.bc_column
+    | None -> None, None in
+
+  let next_key = ref "" in
+  let next_col = ref "" in
+
+  let got_enough_data () = Bytea.length data > max_chunk in
+  let value_buf = ref "" in
+
+  let fold_datum curr_table it
+        ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf =
+    if got_enough_data () then begin
+      next_key := String.sub key_buf 0 key_len;
+      next_col := String.sub column_buf 0 column_len;
+      Finish_fold curr_table
+    end else begin
+      Backup.add_datum data curr_table it
+        ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf ~value_buf;
+      Continue
+    end in
+
+  let rec collect_data ~curr_key ~curr_col = function
+      [] ->
+        if Bytea.length data = 0 then return None
+        else return (Some (Bytea.contents data, None))
+    | curr_table :: tl as tables ->
+        lwt _ =
+          fold_over_data tx curr_table fold_datum curr_table
+            ~first_key:curr_key ?first_column:curr_col ~up_to_key:None
+        in
+          if got_enough_data () then begin
+            let cursor =
+              { bc_remaining_tables = tables; bc_key = !next_key;
+                bc_column = !next_col; }
+            in return (Some (Bytea.contents data, Some cursor))
+
+          (* we don't have enough data yet, move to next table *)
+          end else begin
+            collect_data ~curr_key:None ~curr_col:None tl
+          end
+
+  in collect_data ~curr_key ~curr_col pending_tables
+
+let load tx data =
+  let enc_datum_key datum_key ~table ~key ~column ~timestamp =
+    Datum_key.encode_datum_key datum_key tx.ks.ks_id
+      ~table ~key ~column ~timestamp
+  in return (Backup.load enc_datum_key (Lazy.force tx.batch) data)
+
+let cursor_of_string = Backup.cursor_of_string
+let string_of_cursor = Backup.string_of_cursor

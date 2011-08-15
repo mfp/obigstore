@@ -1,6 +1,8 @@
 open Lwt
 open Data_model
 
+module Option = BatOption
+
 module Version_0_0_0 : Protocol.PAYLOAD =
 struct
 
@@ -228,5 +230,19 @@ struct
   let return_ok = writer (fun b () -> E.add_status b 0)
 
   let read_ok = reader (fun ich -> return ())
+
+  let add_backup_dump =
+    E.add_tuple2 E.add_string (E.add_option E.add_string)
+
+  let get_backup_dump =
+    D.get_tuple2 D.get_string (D.get_option D.get_string)
+
+  let read_backup_dump = reader (D.get_option get_backup_dump)
+
+  let return_backup_dump =
+    writer
+      (fun b x ->
+         E.add_status b 0;
+         E.add_option add_backup_dump b x)
 end
 

@@ -134,4 +134,22 @@ sig
     transaction -> table -> key -> column_name list -> unit Lwt.t
 
   val delete_key : transaction -> table -> key -> unit Lwt.t
+
+  (** {3} Backup *)
+  type backup_cursor
+
+  val dump :
+    transaction ->
+    ?only_tables:table list ->
+    ?offset:backup_cursor -> unit ->
+    (string * backup_cursor option) option Lwt.t
+
+  val load : transaction -> string -> unit Lwt.t
+end
+
+module type BACKUP_SUPPORT =
+sig
+  type backup_cursor
+  val string_of_cursor : backup_cursor -> string
+  val cursor_of_string : string -> backup_cursor option
 end

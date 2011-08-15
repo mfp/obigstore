@@ -42,6 +42,8 @@ message column_ = column
 
 type req = { keyspace : keyspace }
 
+type backup_cursor = string
+
 message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
@@ -76,5 +78,8 @@ message request =
   | Delete_columns { keyspace : keyspace; table : table; key : key;
                      columns : [ column_name ] }
   | Delete_key { keyspace : keyspace; table : table; key : key }
+  | Dump { keyspace : keyspace; only_tables : opt< [table] >;
+           cursor : opt<backup_cursor>; }
+  | Load { keyspace : keyspace; data : string }
 
 (* vim:set ft=omlet: *) 

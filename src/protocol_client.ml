@@ -57,6 +57,8 @@ struct
 
   type transaction = keyspace
 
+  type backup_cursor = string
+
   let try_find h k =
     try Some (H.find h k) with Not_found -> None
 
@@ -324,4 +326,15 @@ struct
     sync_request_ks ks
       (Delete_key { Delete_key.keyspace = ks.ks_id; table; key; })
       P.read_ok
+
+  let dump ks ?only_tables ?offset () =
+    sync_request_ks ks
+      (Dump { Dump.keyspace = ks.ks_id; only_tables; cursor = offset; })
+      P.read_backup_dump
+
+  let load ks data =
+    sync_request_ks ks (Load { Load.keyspace = ks.ks_id; data; }) P.read_ok
+
+  let string_of_cursor x = x
+  let cursor_of_string x = Some x
 end

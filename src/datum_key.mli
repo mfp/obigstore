@@ -11,6 +11,9 @@ val make_timestamp_buf : unit -> timestamp_buf
 (** Decode the timestamp contained in the buffer. *)
 val decode_timestamp : timestamp_buf -> Int64.t
 
+(** Decode the timestamp contained in the string. *)
+val decode_timestamp' : string -> Int64.t
+
 (** Custom comparator used in LevelDB storage. *)
 val custom_comparator : LevelDB.comparator
 

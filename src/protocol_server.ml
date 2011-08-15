@@ -3,7 +3,12 @@ open Data_model
 open Protocol
 open Request
 
-module Make(D : Data_model.S)(P : PAYLOAD) =
+module Make
+  (D : sig
+     include Data_model.S
+     include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+   end)
+  (P : PAYLOAD) =
 struct
   open Request
 
@@ -246,6 +251,24 @@ struct
         with_tx c keyspace ~request_id
           (fun tx -> D.delete_key tx table key >>=
                      P.return_ok ?buf c.och ~request_id)
+    | Dump { Dump.keyspace; only_tables; cursor; } ->
+        let offset = match cursor with
+            None -> None
+          | Some c -> D.cursor_of_string c in
+        with_tx c keyspace ~request_id
+          (fun tx ->
+             lwt x =
+               D.dump tx ?only_tables ?offset () >|= function
+                   None -> None
+                 | Some (data, None) -> Some (data, None)
+                 | Some (data, Some cursor) ->
+                     Some (data, Some (D.string_of_cursor cursor))
+             in P.return_backup_dump ?buf c.och ~request_id x)
+    | Load { Load.keyspace; data; } ->
+        with_tx c keyspace ~request_id
+          (fun tx ->
+             D.load tx data >>=
+             P.return_ok ?buf c.och ~request_id)
 
   and with_tx c keyspace_idx ~request_id f =
     match Lwt.get tx_key with
