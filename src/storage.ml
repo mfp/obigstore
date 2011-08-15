@@ -897,7 +897,9 @@ let dump tx ?only_tables ?offset () =
   lwt pending_tables = match offset with
       Some c -> return c.bc_remaining_tables
     | None -> (* FIXME: should use the tx's iterator to list the tables *)
-        list_tables tx.ks in
+        match only_tables with
+            None -> list_tables tx.ks
+          | Some tables -> return tables in
   let curr_key, curr_col = match offset with
       Some c -> Some c.bc_key, Some c.bc_column
     | None -> None, None in
