@@ -195,7 +195,9 @@ type transaction =
       repeatable_read : bool;
       iter_pool : L.iterator Lwt_pool.t option;
       ks : keyspace;
-      batch : L.writebatch Lazy.t;
+      mutable backup_writebatch : L.writebatch Lazy.t;
+      (* approximate size of data written in current backup_writebatch *)
+      mutable backup_writebatch_size : int;
     }
 
 let tx_key = Lwt.new_key ()
@@ -209,10 +211,11 @@ let transaction_aux make_access_and_iters ks f =
           { added_keys = M.empty; deleted_keys = M.empty;
             added = M.empty; deleted = M.empty;
             access; repeatable_read; iter_pool; ks;
-            batch = lazy (L.Batch.make ());
+            backup_writebatch = lazy (L.Batch.make ());
+            backup_writebatch_size = 0;
           } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
-        let b = Lazy.force tx.batch in
+        let b = Lazy.force tx.backup_writebatch in
         let datum_key = Bytea.create 13 in
         let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
           (* TODO: should iterate in Lwt monad so we can yield every once in a
@@ -954,8 +957,26 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
 let load tx data =
   let enc_datum_key datum_key ~table ~key ~column ~timestamp =
     Datum_key.encode_datum_key datum_key tx.ks.ks_id
-      ~table ~key ~column ~timestamp
-  in return (Backup.load enc_datum_key (Lazy.force tx.batch) data)
+      ~table ~key ~column ~timestamp in
+  let wb = Lazy.force tx.backup_writebatch in
+  let ok = Backup.load enc_datum_key wb data in
+    if not ok then
+      return false
+    else begin
+      tx.backup_writebatch_size <- tx.backup_writebatch_size + String.length data;
+      begin
+        (* we check if there's enough data in this batch, and write it if so *)
+        if tx.backup_writebatch_size < 40_000_000 then
+          (* FIXME: allow to set this constant somewhere *)
+          return ()
+        else begin
+          tx.backup_writebatch <- lazy (L.Batch.make ());
+          tx.backup_writebatch_size <- 0;
+          Lwt_preemptive.detach (L.Batch.write ~sync:true tx.ks.ks_db.db) wb
+        end
+      end >>
+      return true
+    end
 
 let cursor_of_string = Backup.cursor_of_string
 let string_of_cursor = Backup.string_of_cursor
