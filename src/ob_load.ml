@@ -1,5 +1,6 @@
 open Lwt
 open Printf
+open Ob_util
 
 module D = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 
@@ -23,10 +24,10 @@ let load db ~keyspace ich =
   let error = ref None in
     D.repeatable_read_transaction ks
       (fun tx ->
-         let rec loop_load () =
+         let rec loop_load progress =
            match !error with
              | None ->
-                 eprintf "%Ld\r%!" (Lwt_io.position ich);
+                 Progress_report.update progress (Lwt_io.position ich) >>
                  lwt len = Lwt_io.read_int ich in
                  let buf = String.create len in
                  lwt () = Lwt_io.read_into_exactly ich buf 0 len in
@@ -40,13 +41,11 @@ let load db ~keyspace ich =
                    end;
                    (* wait until one of the reqs is done *)
                    Lwt_util.run_in_region region 1 (fun () -> return ()) >>
-                   loop_load ()
+                   loop_load progress
              | Some error -> raise_lwt error
          in try_lwt
-              loop_load ()
-            with End_of_file ->
-              eprintf "%Ld%!" (Lwt_io.position ich);
-              return ())
+              Progress_report.with_progress_report Lwt_io.stderr loop_load
+            with End_of_file -> return ())
 
 let () =
   Printexc.record_backtrace true;

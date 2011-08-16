@@ -12,6 +12,7 @@ OBJECTS[] =
   crc32c
   data_model
   datum_key
+  ob_util
   protocol
   protocol_client
   protocol_server

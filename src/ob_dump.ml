@@ -1,5 +1,6 @@
 open Lwt
 open Printf
+open Ob_util
 
 module D = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 module Option = BatOption
@@ -29,19 +30,18 @@ let dump db ~keyspace ~only_tables och =
     | Some ks ->
         D.repeatable_read_transaction ks
           (fun tx ->
-             let rec loop_dump offset =
-               eprintf "%Ld\r%!" (Lwt_io.position och);
+             let rec loop_dump offset progress =
+               Progress_report.update progress (Lwt_io.position och) >>
                match_lwt D.dump tx ?only_tables ?offset () with
                    None -> return ()
                  | Some (data, cursor) ->
                      Lwt_io.LE.write_int och (String.length data) >>
                      Lwt_io.write och data >>
                      match cursor with
-                       | Some _ -> loop_dump cursor
-                       | None -> return () in
-             lwt () = loop_dump None in
-               eprintf "%Ld\r%!" (Lwt_io.position och);
-               return ())
+                       | Some _ -> loop_dump cursor progress
+                       | None -> return ()
+             in Progress_report.with_progress_report Lwt_io.stderr
+                    (loop_dump None))
 
 let () =
   Printexc.record_backtrace true;
