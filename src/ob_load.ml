@@ -18,16 +18,28 @@ let params =
     ]
 
 let load db ~keyspace ich =
+  let region = Lwt_util.make_region 5 in (* max parallel reqs *)
   lwt ks = D.register_keyspace db keyspace in
+  let error = ref None in
     D.repeatable_read_transaction ks
       (fun tx ->
          let rec loop_load () =
-           eprintf "%Ld\r%!" (Lwt_io.position ich);
-           lwt len = Lwt_io.read_int ich in
-           let buf = String.create len in
-             Lwt_io.read_into_exactly ich buf 0 len >>
-             D.load tx buf >>
-             loop_load ()
+           match !error with
+             | None ->
+                 eprintf "%Ld\r%!" (Lwt_io.position ich);
+                 lwt len = Lwt_io.read_int ich in
+                 let buf = String.create len in
+                 lwt () = Lwt_io.read_into_exactly ich buf 0 len in
+                   ignore begin
+                     try_lwt
+                       Lwt_util.run_in_region region 1
+                         (fun () -> D.load tx buf >|= ignore)
+                     with e ->
+                       error := Some e;
+                       return ()
+                   end;
+                   loop_load ()
+             | Some error -> raise_lwt error
          in try_lwt
               loop_load ()
             with End_of_file ->
