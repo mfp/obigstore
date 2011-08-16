@@ -98,7 +98,8 @@ let list_tables ks =
     if not (IT.valid it) then acc
     else begin
       let k = IT.get_key it in
-        if not (Datum_key.decode_datum_key
+        if Char.code k.[1] <> ks.ks_id ||  (* first check if it's the same KS *)
+          not (Datum_key.decode_datum_key
                   ~table_buf_r ~table_len_r
                   ~key_buf_r:None ~key_len_r:None
                   ~column_buf_r:None ~column_len_r:None

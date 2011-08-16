@@ -189,6 +189,17 @@ struct
       D.list_tables ks2 >|= aeq_string_list [] >>
       return ()
 
+  let test_list_tables_with_keyspaces db =
+    lwt ks1 = D.register_keyspace db "test_list_tables_with_keyspaces" in
+    lwt ks2 = D.register_keyspace db "test_list_tables_with_keyspaces2" in
+      put_slice ks1 "dummy" ["a", ["x", ""]] >>
+      put_slice ks2 "dummy" ["a", ["x", ""]] >>
+      put_slice ks2 "dummy2" ["a", ["x", ""]] >>
+      D.list_tables ks1 >|= aeq_string_list ["dummy"] >>
+      D.list_tables ks2 >|= aeq_string_list ["dummy"; "dummy2"] >>
+      put_slice ks1 "bar" ["a", ["x", ""]] >>
+      D.list_tables ks1 >|= aeq_string_list ["bar"; "dummy"]
+
   let get_key_range ks ?max_keys ?first ?last tbl =
     D.read_committed_transaction ks
       (fun tx ->
@@ -761,6 +772,7 @@ struct
       "custom comparator (2)", test_custom_comparator_non_datum;
       "keyspace management", test_keyspace_management;
       "list tables", test_list_tables;
+      "list tables with diff keyspaces", test_list_tables_with_keyspaces;
       "get_keys ranges", test_get_keys_ranges;
       "get_keys discrete keys", test_get_keys_discrete;
       "get_keys honors max_keys", test_get_keys_max_keys;
