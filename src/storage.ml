@@ -896,10 +896,11 @@ let delete_key tx table key =
           tx.deleted_keys <- M.modify (S.add key) S.empty table tx.deleted_keys;
           return ()
 
-let dump tx ?only_tables ?offset () =
+let dump tx ?(format = 0) ?only_tables ?offset () =
   let open Backup in
   let max_chunk = 65536 in
-  let data = Bytea.create 13 in
+  let module ENC = (val Backup.encoder format : Backup.ENCODER) in
+  let enc = ENC.make () in
   lwt pending_tables = match offset with
       Some c -> return c.bc_remaining_tables
     | None -> (* FIXME: should use the tx's iterator to list the tables *)
@@ -913,7 +914,7 @@ let dump tx ?only_tables ?offset () =
   let next_key = ref "" in
   let next_col = ref "" in
 
-  let got_enough_data () = Bytea.length data > max_chunk in
+  let got_enough_data () = ENC.approximate_size enc > max_chunk in
   let value_buf = ref "" in
 
   let fold_datum curr_table it
@@ -923,15 +924,15 @@ let dump tx ?only_tables ?offset () =
       next_col := String.sub column_buf 0 column_len;
       Finish_fold curr_table
     end else begin
-      Backup.add_datum data curr_table it
+      ENC.add_datum enc curr_table it
         ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf ~value_buf;
       Continue
     end in
 
   let rec collect_data ~curr_key ~curr_col = function
       [] ->
-        if Bytea.length data = 0 then return None
-        else return (Some (Bytea.contents data, None))
+        if ENC.is_empty enc then return None
+        else return (Some (Bytea.contents (ENC.finish enc), None))
     | curr_table :: tl as tables ->
         lwt _ =
           fold_over_data tx curr_table fold_datum curr_table
@@ -941,7 +942,7 @@ let dump tx ?only_tables ?offset () =
             let cursor =
               { bc_remaining_tables = tables; bc_key = !next_key;
                 bc_column = !next_col; }
-            in return (Some (Bytea.contents data, Some cursor))
+            in return (Some (Bytea.contents (ENC.finish enc), Some cursor))
 
           (* we don't have enough data yet, move to next table *)
           end else begin

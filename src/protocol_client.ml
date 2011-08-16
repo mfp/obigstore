@@ -327,13 +327,15 @@ struct
       (Delete_key { Delete_key.keyspace = ks.ks_id; table; key; })
       P.read_ok
 
-  let dump ks ?only_tables ?offset () =
+  let dump ks ?format ?only_tables ?offset () =
     sync_request_ks ks
-      (Dump { Dump.keyspace = ks.ks_id; only_tables; cursor = offset; })
+      (Dump { Dump.keyspace = ks.ks_id; only_tables; cursor = offset;
+              format; })
       P.read_backup_dump
 
   let load ks data =
-    sync_request_ks ks (Load { Load.keyspace = ks.ks_id; data; }) P.read_ok
+    sync_request_ks ks (Load { Load.keyspace = ks.ks_id; data; })
+      P.read_backup_load_result
 
   let string_of_cursor x = x
   let cursor_of_string x = Some x

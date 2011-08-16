@@ -244,5 +244,17 @@ struct
       (fun b x ->
          E.add_status b 0;
          E.add_option add_backup_dump b x)
+
+  let return_backup_load_result =
+    writer (fun b x ->
+              E.add_status b 0;
+              E.add_int32_le b (if x then 0 else -1))
+
+  let read_backup_load_result =
+    reader (fun ich ->
+              D.get_status ich >|= function
+                  0 -> true
+                | _ -> false)
+
 end
 

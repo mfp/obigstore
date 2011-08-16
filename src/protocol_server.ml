@@ -251,14 +251,14 @@ struct
         with_tx c keyspace ~request_id
           (fun tx -> D.delete_key tx table key >>=
                      P.return_ok ?buf c.och ~request_id)
-    | Dump { Dump.keyspace; only_tables; cursor; } ->
+    | Dump { Dump.keyspace; only_tables; cursor; format; } ->
         let offset = match cursor with
             None -> None
           | Some c -> D.cursor_of_string c in
         with_tx c keyspace ~request_id
           (fun tx ->
              lwt x =
-               D.dump tx ?only_tables ?offset () >|= function
+               D.dump tx ?format ?only_tables ?offset () >|= function
                    None -> None
                  | Some (data, None) -> Some (data, None)
                  | Some (data, Some cursor) ->
@@ -268,7 +268,7 @@ struct
         with_tx c keyspace ~request_id
           (fun tx ->
              D.load tx data >>=
-             P.return_ok ?buf c.och ~request_id)
+             P.return_backup_load_result ?buf c.och ~request_id)
 
   and with_tx c keyspace_idx ~request_id f =
     match Lwt.get tx_key with

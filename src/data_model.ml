@@ -34,6 +34,8 @@ type column_range =
   | Columns of string list
   | Column_range of range
 
+type backup_format = int
+
 (* {2 Data model } *)
 
 module type S =
@@ -140,11 +142,13 @@ sig
 
   val dump :
     transaction ->
+    ?format:backup_format ->
     ?only_tables:table list ->
     ?offset:backup_cursor -> unit ->
     (string * backup_cursor option) option Lwt.t
 
-  val load : transaction -> string -> unit Lwt.t
+  (** [load tx data] returns [false] if the data is in an unknown format. *)
+  val load : transaction -> string -> bool Lwt.t
 end
 
 module type BACKUP_SUPPORT =
