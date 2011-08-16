@@ -54,6 +54,11 @@ val encode_table_successor : Bytea.t -> ks -> string -> unit
 (** Similar to {!encode_table_successor}, returning a string. *)
 val encode_table_successor_to_string : ks -> string -> string
 
+(** [get_datum_key_keyspace_id k] returns the keyspace id of the datum key
+  * [k]. Note that a bogus value will be returned if [k] is not a datum key;
+  * you'll have to use {!decode_datum_key} to make sure it is one. *)
+val get_datum_key_keyspace_id : string -> int
+
 (** [decode_datum_key ... key off]
   * Decode a datum key, filling the buffers corresponding to the different
   * parts (as well as the length references) if provided, for the key in [key]

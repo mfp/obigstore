@@ -92,6 +92,9 @@ let decode_var_int_at s off =
       | m -> n lor (m lsl shift)
   in loop s off 0 0
 
+let get_datum_key_keyspace_id datum_key =
+  Char.code datum_key.[1]
+
 let decode_datum_key
       ~table_buf_r ~table_len_r
       ~key_buf_r ~key_len_r

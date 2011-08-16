@@ -98,14 +98,15 @@ let list_tables ks =
     if not (IT.valid it) then acc
     else begin
       let k = IT.get_key it in
-        if Char.code k.[1] <> ks.ks_id ||  (* first check if it's the same KS *)
-          not (Datum_key.decode_datum_key
+        if not (Datum_key.decode_datum_key
                   ~table_buf_r ~table_len_r
                   ~key_buf_r:None ~key_len_r:None
                   ~column_buf_r:None ~column_len_r:None
                   ~timestamp_buf:None
-                  k (String.length k))
+                  k (String.length k)) ||
+           Datum_key.get_datum_key_keyspace_id k <> ks.ks_id
         then
+          (* we have hit the end of the keyspace or the data area *)
           acc
         else
           collect_tables ((String.sub !table_buf 0 !table_len) :: acc)
@@ -383,14 +384,17 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
       return acc
     else begin
       let len = IT.fill_key it buf in
-        if Char.code !buf.[1] <> tx.ks.ks_id || (* first check if it's the same KS *)
-           not (Datum_key.decode_datum_key
+        (* try to decode datum key, check if it's the same KS *)
+        if not (Datum_key.decode_datum_key
                   ~table_buf_r ~table_len_r
                   ~key_buf_r ~key_len_r
                   ~column_buf_r ~column_len_r
                   ~timestamp_buf:some_timestamp_buf
-                  !buf len)
-        then return acc (* if this happens, we must have hit the end of the data area *)
+                  !buf len) ||
+           Datum_key.get_datum_key_keyspace_id !buf <> tx.ks.ks_id
+        then
+          (* we have hit the end of the keyspace or the data area *)
+          return acc
         else begin
           (* check that we're still in the table *)
           if not (is_same_value table table_buf table_len) then
