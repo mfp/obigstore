@@ -18,7 +18,7 @@ let params =
     ]
 
 let load db ~keyspace ich =
-  let region = Lwt_util.make_region 5 in (* max parallel reqs *)
+  let region = Lwt_util.make_region 10 in (* max parallel reqs *)
   lwt ks = D.register_keyspace db keyspace in
   let error = ref None in
     D.repeatable_read_transaction ks
@@ -38,6 +38,8 @@ let load db ~keyspace ich =
                        error := Some e;
                        return ()
                    end;
+                   (* wait until one of the reqs is done *)
+                   Lwt_util.run_in_region region 1 (fun () -> return ()) >>
                    loop_load ()
              | Some error -> raise_lwt error
          in try_lwt
