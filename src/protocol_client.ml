@@ -328,13 +328,13 @@ struct
       P.read_ok
 
   let dump ks ?format ?only_tables ?offset () =
-    sync_request_ks ks
+    async_request_ks ks
       (Dump { Dump.keyspace = ks.ks_id; only_tables; cursor = offset;
               format; })
       P.read_backup_dump
 
   let load ks data =
-    sync_request_ks ks (Load { Load.keyspace = ks.ks_id; data; })
+    async_request_ks ks (Load { Load.keyspace = ks.ks_id; data; })
       P.read_backup_load_result
 
   let string_of_cursor x = x
