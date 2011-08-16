@@ -383,7 +383,8 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
       return acc
     else begin
       let len = IT.fill_key it buf in
-        if not (Datum_key.decode_datum_key
+        if Char.code !buf.[1] <> tx.ks.ks_id || (* first check if it's the same KS *)
+           not (Datum_key.decode_datum_key
                   ~table_buf_r ~table_len_r
                   ~key_buf_r ~key_len_r
                   ~column_buf_r ~column_len_r

@@ -639,6 +639,16 @@ struct
            D.get_slice tx "tbl" (DM.Keys ["k\000"]) DM.All_columns >|=
              aeq_slice (Some "k\000", [ "k\000", "2", [ "2", "" ] ]))
 
+  let test_get_slice_with_keyspaces db =
+    lwt ks1 = D.register_keyspace db "test_get_slice_with_keyspaces" in
+    lwt ks2 = D.register_keyspace db "test_get_slice_with_keyspaces2" in
+      put_slice ks1 "tbl" [ "a", ["x", "y"] ] >>
+      put_slice ks2 "tbl" [ "b", ["w", "z"] ] >>
+      D.read_committed_transaction ks1
+        (fun tx ->
+           D.get_slice tx "tbl" (key_range ()) DM.All_columns >|=
+           aeq_slice (Some "a", ["a", "x", ["x", "y"]]))
+
   let test_get_slice_values db =
     lwt ks = D.register_keyspace db "test_get_slice_values" in
     let add_data () =
@@ -786,6 +796,7 @@ struct
       "get_slice honor max_columns", test_get_slice_max_columns;
       "get_slice with column ranges", test_get_slice_column_ranges;
       "get_slice correct iteration with tricky columns", test_get_slice_tricky_columns;
+      "get_slice with diff keyspaces", test_get_slice_with_keyspaces;
       "get_slice_values", test_get_slice_values;
       "get_column_values", test_get_column_values;
       "put_columns", test_put_columns;
