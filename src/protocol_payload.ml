@@ -3,6 +3,20 @@ open Data_model
 
 module Option = BatOption
 
+module Request_serialization =
+struct
+  type t = [`Raw | `Extprot | `Unknown]
+
+  let of_format_id = function
+      0 -> `Raw
+    | 1 -> `Extprot
+    | _ -> `Unknown
+
+  let format_id = function
+      `Raw -> 0
+    | `Extprot -> 1
+end
+
 module Version_0_0_0 : Protocol.PAYLOAD =
 struct
 
@@ -78,6 +92,7 @@ struct
         0 -> f ich
       | -1 -> raise_lwt (Error Bad_request)
       | -2 -> raise_lwt (Error Unknown_keyspace)
+      | -3 -> raise_lwt (Error Unknown_serialization)
       | n -> raise_lwt (Error (Other n))
 
   let bad_request =
@@ -85,6 +100,9 @@ struct
 
   let unknown_keyspace =
     writer (fun b () -> E.add_status b (-2))
+
+  let unknown_serialization =
+    writer (fun b () -> E.add_status b (-3))
 
   let return_keyspace =
     writer (fun b ks ->

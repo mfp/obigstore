@@ -4,7 +4,8 @@ open Lwt
 open Data_model
 
 type error =
-    Closed | Corrupted_frame | Bad_request | Unknown_keyspace
+    Closed | Corrupted_frame | Bad_request | Unknown_serialization
+  | Unknown_keyspace
   | Inconsistent_length of int * int  (* expected, actual *)
   | Other of int | Exception of exn
 
@@ -16,6 +17,7 @@ let string_of_error = function
   | Closed -> "Closed"
   | Corrupted_frame -> "Corrupted_frame"
   | Bad_request -> "Bad_request"
+  | Unknown_serialization -> "Unknown_serialization"
   | Unknown_keyspace  -> "Unknown_keyspace"
   | Inconsistent_length (exp, act) ->
       sprintf "(Inconsistent_length (%d, %d))" exp act
@@ -98,6 +100,7 @@ module type PAYLOAD =
 sig
   val bad_request : unit writer
   val unknown_keyspace : unit writer
+  val unknown_serialization : unit writer
 
   val return_keyspace : int writer
   val return_keyspace_maybe : int option writer

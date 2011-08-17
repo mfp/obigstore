@@ -115,17 +115,24 @@ struct
     Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
     lwt crc2 = read_exactly c 4 in
     let crc2' = Crc32c.substring c.in_buf 0 len in
+    let gb n = Char.code c.in_buf.[n] in
+    let format_id = gb 0 + (gb 1 lsl 8) + (gb 2 lsl 16) + (gb 3 lsl 24) in
       Crc32c.xor crc2 crc;
       if crc2 <> crc2' then begin
         P.bad_request c.och ~request_id () >>
         return None
       end else begin
-        let m =
-          try Some (Extprot.Conv.deserialize Request.read c.in_buf)
-          with _ -> None
-        in match m with
-            None -> P.bad_request c.och ~request_id () >> return None
-          | Some _ as x -> return x
+        match Protocol_payload.Request_serialization.of_format_id format_id with
+            `Extprot -> begin
+              let m =
+                try Some (Extprot.Conv.deserialize Request.read ~offset:4 c.in_buf)
+                with _ -> None
+              in match m with
+                  None -> P.bad_request c.och ~request_id () >> return None
+                | Some _ as x -> return x
+            end
+          | `Raw -> P.bad_request c.och ~request_id () >> return None
+          | `Unknown -> P.unknown_serialization c.och ~request_id () >> return None
       end
 
   and respond ?buf c ~request_id r =

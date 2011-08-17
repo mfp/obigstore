@@ -156,6 +156,8 @@ struct
 
   let send_request t ~request_id req =
     Bytea.clear t.buf;
+    Bytea.add_int32_le t.buf
+      (Protocol_payload.Request_serialization.format_id `Extprot);
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     Protocol.write_msg t.och request_id t.buf
 
