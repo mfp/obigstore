@@ -78,7 +78,7 @@ let add_vint_and_ret_size dst n =
  * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
  * var_int(key_len) var_int(col_len) uint8(tbl_len)
  * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
- * uint8(version)
+ * uint8(flags) uint8(version)
  * *)
 
 let encode_datum_key dst ks ~table ~key ~column ~timestamp =
@@ -93,6 +93,7 @@ let encode_datum_key dst ks ~table ~key ~column ~timestamp =
     let clen_len = add_vint_and_ret_size dst (String.length column) in
       Bytea.add_byte dst ((ks_len lsl 3) lor t_len);
       Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
+      Bytea.add_byte dst 0;
       Bytea.add_byte dst version
 
 let encode_table_successor dst ks table =
@@ -138,16 +139,16 @@ let decode_datum_key
       ~timestamp_buf
       datum_key len =
   if datum_key.[0] <> '1' then false else
-  let last_byte = Char.code datum_key.[len - 2] in
+  let last_byte = Char.code datum_key.[len - 3] in
   let clen_len = last_byte land 0x7 in
   let klen_len = (last_byte lsr 3) land 0x7 in (* safer *)
-  let ks_and_t_lengths = Char.code datum_key.[len - 3] in
+  let ks_and_t_lengths = Char.code datum_key.[len - 4] in
   let ks_len = (ks_and_t_lengths lsr 3) land 0x7 in
   let t_len = ks_and_t_lengths land 0x7 in
-  let c_len = decode_var_int_at datum_key (len - 3 - clen_len) in
-  let k_len = decode_var_int_at datum_key (len - 3 - clen_len - klen_len) in
+  let c_len = decode_var_int_at datum_key (len - 4 - clen_len) in
+  let k_len = decode_var_int_at datum_key (len - 4 - clen_len - klen_len) in
   let expected_len =
-    1 + ks_len + t_len + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1
+    1 + ks_len + t_len + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1 + 1
   in
     if expected_len <> len then
       false

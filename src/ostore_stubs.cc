@@ -75,10 +75,10 @@ class OStoreComparator1 : public leveldb::Comparator {
                 if(kscmp) return kscmp;
 
                 // then compare table ids
-                int kslen_a = (a[sa - 3] >> 3) & 0x7,
-                    kslen_b = (b[sb - 3] >> 3) & 0x7,
-                    tlen_a = a[sa - 3] & 0x7,
-                    tlen_b = b[sb - 3] & 0x7;
+                int kslen_a = (a[sa - 4] >> 3) & 0x7,
+                    kslen_b = (b[sb - 4] >> 3) & 0x7,
+                    tlen_a = a[sa - 4] & 0x7,
+                    tlen_b = b[sb - 4] & 0x7;
 
                 int ta = decode_var_int(a.data() + 1 + kslen_a),
                     tb = decode_var_int(b.data() + 1 + kslen_b);
@@ -91,7 +91,7 @@ class OStoreComparator1 : public leveldb::Comparator {
                 // then decode column and key lengths, then compare the
                 // latter, then the former
 
-                int last_a = a[sa - 2], last_b = b[sb - 2];
+                int last_a = a[sa - 3], last_b = b[sb - 3];
                 int clen_len_a = last_a & 0x7,
                     clen_len_b = last_b & 0x7;
                 int klen_len_a = (last_a >> 3) & 0x7,
@@ -99,8 +99,8 @@ class OStoreComparator1 : public leveldb::Comparator {
 
                 int64_t klen_a, klen_b;
 
-                klen_a = decode_var_int(a.data() + sa - 3 - clen_len_a - klen_len_a);
-                klen_b = decode_var_int(b.data() + sb - 3 - clen_len_b - klen_len_b);
+                klen_a = decode_var_int(a.data() + sa - 4 - clen_len_a - klen_len_a);
+                klen_b = decode_var_int(b.data() + sb - 4 - clen_len_b - klen_len_b);
 
                 leveldb::Slice key_a(a.data() + 1 + kslen_a + tlen_a, klen_a),
                                key_b(b.data() + 1 + kslen_b + tlen_b, klen_b);
@@ -109,8 +109,8 @@ class OStoreComparator1 : public leveldb::Comparator {
                 if(keycmp) return keycmp;
 
                 int64_t clen_a, clen_b;
-                clen_a = decode_var_int(a.data() + sa - 3 - clen_len_a);
-                clen_b = decode_var_int(b.data() + sb - 3 - clen_len_b);
+                clen_a = decode_var_int(a.data() + sa - 4 - clen_len_a);
+                clen_b = decode_var_int(b.data() + sb - 4 - clen_len_b);
 
                 leveldb::Slice col_a(a.data() + 1 + kslen_a + tlen_a + klen_a, clen_a),
                                col_b(b.data() + 1 + kslen_b + tlen_b + klen_b, clen_b);
