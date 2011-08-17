@@ -76,8 +76,9 @@ let add_vint_and_ret_size dst n =
 (* datum key format:
  * '1' vint(keyspace) vint(table_id) uint8(type) string(key) string(column)
  * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
- * var_int(key_len) var_int(col_len) uint8(tbl_len)
- * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
+ * var_int(key_len) var_int(col_len)
+ * uint8(len(vint(keyspace)) lsl 3 | len(vint(table_id)))
+ * uint8(len(vint(key_len)) lsl 3 | len(vint(col_len)))
  * uint8(flags) uint8(version)
  * *)
 
@@ -158,7 +159,7 @@ let decode_datum_key
     else if Char.code datum_key.[1 + ks_len + t_len] <> 0 then
       false
     else begin
-      table_r := decode_var_int_at datum_key 2;
+      table_r := decode_var_int_at datum_key (1 + ks_len);
       begin match key_buf_r, key_len_r with
           None, _ | _, None -> ()
         | Some b, Some l ->

@@ -141,22 +141,33 @@ struct
         (not rev) (Datum_encoding.apply_custom_comparator x y = 0) in
     let rev = true in
     let alt x y = alt x y; agt y x; aeq ~rev x y in
+    let b = Char.code in
+    let bytes = string_of_bytes in
+    let alt_bytes x y = alt (bytes x) (bytes y) in
+    let aeq_bytes x y = aeq (bytes x) (bytes y) in
       aeq "" "";
       alt "" "1";
       alt "" "\255";
       alt "1033232" "\255";
       alt "\255" "\255\000";
-      (* null column with zero timestamp vs. non-null column *)
-      alt "1\001\001\000d\000\000\000\000\000\000\000\128\001\000\009\t\000\000"
-          "1\001\001\000dd%d]\000\000V\251\255\001\001\009\t\000\000";
-      (* diff timestamps, but nonetheless equal datum_keys *)
-      aeq
-        "1\001\001\000dd\212<\015\017\254U\251\255\001\001\009\t\000\000"
-        "1\001\001\000dd\135;\015\017\254U\251\255\001\001\009\t\000\000";
-      (* unrelated keys *)
+      (* multi-byte keyspace *)
       alt
-        "1\001\001\000cc\187\215\205\226\253U\251\255\001\001\009\t\000\000"
-        "1\001\001\000dd@\214\205\226\253U\251\255\001\001\009\t\000\000";
+        (Datum_encoding.encode_datum_key_to_string
+           129 ~table:9 ~key:"" ~column:"" ~timestamp:0L)
+        (Datum_encoding.encode_datum_key_to_string
+           256 ~table:0 ~key:"" ~column:"" ~timestamp:0L);
+      (* null column with non-zero timestamp vs. non-null column *)
+      alt_bytes
+        [ b '1'; 1; 1; 0; b 'd'; 255; 0; 0; 0; 0; 0; 0; 0; 1; 0; 9; 9; 0; 0 ]
+        [ b '1'; 1; 1; 0; b 'd'; b 'd'; 0; 0; 0; 0; 0; 0; 0; 0; 1; 1; 9; 9; 0; 0 ];
+      (* diff timestamps, but nonetheless equal datum_keys *)
+      aeq_bytes
+        [ b '1'; 1; 1; 0; b 'd'; b 'd'; 1; 2; 0; 0; 0; 0; 0; 0; 1; 1; 9; 9; 0; 0 ]
+        [ b '1'; 1; 1; 0; b 'd'; b 'd'; 3; 4; 0; 0; 0; 0; 0; 0; 1; 1; 9; 9; 0; 0 ];
+      (* unrelated keys *)
+      alt_bytes
+        [ b '1'; 1; 1; 0; b 'c'; b 'c'; 1; 2; 0; 0; 0; 0; 0; 0; 1; 1; 9; 9; 0; 0 ]
+        [ b '1'; 1; 1; 0; b 'd'; b 'd'; 3; 4; 0; 0; 0; 0; 0; 0; 1; 1; 9; 9; 0; 0 ];
       return ()
 
   let test_keyspace_management db =
