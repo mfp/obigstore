@@ -24,6 +24,7 @@ let aeq printer = assert_equal ~printer
 let aeq_int = assert_equal ~printer:(sprintf "%d")
 let aeq_bool = assert_equal ~printer:(sprintf "%b")
 let aeq_string = assert_equal ~printer:(sprintf "%S")
+let aeq_int64 = assert_equal ~printer:(sprintf "%Ld")
 
 let aeq_none ?msg x =
   assert_equal ?msg ~printer:(function None -> "None" | Some _ -> "Some _") None x

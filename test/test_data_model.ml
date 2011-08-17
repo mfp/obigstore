@@ -170,6 +170,41 @@ struct
         [ b '1'; 1; 1; 0; b 'd'; b 'd'; 3; 4; 0; 0; 0; 0; 0; 0; 1; 1; 9; 9; 0; 0 ];
       return ()
 
+  let test_datum_key_encoding _ =
+    let check (ks, table, key, column, timestamp) =
+      let s = Datum_encoding.encode_datum_key_to_string
+                ks ~table ~key ~column ~timestamp in
+      let table_r = ref (-1) in
+      let key_buf = ref "" and key_len = ref 0 in
+      let column_buf = ref "" and column_len = ref 0 in
+      let timestamp_buf = Datum_encoding.make_timestamp_buf () in
+        aeq_bool ~msg:"decoding failed" true
+          (Datum_encoding.decode_datum_key
+             ~table_r
+             ~key_buf_r:(Some key_buf) ~key_len_r:(Some key_len)
+             ~column_buf_r:(Some column_buf) ~column_len_r:(Some column_len)
+             ~timestamp_buf:(Some timestamp_buf) s (String.length s));
+        aeq_int ~msg:"keyspace" ks (Datum_encoding.get_datum_key_keyspace_id s);
+        aeq_int ~msg:"table id" table !table_r;
+        aeq_int ~msg:"key len" (String.length key) !key_len;
+        aeq_string ~msg:"key" key (String.sub !key_buf 0 !key_len);
+        aeq_int ~msg:"column len" (String.length column) !column_len;
+        aeq_string ~msg:"column" column (String.sub !column_buf 0 !column_len);
+        aeq_int64 ~msg:"timestamp" timestamp
+          (Datum_encoding.decode_timestamp timestamp_buf)
+    in
+      List.iter check
+        [
+          (1, 2, "foo", "bar", 12323L);
+          (1, 2, "foo", "", 123L);
+          (128, 31, "foo", "", 232L);
+          (128, 24242, "x", "", 123L);
+          (128, 128, "foo", "", 232L);
+          (12345, 128, "foo", "", 232L);
+          (123452, 123428, "foo", "", 232L);
+        ];
+      return ()
+
   let test_keyspace_management db =
     D.list_keyspaces db >|= aeq_string_list [] >>
     lwt k1 = D.register_keyspace db "foo" in
@@ -791,6 +826,7 @@ struct
     [
       "custom comparator", test_custom_comparator;
       "custom comparator (2)", test_custom_comparator_non_datum;
+      "datum key encoding", test_datum_key_encoding;
       "keyspace management", test_keyspace_management;
       "list tables", test_list_tables;
       "list tables with diff keyspaces", test_list_tables_with_keyspaces;

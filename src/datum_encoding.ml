@@ -126,13 +126,13 @@ let encode_table_successor_to_string ks table =
 let decode_var_int_at s off =
   let rec loop s off shift n =
     match Char.code s.[off] with
-        m when m > 128 ->
+        m when m >= 0x80 ->
           loop s (off + 1) (shift + 7) (n lor ((m land 0x7F) lsl shift))
       | m -> n lor (m lsl shift)
   in loop s off 0 0
 
 let get_datum_key_keyspace_id datum_key =
-  Char.code datum_key.[1]
+  decode_var_int_at datum_key 1
 
 let decode_datum_key
       ~table_r
