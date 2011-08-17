@@ -77,7 +77,7 @@ struct
       Datum_key.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
     let printer (tbl, key, col, ts) =
       sprintf
-        "{ table = %S; key = %S; column = %S, timestamp = %Ld }" tbl key col ts in
+        "{ table = %d; key = %S; column = %S, timestamp = %Ld }" tbl key col ts in
     let ksname () ks = D.keyspace_name ks in
     let aeq ?(ks1 = ks) ?(ks2 = ks) a b =
                 match cmp ks1 a ks2 b with
@@ -105,24 +105,24 @@ struct
       agt ?ks1 ?ks2 a b;
       alt ?ks1:ks2 ?ks2:ks1 b a in
     let t = 0L in
-      agt ~ks1:ks2 ("", "", "", t) ("", "", "", t);
-      agt ~ks1:ks2 ("", "", "", t) ("x", "", "", t);
-      agt ~ks1:ks2 ("a", "b", "c", t) ("a", "b", "d", t);
-      agt ~ks1:ks2 ("a", "b", "c", t) ("a", "c", "c", t);
-      agt ~ks1:ks2 ("a", "b", "c", t) ("b", "b", "c", t);
-      agt ("x", "", "", t) ("a", "", "", t);
-      agt ("", "x", "", t) ("", "", "", t);
-      agt ("", "x", "", t) ("", "", "", t);
-      agt ("\000", "", "", t) ("", "", "", t);
-      agt ("\000", "", "", t) ("", "\000", "", t);
-      agt ("\000", "", "", t) ("", "\000", "b", t);
-      agt ("1", "\000", "", t) ("1", "", "\000", t);
-      agt ("1", "1\000", "", t) ("1", "1", "\000", t);
-      agt ("tbl", "k\000", "2", t) ("tbl", "k", "\0003", t);
-      agt ("t", "d", "x", 0L) ("t", "d", "", Int64.min_int);
-      agt ("t", "d", "d", 0L) ("t", "d", "", 0L);
-      agt ("t", "d", "d", Int64.min_int) ("t", "d", "", 0L);
-      agt ("t", "d", "d", Int64.min_int) ("t", "d", "", Int64.min_int);
+      agt ~ks1:ks2 (1, "", "", t) (1, "", "", t);
+      agt ~ks1:ks2 (1, "", "", t) (2, "", "", t);
+      agt ~ks1:ks2 (1, "b", "c", t) (1, "b", "d", t);
+      agt ~ks1:ks2 (1, "b", "c", t) (1, "c", "c", t);
+      agt ~ks1:ks2 (1, "b", "c", t) (2, "b", "c", t);
+      agt (3, "", "", t) (1, "", "", t);
+      agt (1, "x", "", t) (1, "", "", t);
+      agt (1, "x", "", t) (1, "", "", t);
+      agt (1, "", "", t) (0, "", "", t);
+      agt (1, "", "", t) (0, "\000", "", t);
+      agt (1, "", "", t) (0, "\000", "b", t);
+      agt (1, "\000", "", t) (1, "", "\000", t);
+      agt (1, "1\000", "", t) (1, "1", "\000", t);
+      agt (2, "k\000", "2", t) (2, "k", "\0003", t);
+      agt (2, "d", "x", 0L) (2, "d", "", Int64.min_int);
+      agt (2, "d", "d", 0L) (2, "d", "", 0L);
+      agt (2, "d", "d", Int64.min_int) (2, "d", "", 0L);
+      agt (2, "d", "d", Int64.min_int) (2, "d", "", Int64.min_int);
       return ()
 
   let test_custom_comparator_non_datum db =
@@ -147,16 +147,16 @@ struct
       alt "1033232" "\255";
       alt "\255" "\255\000";
       (* null column with zero timestamp vs. non-null column *)
-      alt "1\001tbld\000\000\000\000\000\000\000\128\001\000\003\t\000"
-          "1\001tbldd%d]\000\000V\251\255\001\001\003\t\000";
+      alt "1\001\001d\000\000\000\000\000\000\000\128\001\000\001\t\000"
+          "1\001\001dd%d]\000\000V\251\255\001\001\001\t\000";
       (* diff timestamps, but nonetheless equal datum_keys *)
       aeq
-        "1\001tbldd\212<\015\017\254U\251\255\001\001\003\t\000"
-        "1\001tbldd\135;\015\017\254U\251\255\001\001\003\t\000";
+        "1\001\001dd\212<\015\017\254U\251\255\001\001\001\t\000"
+        "1\001\001dd\135;\015\017\254U\251\255\001\001\001\t\000";
       (* unrelated keys *)
       alt
-        "1\001tblcc\187\215\205\226\253U\251\255\001\001\003\t\000"
-        "1\001tbldd@\214\205\226\253U\251\255\001\001\003\t\000";
+        "1\001\001cc\187\215\205\226\253U\251\255\001\001\001\t\000"
+        "1\001\001dd@\214\205\226\253U\251\255\001\001\001\t\000";
       return ()
 
   let test_keyspace_management db =

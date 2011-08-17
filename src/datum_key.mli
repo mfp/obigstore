@@ -35,24 +35,32 @@ val end_of_db_key : string
   * [keyspace_table_prefix]. *)
 val decode_keyspace_table_name : string -> string option
 
+module Keyspace_tables :
+sig
+  val ks_table_table_prefix : string
+  val ks_table_table_prefix_for_ks : string -> string
+  val ks_table_table_key : keyspace:string -> table:string -> string
+  val decode_ks_table_key : string -> (string * string) option
+end
+
 (** Create a LevelDB datum key for the given
   * (keyspace, table, key, column, timestamp) tuple, storing it in the given
   * {!Bytea} buffer, which will be cleared automatically. *)
 val encode_datum_key :
   Bytea.t -> ks ->
-  table:string -> key:string -> column:string -> timestamp:Int64.t -> unit
+  table:int -> key:string -> column:string -> timestamp:Int64.t -> unit
 
 (** Similar to [encode_datum_key], returning directly a string. *)
 val encode_datum_key_to_string :
-  ks -> table:string -> key:string -> column:string -> timestamp:Int64.t -> string
+  ks -> table:int -> key:string -> column:string -> timestamp:Int64.t -> string
 
 (** [encode_table_successor dst ks table] places the prefix of the first
   * datum_key after the table [table] in [dst], which will be cleared
   * beforehand. *)
-val encode_table_successor : Bytea.t -> ks -> string -> unit
+val encode_table_successor : Bytea.t -> ks -> int -> unit
 
 (** Similar to {!encode_table_successor}, returning a string. *)
-val encode_table_successor_to_string : ks -> string -> string
+val encode_table_successor_to_string : ks -> int -> string
 
 (** [get_datum_key_keyspace_id k] returns the keyspace id of the datum key
   * [k]. Note that a bogus value will be returned if [k] is not a datum key;
@@ -65,8 +73,7 @@ val get_datum_key_keyspace_id : string -> int
   * starting at offset [off].
   * @return false if the key is not a datum_key, true otherwise *)
 val decode_datum_key :
-  table_buf_r:string ref option ->
-  table_len_r:int ref option ->
+  table_r:int ref ->
   key_buf_r:string ref option ->
   key_len_r:int ref option ->
   column_buf_r:string ref option ->

@@ -34,8 +34,48 @@ let decode_keyspace_table_name k =
   else
     Some (String.slice ~first:2 k)
 
+module Keyspace_tables =
+struct
+  let ks_table_table_prefix = "01"
+
+  let one_byte_string n = String.make 1 (Char.chr n)
+
+  let ks_table_table_prefix_for_ks ksname =
+    String.concat ""
+      [ ks_table_table_prefix;
+        one_byte_string (String.length ksname); ksname ]
+
+  let ks_table_table_key ~keyspace ~table =
+    String.concat ""
+      [ ks_table_table_prefix;
+        one_byte_string (String.length keyspace); keyspace;
+        one_byte_string (String.length table); table;
+      ]
+
+  let decode_ks_table_key k =
+    if String.slice k ~last:(String.length ks_table_table_prefix) <>
+       ks_table_table_prefix then
+      None
+    else begin
+      try
+        let ks_len = Char.code k.[2] in
+        let table_len = Char.code k.[3 + ks_len] in
+          if 2 + 1 + ks_len + 1 + table_len > String.length k then None
+          else
+            Some (String.slice k ~first:3 ~last:(3 + ks_len),
+                  String.slice k ~first:(4 + ks_len) ~last:(4 + ks_len + table_len))
+      with _ -> None
+    end
+end
+
+let positive_vint32_size = function
+    n when n < 128 -> 1
+  | n when n < 16384 -> 2
+  | n when n < 2097152 -> 3
+  | _ -> 4
+
 (* datum key format:
- * '1' uint8(keyspace) string(table) string(key) string(column)
+ * '1' uint8(keyspace) vint(table_id) string(key) string(column)
  * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
  * var_int(key_len) var_int(col_len) uint8(tbl_len)
  * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
@@ -46,7 +86,7 @@ let encode_datum_key dst ks ~table ~key ~column ~timestamp =
   Bytea.clear dst;
   Bytea.add_char dst '1';
   Bytea.add_byte dst ks;
-    Bytea.add_string dst table;
+    Bytea.add_vint dst table;
     Bytea.add_string dst key;
     Bytea.add_string dst column;
     Bytea.add_int64_complement_le dst timestamp;
@@ -56,12 +96,13 @@ let encode_datum_key dst ks ~table ~key ~column ~timestamp =
       let off = Bytea.length dst in
         Bytea.add_vint dst (String.length column);
         let clen_len = Bytea.length dst - off in
-          Bytea.add_byte dst (String.length table);
+          Bytea.add_byte dst (positive_vint32_size table);
           Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
           Bytea.add_byte dst version
 
 let encode_table_successor dst ks table =
-  encode_datum_key dst ks ~table:(table ^ "\000") ~key:"" ~column:"" ~timestamp:Int64.min_int
+  encode_datum_key dst ks
+    ~table:(table + 1) ~key:"" ~column:"" ~timestamp:Int64.min_int
 
 external ostore_decode_int64_complement_le : string -> int -> Int64.t =
   "ostore_decode_int64_complement_le"
@@ -96,7 +137,7 @@ let get_datum_key_keyspace_id datum_key =
   Char.code datum_key.[1]
 
 let decode_datum_key
-      ~table_buf_r ~table_len_r
+      ~table_r
       ~key_buf_r ~key_len_r
       ~column_buf_r ~column_len_r
       ~timestamp_buf
@@ -105,7 +146,7 @@ let decode_datum_key
   let last_byte = Char.code datum_key.[len - 2] in
   let clen_len = last_byte land 0x7 in
   let klen_len = (last_byte lsr 3) land 0x7 in (* safer *)
-  let t_len = Char.code datum_key.[len - 3] in
+  let t_len = Char.code datum_key.[len - 3] land 0x7 in
   let c_len = decode_var_int_at datum_key (len - 3 - clen_len) in
   let k_len = decode_var_int_at datum_key (len - 3 - clen_len - klen_len) in
   let expected_len =
@@ -114,14 +155,7 @@ let decode_datum_key
     if expected_len <> len then
       false
     else begin
-      begin match table_buf_r, table_len_r with
-          None, _ | _, None -> ()
-        | Some b, Some l ->
-              if String.length !b < t_len then
-                b := String.create t_len;
-              String.blit datum_key 2 !b 0 t_len;
-              l := t_len
-      end;
+      table_r := decode_var_int_at datum_key 2;
       begin match key_buf_r, key_len_r with
           None, _ | _, None -> ()
         | Some b, Some l ->

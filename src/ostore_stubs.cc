@@ -71,13 +71,16 @@ class OStoreComparator1 : public leveldb::Comparator {
                 int kscmp = a[1] - b[1];
                 if(kscmp) return kscmp;
 
-                // then compare table names
-                int tlen_a = a[sa - 3],
-                    tlen_b = b[sb - 3];
+                // then compare table ids
+                int tlen_a = a[sa - 3] & 0x7,
+                    tlen_b = b[sb - 3] & 0x7;
 
-                leveldb::Slice ta(a.data() + 2, tlen_a),
-                               tb(b.data() + 2, tlen_b);
-                int tblcmp = ta.compare(tb);
+                int ta = decode_var_int(a.data() + 2),
+                    tb = decode_var_int(b.data() + 2);
+
+                // both ta and tb should be small, overflow not an issue in
+                // practice
+                int tblcmp = ta - tb;
                 if(tblcmp) return tblcmp;
 
                 // then decode column and key lengths, then compare the

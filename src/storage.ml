@@ -21,14 +21,35 @@ type db =
     {
       basedir : string;
       db : L.db;
-      keyspaces : (string, int) Hashtbl.t;
+      keyspaces : (string, keyspace) Hashtbl.t;
     }
 
-type keyspace = { ks_db : db; ks_name : string; ks_id : int }
+and keyspace =
+  {
+    ks_db : db; ks_name : string; ks_id : int;
+    ks_tables : (string, int) Hashtbl.t;
+    ks_rev_tables : (int, string) Hashtbl.t;
+  }
 
 type backup_cursor = Backup.cursor
 
 let (|>) x f = f x
+
+let find_maybe h k = try Some (Hashtbl.find h k) with Not_found -> None
+
+let read_keyspace_tables db keyspace =
+  let module T = Datum_key.Keyspace_tables in
+  let h = Hashtbl.create 13 in
+    L.iter_from
+      (fun k v ->
+         match T.decode_ks_table_key k with
+             None -> false
+           | Some (ks, table) when ks <> keyspace -> false
+           | Some (_, table) -> Hashtbl.add h table (int_of_string v);
+                                true)
+      db.db
+      (T.ks_table_table_prefix_for_ks keyspace);
+    h
 
 let read_keyspaces db =
   let h = Hashtbl.create 13 in
@@ -37,9 +58,18 @@ let read_keyspaces db =
          match Datum_key.decode_keyspace_table_name k with
              None -> false
            | Some keyspace_name ->
-               Hashtbl.add h keyspace_name (int_of_string v);
-               true)
-      db
+               let ks_db = db in
+               let ks_name = keyspace_name in
+               let ks_id = int_of_string v in
+               let ks_tables = read_keyspace_tables db ks_name in
+               let ks_rev_tables = Hashtbl.create (Hashtbl.length ks_tables) in
+                 Hashtbl.iter
+                   (fun k v -> Hashtbl.add ks_rev_tables v k)
+                   ks_tables;
+                 Hashtbl.add h keyspace_name
+                   { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; };
+                 true)
+      db.db
       Datum_key.keyspace_table_prefix;
     h
 
@@ -48,7 +78,9 @@ let open_db basedir =
     (* ensure we have a end_of_db record *)
     if not (L.mem db Datum_key.end_of_db_key) then
       L.put ~sync:true db Datum_key.end_of_db_key (String.make 8 '\000');
-    { basedir; db; keyspaces = read_keyspaces db; }
+    let db = { basedir; db; keyspaces = Hashtbl.create 13; } in
+    let keyspaces = read_keyspaces db in
+      { db with keyspaces }
 
 let close_db t = L.close t.db
 
@@ -58,17 +90,23 @@ let list_keyspaces t =
 
 let register_keyspace t ks_name =
   try
-    return { ks_db = t; ks_name; ks_id = Hashtbl.find t.keyspaces ks_name }
+    return (Hashtbl.find t.keyspaces ks_name)
   with Not_found ->
-    let max_id = Hashtbl.fold (fun _ v id -> max v id) t.keyspaces 0 in
+    let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
       L.put ~sync:true t.db (Datum_key.keyspace_table_key ks_name) (string_of_int ks_id);
-      Hashtbl.add t.keyspaces ks_name ks_id;
-      return { ks_db = t; ks_name; ks_id; }
+      let ks =
+        { ks_db = t; ks_id; ks_name;
+          ks_tables = Hashtbl.create 13;
+          ks_rev_tables = Hashtbl.create 13;
+        }
+      in
+        Hashtbl.add t.keyspaces ks_name ks;
+        return ks
 
 let get_keyspace t ks_name =
   return begin try
-    Some ({ ks_db = t; ks_name; ks_id = Hashtbl.find t.keyspaces ks_name })
+    Some (Hashtbl.find t.keyspaces ks_name)
   with Not_found -> None end
 
 let keyspace_name ks = ks.ks_name
@@ -77,17 +115,14 @@ let keyspace_id ks = ks.ks_id
 
 let list_tables ks =
   let it = L.iterator ks.ks_db.db in
-  let table_buf = ref "" in
-  let table_len = ref 0 in
-  let table_buf_r = Some table_buf in
-  let table_len_r = Some table_len in
+  let table_r = ref (-1) in
 
   let jump_to_next_table () =
-    match String.sub !table_buf 0 !table_len with
-        "" ->
+    match !table_r with
+        -1 ->
           let datum_key =
             Datum_key.encode_datum_key_to_string ks.ks_id
-              ~table:"" ~key:"" ~column:"" ~timestamp:Int64.min_int
+              ~table:0 ~key:"" ~column:"" ~timestamp:Int64.min_int
           in IT.seek it datum_key 0 (String.length datum_key);
       | table ->
           let datum_key = Datum_key.encode_table_successor_to_string ks.ks_id table in
@@ -99,7 +134,7 @@ let list_tables ks =
     else begin
       let k = IT.get_key it in
         if not (Datum_key.decode_datum_key
-                  ~table_buf_r ~table_len_r
+                  ~table_r
                   ~key_buf_r:None ~key_len_r:None
                   ~column_buf_r:None ~column_len_r:None
                   ~timestamp_buf:None
@@ -108,31 +143,42 @@ let list_tables ks =
         then
           (* we have hit the end of the keyspace or the data area *)
           acc
-        else
-          collect_tables ((String.sub !table_buf 0 !table_len) :: acc)
+        else begin
+          let acc = match find_maybe ks.ks_rev_tables !table_r with
+              Some table -> table :: acc
+            | None -> acc
+          in collect_tables acc
+        end
     end
 
-  in return (List.rev (collect_tables []))
+  in collect_tables [] |> List.sort String.compare |> return
 
-let table_size_on_disk ks table =
-  L.get_approximate_size ks.ks_db.db
-    (Datum_key.encode_datum_key_to_string ks.ks_id
-       ~table ~key:"" ~column:"" ~timestamp:Int64.min_int)
-    (Datum_key.encode_datum_key_to_string ks.ks_id
-       ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
-       ~timestamp:Int64.zero) |>
-  return
+let table_size_on_disk ks table_name =
+  match find_maybe ks.ks_tables table_name with
+      None -> return 0L
+    | Some table ->
+      L.get_approximate_size ks.ks_db.db
+        (Datum_key.encode_datum_key_to_string ks.ks_id
+           ~table ~key:"" ~column:"" ~timestamp:Int64.min_int)
+        (Datum_key.encode_datum_key_to_string ks.ks_id
+           ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
+           ~timestamp:Int64.zero) |>
+      return
 
-let key_range_size_on_disk ks ?first ?up_to table =
-  L.get_approximate_size ks.ks_db.db
-    (Datum_key.encode_datum_key_to_string ks.ks_id
-       ~table ~key:(Option.default "" first) ~column:"" ~timestamp:Int64.min_int)
-    (Datum_key.encode_datum_key_to_string ks.ks_id
-       ~table
-       ~key:(Option.default "\255\255\255\255\255\255" up_to)
-       ~column:"\255\255\255\255\255\255"
-       ~timestamp:Int64.zero) |>
-  return
+let key_range_size_on_disk ks ?first ?up_to table_name =
+  match find_maybe ks.ks_tables table_name with
+      None -> return 0L
+    | Some table ->
+        L.get_approximate_size ks.ks_db.db
+          (Datum_key.encode_datum_key_to_string ks.ks_id
+             ~table ~key:(Option.default "" first) ~column:""
+             ~timestamp:Int64.min_int)
+          (Datum_key.encode_datum_key_to_string ks.ks_id
+             ~table
+             ~key:(Option.default "\255\255\255\255\255\255" up_to)
+             ~column:"\255\255\255\255\255\255"
+             ~timestamp:Int64.zero) |>
+        return
 
 module S =
 struct
@@ -202,6 +248,18 @@ type transaction =
 
 let tx_key = Lwt.new_key ()
 
+let register_new_table_and_add_to_writebatch ks wb table_name =
+  let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
+  (* TODO: find first free one (if existent) LT last *)
+  let table = last + 1 in
+  let k = Datum_key.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
+  let v = string_of_int table in
+    L.Batch.put_substring wb
+      k 0 (String.length k) v 0 (String.length v);
+    Hashtbl.add ks.ks_tables table_name table;
+    Hashtbl.add ks.ks_rev_tables table table_name;
+    table
+
 let transaction_aux make_access_and_iters ks f =
   match Lwt.get tx_key with
     | None -> begin
@@ -221,30 +279,38 @@ let transaction_aux make_access_and_iters ks f =
           (* TODO: should iterate in Lwt monad so we can yield every once in a
            * while*)
           M.iter
-            (fun table m ->
-               M.iter
-                 (fun key s ->
-                    S.iter
-                      (fun column ->
-                         Datum_key.encode_datum_key datum_key ks.ks_id ~table ~key ~column
-                           ~timestamp;
-                         L.Batch.delete_substring b
-                           (Bytea.unsafe_string datum_key) 0
-                           (Bytea.length datum_key))
-                      s)
-                 m)
+            (fun table_name m ->
+               match find_maybe ks.ks_tables table_name with
+                   Some table ->
+                     M.iter
+                       (fun key s ->
+                          S.iter
+                            (fun column ->
+                               Datum_key.encode_datum_key datum_key ks.ks_id
+                                 ~table ~key ~column ~timestamp;
+                               L.Batch.delete_substring b
+                                 (Bytea.unsafe_string datum_key) 0
+                                 (Bytea.length datum_key))
+                            s)
+                       m
+                 | None -> (* unknown table *) ())
             tx.deleted;
           M.iter
-            (fun table m ->
-               M.iter
+            (fun table_name m ->
+               let table = match find_maybe ks.ks_tables table_name with
+                   Some t -> t
+                 | None ->
+                     (* must add table to keyspace table list *)
+                     register_new_table_and_add_to_writebatch ks b table_name
+               in M.iter
                  (fun key m ->
                     M.iter
                       (fun column v ->
                          (* FIXME: should save timestamp provided in
                           * put_columns and use it here if it wasn't
                           * Auto_timestamp *)
-                         Datum_key.encode_datum_key datum_key ks.ks_id ~table ~key ~column
-                           ~timestamp;
+                         Datum_key.encode_datum_key datum_key ks.ks_id
+                           ~table ~key ~column ~timestamp;
                          L.Batch.put_substring b
                            (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
                            v 0 (String.length v))
@@ -310,42 +376,47 @@ let is_column_deleted tx table =
     end
 
 (* In [let f = exists_key tx table in ... f key], [f key] returns true iff
- * there's some column with the given key in the given [table]. *)
-let exists_key tx table =
+ * there's some column with the given key in the table named [table]. *)
+let exists_key tx table_name =
   let datum_key = Bytea.create 13 in
   let it = RA.iterator tx.access in
   let buf = ref "" in
-  let table_buf = ref "" and table_len = ref 0 in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
-  let table_buf_r = Some table_buf and table_len_r = Some table_len in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
-  let is_column_deleted = is_column_deleted tx table
+  let is_column_deleted = is_column_deleted tx table_name in
+  let table_r = ref (-1)
 
   in begin fun key ->
-    Datum_key.encode_datum_key datum_key tx.ks.ks_id ~table ~key ~column:""
-      ~timestamp:Int64.min_int;
-    IT.seek it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
-    if not (IT.valid it) then
-      false
-    else begin
-      let len = IT.fill_key it buf in
-      let ok =
-        Datum_key.decode_datum_key
-          ~table_buf_r ~table_len_r ~key_buf_r ~key_len_r
-          ~column_buf_r ~column_len_r ~timestamp_buf:None
-          !buf len
-      in
-        if not ok then false
-        else
-          (* verify that it's the same table and key, and the column is not
-           * deleted *)
-          is_same_value table table_buf table_len &&
-          is_same_value key key_buf key_len &&
-          not (is_column_deleted ~key_buf:key ~key_len:(String.length key)
-                 ~column_buf:!column_buf ~column_len:!column_len)
-    end
+    match find_maybe tx.ks.ks_tables table_name with
+        Some table ->
+          Datum_key.encode_datum_key datum_key tx.ks.ks_id
+            ~table ~key ~column:"" ~timestamp:Int64.min_int;
+          IT.seek it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
+          if not (IT.valid it) then
+            false
+          else begin
+            let len = IT.fill_key it buf in
+            let ok =
+              Datum_key.decode_datum_key
+                ~table_r ~key_buf_r ~key_len_r
+                ~column_buf_r ~column_len_r ~timestamp_buf:None
+                !buf len
+            in
+              if not ok then false
+              else begin
+                (* verify that it's the same table and key, and the column is not
+                 * deleted *)
+                !table_r = table &&
+                is_same_value key key_buf key_len &&
+                not (is_column_deleted ~key_buf:key ~key_len:(String.length key)
+                       ~column_buf:!column_buf ~column_len:!column_len)
+              end
+          end
+      | None ->
+          (* we couldn't translate the table_name to a table_id *)
+          false
   end
 
 type 'a fold_result =
@@ -355,12 +426,11 @@ type 'a fold_result =
   | Skip_key_with of 'a
   | Finish_fold of 'a
 
-let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_key =
+let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_to_key =
   let buf = ref "" in
-  let table_buf = ref "" and table_len = ref 0 in
+  let table_r = ref (-1) in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
-  let table_buf_r = Some table_buf and table_len_r = Some table_len in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
   let timestamp_buf = Datum_key.make_timestamp_buf () in
@@ -381,6 +451,7 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
       s in
 
   let datum_key_buf = Bytea.create 13 in
+  let table_id = ref (-2) in
 
   let rec do_fold_over_data acc =
     if not (IT.valid it) then
@@ -389,7 +460,7 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
       let len = IT.fill_key it buf in
         (* try to decode datum key, check if it's the same KS *)
         if not (Datum_key.decode_datum_key
-                  ~table_buf_r ~table_len_r
+                  ~table_r
                   ~key_buf_r ~key_len_r
                   ~column_buf_r ~column_len_r
                   ~timestamp_buf:some_timestamp_buf
@@ -400,7 +471,7 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
           return acc
         else begin
           (* check that we're still in the table *)
-          if not (is_same_value table table_buf table_len) then
+          if !table_r <> !table_id then
             return acc
           (* check if we're at or past up_to *)
           else if at_or_past_upto_key () then
@@ -415,7 +486,8 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
                   Continue | Continue_with _ -> IT.next it;
                 | Skip_key | Skip_key_with _ ->
                     Datum_key.encode_datum_key datum_key_buf tx.ks.ks_id
-                      ~table ~key:(next_key ()) ~column:"" ~timestamp:Int64.min_int;
+                      ~table:!table_id ~key:(next_key ())
+                      ~column:"" ~timestamp:Int64.min_int;
                     IT.seek it
                       (Bytea.unsafe_string datum_key_buf) 0
                       (Bytea.length datum_key_buf)
@@ -427,16 +499,20 @@ let fold_over_data_aux it tx table f acc ?(first_column="") ~first_key ~up_to_ke
                 | Finish_fold x -> return x
           end
       end
-    end in
+    end
 
-  (* jump to first entry *)
-  let first_datum_key =
-    Datum_key.encode_datum_key_to_string tx.ks.ks_id ~table
-      ~key:(Option.default "" first_key) ~column:first_column
-      ~timestamp:Int64.min_int
-  in
-    IT.seek it first_datum_key 0 (String.length first_datum_key);
-    do_fold_over_data acc
+  in match find_maybe tx.ks.ks_tables table_name with
+      Some table ->
+        table_id := table;
+        (* jump to first entry *)
+        let first_datum_key =
+          Datum_key.encode_datum_key_to_string tx.ks.ks_id ~table
+            ~key:(Option.default "" first_key) ~column:first_column
+            ~timestamp:Int64.min_int
+        in
+          IT.seek it first_datum_key 0 (String.length first_datum_key);
+          do_fold_over_data acc
+    | None -> (* unknown table *) return acc
 
 let fold_over_data tx table f ?first_column acc ~first_key ~up_to_key =
   match tx.iter_pool with
@@ -955,10 +1031,18 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
   in collect_data ~curr_key ~curr_col pending_tables
 
 let load tx data =
-  let enc_datum_key datum_key ~table ~key ~column ~timestamp =
-    Datum_key.encode_datum_key datum_key tx.ks.ks_id
-      ~table ~key ~column ~timestamp in
   let wb = Lazy.force tx.backup_writebatch in
+  let enc_datum_key datum_key ~table:table_name ~key ~column ~timestamp =
+    match find_maybe tx.ks.ks_tables table_name with
+        Some table -> Datum_key.encode_datum_key datum_key tx.ks.ks_id
+                        ~table ~key ~column ~timestamp
+      | None ->
+          (* register table first *)
+          let table =
+            register_new_table_and_add_to_writebatch tx.ks wb table_name
+          in Datum_key.encode_datum_key datum_key tx.ks.ks_id
+               ~table ~key ~column ~timestamp in
+
   let ok = Backup.load enc_datum_key wb data in
     if not ok then
       return false
