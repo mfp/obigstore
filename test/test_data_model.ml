@@ -148,7 +148,7 @@ struct
       alt "\255" "\255\000";
       (* null column with zero timestamp vs. non-null column *)
       alt "1\001\001d\000\000\000\000\000\000\000\128\001\000\009\t\000"
-          "1\001\001dd%d]\000\000V\251\255\001\001\001\t\000";
+          "1\001\001dd%d]\000\000V\251\255\001\001\009\t\000";
       (* diff timestamps, but nonetheless equal datum_keys *)
       aeq
         "1\001\001dd\212<\015\017\254U\251\255\001\001\009\t\000"

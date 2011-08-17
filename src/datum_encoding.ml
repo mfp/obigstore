@@ -74,7 +74,7 @@ let add_vint_and_ret_size dst n =
     Bytea.length dst - off
 
 (* datum key format:
- * '1' uint8(keyspace) vint(table_id) string(key) string(column)
+ * '1' vint(keyspace) vint(table_id) string(key) string(column)
  * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
  * var_int(key_len) var_int(col_len) uint8(tbl_len)
  * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))

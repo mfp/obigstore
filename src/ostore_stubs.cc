@@ -102,8 +102,8 @@ class OStoreComparator1 : public leveldb::Comparator {
                 klen_a = decode_var_int(a.data() + sa - 3 - clen_len_a - klen_len_a);
                 klen_b = decode_var_int(b.data() + sb - 3 - clen_len_b - klen_len_b);
 
-                leveldb::Slice key_a(a.data() + 2 + tlen_a, klen_a),
-                               key_b(b.data() + 2 + tlen_b, klen_b);
+                leveldb::Slice key_a(a.data() + 1 + kslen_a + tlen_a, klen_a),
+                               key_b(b.data() + 1 + kslen_b + tlen_b, klen_b);
 
                 int keycmp = key_a.compare(key_b);
                 if(keycmp) return keycmp;
@@ -112,8 +112,8 @@ class OStoreComparator1 : public leveldb::Comparator {
                 clen_a = decode_var_int(a.data() + sa - 3 - clen_len_a);
                 clen_b = decode_var_int(b.data() + sb - 3 - clen_len_b);
 
-                leveldb::Slice col_a(a.data() + 2 + tlen_a + klen_a, clen_a),
-                               col_b(b.data() + 2 + tlen_b + klen_b, clen_b);
+                leveldb::Slice col_a(a.data() + 1 + kslen_a + tlen_a + klen_a, clen_a),
+                               col_b(b.data() + 1 + kslen_b + tlen_b + klen_b, clen_b);
 
                 int colcmp = col_a.compare(col_b);
                 return colcmp;
