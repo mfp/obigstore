@@ -39,6 +39,7 @@ struct
         debug : bool;
         mutable pending_reqs : int;
         wait_for_pending_reqs : unit Lwt_condition.t;
+        async_req_region : Lwt_util.region;
       }
 
   let tx_key = Lwt.new_key ()
@@ -55,7 +56,7 @@ struct
          if !num_clients <= 1 then auto_yielder := dummy_auto_yield)
       t
 
-  let init ?(debug=false) db ich och =
+  let init ?(max_async_reqs = 1000) ?(debug=false) db ich och =
     let t =
       {
         keyspaces = H.create 13;
@@ -65,6 +66,7 @@ struct
         in_buf = String.create 128;
         pending_reqs = 0;
         wait_for_pending_reqs = Lwt_condition.create ();
+        async_req_region = Lwt_util.make_region max_async_reqs;
       }
     in setup_auto_yield t;
        t
@@ -74,27 +76,37 @@ struct
       Lwt_io.read_into_exactly c.ich s 0 n >>
       return s
 
+  (* the chunk of the region needed to perform a given request --- allows to
+   * impose diff limits per type *)
+  let request_slot_cost = function
+      Load _ -> 100
+    | _ -> 1
+
   let rec service c =
     !auto_yielder () >>
     lwt request_id, len, crc = read_header c.ich in
       match_lwt read_request c ~request_id len crc with
           None -> service c
         | Some r ->
-            (* if Protocol.is_sync_req request_id then begin *)
-            if true then begin
+            if Protocol.is_sync_req request_id then begin
               respond c ~buf:c.out_buf ~request_id r >>
               service c
             end else begin
               ignore begin
                 c.pending_reqs <- c.pending_reqs + 1;
                 try_lwt
-                  respond c ~request_id r
+                  Lwt_util.run_in_region c.async_req_region
+                    (request_slot_cost r)
+                    (fun () -> respond c ~request_id r)
                 finally
                   c.pending_reqs <- c.pending_reqs - 1;
                   if c.pending_reqs = 0 then
                     Lwt_condition.broadcast c.wait_for_pending_reqs ();
                   return ()
               end;
+              (* here we block if the allowed number of async reqs is reached
+               * until one of them is done *)
+              Lwt_util.run_in_region c.async_req_region 1 (fun () -> return ()) >>
               service c
             end
 
