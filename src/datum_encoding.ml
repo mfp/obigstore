@@ -74,7 +74,7 @@ let add_vint_and_ret_size dst n =
     Bytea.length dst - off
 
 (* datum key format:
- * '1' vint(keyspace) vint(table_id) string(key) string(column)
+ * '1' vint(keyspace) vint(table_id) uint8(type) string(key) string(column)
  * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
  * var_int(key_len) var_int(col_len) uint8(tbl_len)
  * uint8(len(var_int(key_len)) lsl 3 | len(var_int(col_len)))
@@ -86,6 +86,7 @@ let encode_datum_key dst ks ~table ~key ~column ~timestamp =
   Bytea.add_char dst '1';
   let ks_len = add_vint_and_ret_size dst ks in
   let t_len = add_vint_and_ret_size dst table in
+    Bytea.add_byte dst 0; (* type *)
     Bytea.add_string dst key;
     Bytea.add_string dst column;
     Bytea.add_int64_complement_le dst timestamp;
@@ -148,9 +149,13 @@ let decode_datum_key
   let c_len = decode_var_int_at datum_key (len - 4 - clen_len) in
   let k_len = decode_var_int_at datum_key (len - 4 - clen_len - klen_len) in
   let expected_len =
-    1 + ks_len + t_len + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1 + 1
+    1 + ks_len + t_len + 1 + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1 + 1
   in
     if expected_len <> len then
+      false
+
+    (* filter out entries with type <> 0 *)
+    else if Char.code datum_key.[1 + ks_len + t_len] <> 0 then
       false
     else begin
       table_r := decode_var_int_at datum_key 2;
@@ -159,7 +164,7 @@ let decode_datum_key
         | Some b, Some l ->
             if String.length !b < k_len then
               b := String.create k_len;
-            String.blit datum_key (1 + ks_len + t_len) !b 0 k_len;
+            String.blit datum_key (1 + ks_len + t_len + 1) !b 0 k_len;
             l := k_len
       end;
       begin match column_buf_r, column_len_r with
@@ -167,13 +172,13 @@ let decode_datum_key
         | Some b, Some l ->
             if String.length !b < c_len then
               b := String.create c_len;
-            String.blit datum_key (1 + ks_len + t_len + k_len) !b 0 c_len;
+            String.blit datum_key (1 + ks_len + t_len + 1 + k_len) !b 0 c_len;
             l := c_len
       end;
       begin match timestamp_buf with
           None -> ()
         | Some (b : timestamp_buf) ->
-            String.blit datum_key (1 + ks_len + t_len + k_len + c_len) (b :> string) 0 8;
+            String.blit datum_key (1 + ks_len + t_len + 1 + k_len + c_len) (b :> string) 0 8;
       end;
       true
     end
