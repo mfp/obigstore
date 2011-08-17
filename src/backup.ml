@@ -49,7 +49,7 @@ struct
   let get_timestamp t =
     let s = ref "" in
       read_raw_string s t 8;
-      Datum_key.decode_timestamp' !s
+      Datum_encoding.decode_timestamp' !s
 
   let get_list f t =
     let rec loop_get_list f t acc = function
@@ -87,7 +87,7 @@ sig
   val add_datum : encoder -> table -> LevelDB.iterator ->
     key_buf:string -> key_len:int ->
     column_buf:string -> column_len:int ->
-    timestamp_buf:Datum_key.timestamp_buf ->
+    timestamp_buf:Datum_encoding.timestamp_buf ->
     value_buf:string ref -> unit
 
   val finish : encoder -> Bytea.t
@@ -114,7 +114,7 @@ struct
     Bytea.add_substring dst key_buf 0 key_len;
     Bytea.add_vint dst column_len;
     Bytea.add_substring dst column_buf 0 column_len;
-    Bytea.add_string dst (timestamp_buf : Datum_key.timestamp_buf :> string);
+    Bytea.add_string dst (timestamp_buf : Datum_encoding.timestamp_buf :> string);
     let len = IT.fill_value it value_buf in
       Bytea.add_vint dst len;
       Bytea.add_substring dst !value_buf 0 len

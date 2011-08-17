@@ -38,7 +38,7 @@ let (|>) x f = f x
 let find_maybe h k = try Some (Hashtbl.find h k) with Not_found -> None
 
 let read_keyspace_tables db keyspace =
-  let module T = Datum_key.Keyspace_tables in
+  let module T = Datum_encoding.Keyspace_tables in
   let h = Hashtbl.create 13 in
     L.iter_from
       (fun k v ->
@@ -55,7 +55,7 @@ let read_keyspaces db =
   let h = Hashtbl.create 13 in
     L.iter_from
       (fun k v ->
-         match Datum_key.decode_keyspace_table_name k with
+         match Datum_encoding.decode_keyspace_table_name k with
              None -> false
            | Some keyspace_name ->
                let ks_db = db in
@@ -70,14 +70,14 @@ let read_keyspaces db =
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; };
                  true)
       db.db
-      Datum_key.keyspace_table_prefix;
+      Datum_encoding.keyspace_table_prefix;
     h
 
 let open_db basedir =
-  let db = L.open_db ~comparator:Datum_key.custom_comparator basedir in
+  let db = L.open_db ~comparator:Datum_encoding.custom_comparator basedir in
     (* ensure we have a end_of_db record *)
-    if not (L.mem db Datum_key.end_of_db_key) then
-      L.put ~sync:true db Datum_key.end_of_db_key (String.make 8 '\000');
+    if not (L.mem db Datum_encoding.end_of_db_key) then
+      L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
     let db = { basedir; db; keyspaces = Hashtbl.create 13; } in
     let keyspaces = read_keyspaces db in
       { db with keyspaces }
@@ -94,7 +94,7 @@ let register_keyspace t ks_name =
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
-      L.put ~sync:true t.db (Datum_key.keyspace_table_key ks_name) (string_of_int ks_id);
+      L.put ~sync:true t.db (Datum_encoding.keyspace_table_key ks_name) (string_of_int ks_id);
       let ks =
         { ks_db = t; ks_id; ks_name;
           ks_tables = Hashtbl.create 13;
@@ -121,11 +121,11 @@ let list_tables ks =
     match !table_r with
         -1 ->
           let datum_key =
-            Datum_key.encode_datum_key_to_string ks.ks_id
+            Datum_encoding.encode_datum_key_to_string ks.ks_id
               ~table:0 ~key:"" ~column:"" ~timestamp:Int64.min_int
           in IT.seek it datum_key 0 (String.length datum_key);
       | table ->
-          let datum_key = Datum_key.encode_table_successor_to_string ks.ks_id table in
+          let datum_key = Datum_encoding.encode_table_successor_to_string ks.ks_id table in
             IT.seek it datum_key 0 (String.length datum_key); in
 
   let rec collect_tables acc =
@@ -133,13 +133,13 @@ let list_tables ks =
     if not (IT.valid it) then acc
     else begin
       let k = IT.get_key it in
-        if not (Datum_key.decode_datum_key
+        if not (Datum_encoding.decode_datum_key
                   ~table_r
                   ~key_buf_r:None ~key_len_r:None
                   ~column_buf_r:None ~column_len_r:None
                   ~timestamp_buf:None
                   k (String.length k)) ||
-           Datum_key.get_datum_key_keyspace_id k <> ks.ks_id
+           Datum_encoding.get_datum_key_keyspace_id k <> ks.ks_id
         then
           (* we have hit the end of the keyspace or the data area *)
           acc
@@ -158,9 +158,9 @@ let table_size_on_disk ks table_name =
       None -> return 0L
     | Some table ->
       L.get_approximate_size ks.ks_db.db
-        (Datum_key.encode_datum_key_to_string ks.ks_id
+        (Datum_encoding.encode_datum_key_to_string ks.ks_id
            ~table ~key:"" ~column:"" ~timestamp:Int64.min_int)
-        (Datum_key.encode_datum_key_to_string ks.ks_id
+        (Datum_encoding.encode_datum_key_to_string ks.ks_id
            ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
            ~timestamp:Int64.zero) |>
       return
@@ -170,10 +170,10 @@ let key_range_size_on_disk ks ?first ?up_to table_name =
       None -> return 0L
     | Some table ->
         L.get_approximate_size ks.ks_db.db
-          (Datum_key.encode_datum_key_to_string ks.ks_id
+          (Datum_encoding.encode_datum_key_to_string ks.ks_id
              ~table ~key:(Option.default "" first) ~column:""
              ~timestamp:Int64.min_int)
-          (Datum_key.encode_datum_key_to_string ks.ks_id
+          (Datum_encoding.encode_datum_key_to_string ks.ks_id
              ~table
              ~key:(Option.default "\255\255\255\255\255\255" up_to)
              ~column:"\255\255\255\255\255\255"
@@ -252,7 +252,7 @@ let register_new_table_and_add_to_writebatch ks wb table_name =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
   let table = last + 1 in
-  let k = Datum_key.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
+  let k = Datum_encoding.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
   let v = string_of_int table in
     L.Batch.put_substring wb
       k 0 (String.length k) v 0 (String.length v);
@@ -286,7 +286,7 @@ let transaction_aux make_access_and_iters ks f =
                        (fun key s ->
                           S.iter
                             (fun column ->
-                               Datum_key.encode_datum_key datum_key ks.ks_id
+                               Datum_encoding.encode_datum_key datum_key ks.ks_id
                                  ~table ~key ~column ~timestamp;
                                L.Batch.delete_substring b
                                  (Bytea.unsafe_string datum_key) 0
@@ -309,7 +309,7 @@ let transaction_aux make_access_and_iters ks f =
                          (* FIXME: should save timestamp provided in
                           * put_columns and use it here if it wasn't
                           * Auto_timestamp *)
-                         Datum_key.encode_datum_key datum_key ks.ks_id
+                         Datum_encoding.encode_datum_key datum_key ks.ks_id
                            ~table ~key ~column ~timestamp;
                          L.Batch.put_substring b
                            (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
@@ -391,7 +391,7 @@ let exists_key tx table_name =
   in begin fun key ->
     match find_maybe tx.ks.ks_tables table_name with
         Some table ->
-          Datum_key.encode_datum_key datum_key tx.ks.ks_id
+          Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
             ~table ~key ~column:"" ~timestamp:Int64.min_int;
           IT.seek it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
           if not (IT.valid it) then
@@ -399,7 +399,7 @@ let exists_key tx table_name =
           else begin
             let len = IT.fill_key it buf in
             let ok =
-              Datum_key.decode_datum_key
+              Datum_encoding.decode_datum_key
                 ~table_r ~key_buf_r ~key_len_r
                 ~column_buf_r ~column_len_r ~timestamp_buf:None
                 !buf len
@@ -433,7 +433,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
   let column_buf = ref "" and column_len = ref 0 in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
-  let timestamp_buf = Datum_key.make_timestamp_buf () in
+  let timestamp_buf = Datum_encoding.make_timestamp_buf () in
   let some_timestamp_buf = Some timestamp_buf in
 
   let at_or_past_upto_key = match up_to_key with
@@ -459,13 +459,13 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
     else begin
       let len = IT.fill_key it buf in
         (* try to decode datum key, check if it's the same KS *)
-        if not (Datum_key.decode_datum_key
+        if not (Datum_encoding.decode_datum_key
                   ~table_r
                   ~key_buf_r ~key_len_r
                   ~column_buf_r ~column_len_r
                   ~timestamp_buf:some_timestamp_buf
                   !buf len) ||
-           Datum_key.get_datum_key_keyspace_id !buf <> tx.ks.ks_id
+           Datum_encoding.get_datum_key_keyspace_id !buf <> tx.ks.ks_id
         then
           (* we have hit the end of the keyspace or the data area *)
           return acc
@@ -485,7 +485,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
               begin match r with
                   Continue | Continue_with _ -> IT.next it;
                 | Skip_key | Skip_key_with _ ->
-                    Datum_key.encode_datum_key datum_key_buf tx.ks.ks_id
+                    Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
                       ~table:!table_id ~key:(next_key ())
                       ~column:"" ~timestamp:Int64.min_int;
                     IT.seek it
@@ -506,7 +506,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
         table_id := table;
         (* jump to first entry *)
         let first_datum_key =
-          Datum_key.encode_datum_key_to_string tx.ks.ks_id ~table
+          Datum_encoding.encode_datum_key_to_string tx.ks.ks_id ~table
             ~key:(Option.default "" first_key) ~column:first_column
             ~timestamp:Int64.min_int
         in
@@ -702,7 +702,7 @@ let get_slice_aux
                    let col = String.sub column_buf 0 column_len in
                    let timestamp = match decode_timestamps with
                        false -> No_timestamp
-                     | true -> Timestamp (Datum_key.decode_timestamp timestamp_buf) in
+                     | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
                    let rev_cols = { name = col; data; timestamp; } :: rev_cols in
                      if !columns_selected >= max_columns then
                        Finish_fold rev_cols
@@ -793,7 +793,7 @@ let get_slice_aux
               let col = String.sub column_buf 0 column_len in
               let timestamp = match decode_timestamps with
                   false -> No_timestamp
-                | true -> Timestamp (Datum_key.decode_timestamp timestamp_buf) in
+                | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
               let col_data = { name = col; data; timestamp; } in
 
               let key_data = col_data :: key_data in
@@ -1034,13 +1034,13 @@ let load tx data =
   let wb = Lazy.force tx.backup_writebatch in
   let enc_datum_key datum_key ~table:table_name ~key ~column ~timestamp =
     match find_maybe tx.ks.ks_tables table_name with
-        Some table -> Datum_key.encode_datum_key datum_key tx.ks.ks_id
+        Some table -> Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                         ~table ~key ~column ~timestamp
       | None ->
           (* register table first *)
           let table =
             register_new_table_and_add_to_writebatch tx.ks wb table_name
-          in Datum_key.encode_datum_key datum_key tx.ks.ks_id
+          in Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                ~table ~key ~column ~timestamp in
 
   let ok = Backup.load enc_datum_key wb data in

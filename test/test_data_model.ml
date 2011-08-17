@@ -70,10 +70,10 @@ struct
 
     let encode ks (table, key, column, timestamp) =
       let b = Bytea.create 13 in
-        Datum_key.encode_datum_key b ks ~table ~key ~column ~timestamp;
+        Datum_encoding.encode_datum_key b ks ~table ~key ~column ~timestamp;
         Bytea.contents b in
     let cmp ks1 a ks2 b =
-      Datum_key.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
+      Datum_encoding.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
     let printer (tbl, key, col, ts) =
       sprintf
         "{ table = %d; key = %S; column = %S, timestamp = %Ld }" tbl key col ts in
@@ -130,15 +130,15 @@ struct
     let alt ?(rev=false) x y =
       aeq_bool
         ~msg:(sprintf "%S should %sbe LT %S" x (txt rev) y)
-        (not rev) (Datum_key.apply_custom_comparator x y < 0) in
+        (not rev) (Datum_encoding.apply_custom_comparator x y < 0) in
     let agt ?(rev=false) x y =
       aeq_bool
         ~msg:(sprintf "%S should %sbe GT %S" x (txt rev) y)
-        (not rev) (Datum_key.apply_custom_comparator x y > 0) in
+        (not rev) (Datum_encoding.apply_custom_comparator x y > 0) in
     let aeq ?(rev=false) x y =
       aeq_bool
         ~msg:(sprintf "%S should %sbe EQ %S" x (txt rev) y)
-        (not rev) (Datum_key.apply_custom_comparator x y = 0) in
+        (not rev) (Datum_encoding.apply_custom_comparator x y = 0) in
     let rev = true in
     let alt x y = alt x y; agt y x; aeq ~rev x y in
       aeq "" "";

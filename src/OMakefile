@@ -11,7 +11,7 @@ OBJECTS[] =
   bytea
   crc32c
   data_model
-  datum_key
+  datum_encoding
   ob_util
   protocol
   protocol_client

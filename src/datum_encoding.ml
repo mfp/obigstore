@@ -107,7 +107,7 @@ let decode_timestamp (s : timestamp_buf) =
 
 let decode_timestamp' s =
   if String.length s <> 8 then
-    invalid_arg "Datum_key.decode_timestamp': want string of length 8";
+    invalid_arg "Datum_encoding.decode_timestamp': want string of length 8";
   ostore_decode_int64_complement_le s 0
 
 let encode_datum_key_to_string ks ~table ~key ~column ~timestamp =
