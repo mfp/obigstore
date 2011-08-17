@@ -68,15 +68,20 @@ class OStoreComparator1 : public leveldb::Comparator {
         switch(a[0]) {
             case '1': {
                 // first compare keyspaces
-                int kscmp = a[1] - b[1];
+                int ksa = decode_var_int(a.data() + 1),
+                    ksb = decode_var_int(b.data() + 1);
+                // don't expect billions of keyspaces, no pb with overflow
+                int kscmp = ksa - ksb;
                 if(kscmp) return kscmp;
 
                 // then compare table ids
-                int tlen_a = a[sa - 3] & 0x7,
+                int kslen_a = (a[sa - 3] >> 3) & 0x7,
+                    kslen_b = (b[sb - 3] >> 3) & 0x7,
+                    tlen_a = a[sa - 3] & 0x7,
                     tlen_b = b[sb - 3] & 0x7;
 
-                int ta = decode_var_int(a.data() + 2),
-                    tb = decode_var_int(b.data() + 2);
+                int ta = decode_var_int(a.data() + 1 + kslen_a),
+                    tb = decode_var_int(b.data() + 1 + kslen_b);
 
                 // both ta and tb should be small, overflow not an issue in
                 // practice

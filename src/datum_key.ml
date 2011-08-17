@@ -74,6 +74,11 @@ let positive_vint32_size = function
   | n when n < 2097152 -> 3
   | _ -> 4
 
+let add_vint_and_ret_size dst n =
+  let off = Bytea.length dst in
+    Bytea.add_vint dst n;
+    Bytea.length dst - off
+
 (* datum key format:
  * '1' uint8(keyspace) vint(table_id) string(key) string(column)
  * uint64_LE(timestamp lxor 0xFFFFFFFFFFFFFFFF)
@@ -85,8 +90,8 @@ let positive_vint32_size = function
 let encode_datum_key dst ks ~table ~key ~column ~timestamp =
   Bytea.clear dst;
   Bytea.add_char dst '1';
-  Bytea.add_byte dst ks;
-    Bytea.add_vint dst table;
+  let ks_len = add_vint_and_ret_size dst ks in
+  let t_len = add_vint_and_ret_size dst table in
     Bytea.add_string dst key;
     Bytea.add_string dst column;
     Bytea.add_int64_complement_le dst timestamp;
@@ -96,7 +101,7 @@ let encode_datum_key dst ks ~table ~key ~column ~timestamp =
       let off = Bytea.length dst in
         Bytea.add_vint dst (String.length column);
         let clen_len = Bytea.length dst - off in
-          Bytea.add_byte dst (positive_vint32_size table);
+          Bytea.add_byte dst (t_len lor (ks_len lsl 3));
           Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
           Bytea.add_byte dst version
 
@@ -146,11 +151,13 @@ let decode_datum_key
   let last_byte = Char.code datum_key.[len - 2] in
   let clen_len = last_byte land 0x7 in
   let klen_len = (last_byte lsr 3) land 0x7 in (* safer *)
-  let t_len = Char.code datum_key.[len - 3] land 0x7 in
+  let ks_and_t_lengths = Char.code datum_key.[len - 3] in
+  let ks_len = (ks_and_t_lengths lsr 3) land 0x7 in
+  let t_len = ks_and_t_lengths land 0x7 in
   let c_len = decode_var_int_at datum_key (len - 3 - clen_len) in
   let k_len = decode_var_int_at datum_key (len - 3 - clen_len - klen_len) in
   let expected_len =
-    2 + t_len + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1
+    1 + ks_len + t_len + k_len + c_len + 8 + clen_len + klen_len + 1 + 1 + 1
   in
     if expected_len <> len then
       false
@@ -161,7 +168,7 @@ let decode_datum_key
         | Some b, Some l ->
             if String.length !b < k_len then
               b := String.create k_len;
-            String.blit datum_key (2 + t_len) !b 0 k_len;
+            String.blit datum_key (1 + ks_len + t_len) !b 0 k_len;
             l := k_len
       end;
       begin match column_buf_r, column_len_r with
@@ -169,13 +176,13 @@ let decode_datum_key
         | Some b, Some l ->
             if String.length !b < c_len then
               b := String.create c_len;
-            String.blit datum_key (2 + t_len + k_len) !b 0 c_len;
+            String.blit datum_key (1 + ks_len + t_len + k_len) !b 0 c_len;
             l := c_len
       end;
       begin match timestamp_buf with
           None -> ()
         | Some (b : timestamp_buf) ->
-            String.blit datum_key (2 + t_len + k_len + c_len) (b :> string) 0 8;
+            String.blit datum_key (1 + ks_len + t_len + k_len + c_len) (b :> string) 0 8;
       end;
       true
     end

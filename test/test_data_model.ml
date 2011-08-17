@@ -65,20 +65,19 @@ struct
       (fun tx -> Lwt_list.iter_s (fun (k, cols) -> put tx tbl k cols) l)
 
   let test_custom_comparator db =
-    lwt ks = D.register_keyspace db "test_custom_comparator" in
-    lwt ks2 = D.register_keyspace db "test_custom_comparator2" in
+    let ks = 1 in
+    let ks2 = 2 in
 
     let encode ks (table, key, column, timestamp) =
       let b = Bytea.create 13 in
-        Datum_key.encode_datum_key b (D.keyspace_id ks)
-          ~table ~key ~column ~timestamp;
+        Datum_key.encode_datum_key b ks ~table ~key ~column ~timestamp;
         Bytea.contents b in
     let cmp ks1 a ks2 b =
       Datum_key.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
     let printer (tbl, key, col, ts) =
       sprintf
         "{ table = %d; key = %S; column = %S, timestamp = %Ld }" tbl key col ts in
-    let ksname () ks = D.keyspace_name ks in
+    let ksname () ks = string_of_int ks in
     let aeq ?(ks1 = ks) ?(ks2 = ks) a b =
                 match cmp ks1 a ks2 b with
           0 -> ()
@@ -123,6 +122,7 @@ struct
       agt (2, "d", "d", 0L) (2, "d", "", 0L);
       agt (2, "d", "d", Int64.min_int) (2, "d", "", 0L);
       agt (2, "d", "d", Int64.min_int) (2, "d", "", Int64.min_int);
+      agt ~ks1:203313 (1, "", "", t) ~ks2:13 (0, "", "", t);
       return ()
 
   let test_custom_comparator_non_datum db =
@@ -147,16 +147,16 @@ struct
       alt "1033232" "\255";
       alt "\255" "\255\000";
       (* null column with zero timestamp vs. non-null column *)
-      alt "1\001\001d\000\000\000\000\000\000\000\128\001\000\001\t\000"
+      alt "1\001\001d\000\000\000\000\000\000\000\128\001\000\009\t\000"
           "1\001\001dd%d]\000\000V\251\255\001\001\001\t\000";
       (* diff timestamps, but nonetheless equal datum_keys *)
       aeq
-        "1\001\001dd\212<\015\017\254U\251\255\001\001\001\t\000"
-        "1\001\001dd\135;\015\017\254U\251\255\001\001\001\t\000";
+        "1\001\001dd\212<\015\017\254U\251\255\001\001\009\t\000"
+        "1\001\001dd\135;\015\017\254U\251\255\001\001\009\t\000";
       (* unrelated keys *)
       alt
-        "1\001\001cc\187\215\205\226\253U\251\255\001\001\001\t\000"
-        "1\001\001dd@\214\205\226\253U\251\255\001\001\001\t\000";
+        "1\001\001cc\187\215\205\226\253U\251\255\001\001\009\t\000"
+        "1\001\001dd@\214\205\226\253U\251\255\001\001\009\t\000";
       return ()
 
   let test_keyspace_management db =
