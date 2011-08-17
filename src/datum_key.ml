@@ -68,12 +68,6 @@ struct
     end
 end
 
-let positive_vint32_size = function
-    n when n < 128 -> 1
-  | n when n < 16384 -> 2
-  | n when n < 2097152 -> 3
-  | _ -> 4
-
 let add_vint_and_ret_size dst n =
   let off = Bytea.length dst in
     Bytea.add_vint dst n;
@@ -95,15 +89,11 @@ let encode_datum_key dst ks ~table ~key ~column ~timestamp =
     Bytea.add_string dst key;
     Bytea.add_string dst column;
     Bytea.add_int64_complement_le dst timestamp;
-    let off = Bytea.length dst in
-      Bytea.add_vint dst (String.length key);
-      let klen_len = Bytea.length dst - off in
-      let off = Bytea.length dst in
-        Bytea.add_vint dst (String.length column);
-        let clen_len = Bytea.length dst - off in
-          Bytea.add_byte dst (t_len lor (ks_len lsl 3));
-          Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
-          Bytea.add_byte dst version
+    let klen_len = add_vint_and_ret_size dst (String.length key) in
+    let clen_len = add_vint_and_ret_size dst (String.length column) in
+      Bytea.add_byte dst ((ks_len lsl 3) lor t_len);
+      Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
+      Bytea.add_byte dst version
 
 let encode_table_successor dst ks table =
   encode_datum_key dst ks
