@@ -84,6 +84,8 @@ let open_db basedir =
 
 let close_db t = L.close t.db
 
+let detach_ks_op ks f x = Lwt_preemptive.detach f x
+
 let list_keyspaces t =
   Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>
   List.sort String.compare |> return
@@ -151,34 +153,36 @@ let list_tables ks =
         end
     end
 
-  in collect_tables [] |> List.sort String.compare |> return
+  in detach_ks_op ks collect_tables [] >|= List.sort String.compare
 
 let table_size_on_disk ks table_name =
   match find_maybe ks.ks_tables table_name with
       None -> return 0L
     | Some table ->
-      L.get_approximate_size ks.ks_db.db
-        (Datum_encoding.encode_datum_key_to_string ks.ks_id
-           ~table ~key:"" ~column:"" ~timestamp:Int64.min_int)
-        (Datum_encoding.encode_datum_key_to_string ks.ks_id
-           ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
-           ~timestamp:Int64.zero) |>
-      return
+        let _from =
+          Datum_encoding.encode_datum_key_to_string ks.ks_id
+           ~table ~key:"" ~column:"" ~timestamp:Int64.min_int in
+        let _to =
+          Datum_encoding.encode_datum_key_to_string ks.ks_id
+            ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
+            ~timestamp:Int64.zero
+        in detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
 
 let key_range_size_on_disk ks ?first ?up_to table_name =
   match find_maybe ks.ks_tables table_name with
       None -> return 0L
     | Some table ->
-        L.get_approximate_size ks.ks_db.db
-          (Datum_encoding.encode_datum_key_to_string ks.ks_id
-             ~table ~key:(Option.default "" first) ~column:""
-             ~timestamp:Int64.min_int)
-          (Datum_encoding.encode_datum_key_to_string ks.ks_id
-             ~table
-             ~key:(Option.default "\255\255\255\255\255\255" up_to)
-             ~column:"\255\255\255\255\255\255"
-             ~timestamp:Int64.zero) |>
-        return
+        let _from =
+          Datum_encoding.encode_datum_key_to_string ks.ks_id
+            ~table ~key:(Option.default "" first) ~column:""
+            ~timestamp:Int64.min_int in
+        let _to =
+          Datum_encoding.encode_datum_key_to_string ks.ks_id
+            ~table
+            ~key:(Option.default "\255\255\255\255\255\255" up_to)
+            ~column:"\255\255\255\255\255\255"
+            ~timestamp:Int64.zero
+        in detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
 
 module S =
 struct
@@ -317,7 +321,7 @@ let transaction_aux make_access_and_iters ks f =
                       m)
                  m)
             tx.added;
-          L.Batch.write ~sync:true ks.ks_db.db b; (* FIXME: should not block *)
+          detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b >>
           return y
       end
     | Some parent_tx ->
@@ -455,7 +459,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
 
   let rec do_fold_over_data acc =
     if not (IT.valid it) then
-      return acc
+      acc
     else begin
       let len = IT.fill_key it buf in
         (* try to decode datum key, check if it's the same KS *)
@@ -468,14 +472,14 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
            Datum_encoding.get_datum_key_keyspace_id !buf <> tx.ks.ks_id
         then
           (* we have hit the end of the keyspace or the data area *)
-          return acc
+          acc
         else begin
           (* check that we're still in the table *)
           if !table_r <> !table_id then
-            return acc
+            acc
           (* check if we're at or past up_to *)
           else if at_or_past_upto_key () then
-            return acc
+            acc
           else begin
             let r = f acc it ~key_buf:!key_buf ~key_len:!key_len
                      ~column_buf:!column_buf ~column_len:!column_len
@@ -496,7 +500,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
               match r with
                   Continue | Skip_key -> do_fold_over_data acc
                 | Continue_with x | Skip_key_with x -> do_fold_over_data x
-                | Finish_fold x -> return x
+                | Finish_fold x -> x
           end
       end
     end
@@ -512,7 +516,13 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
         in
           IT.seek it first_datum_key 0 (String.length first_datum_key);
           do_fold_over_data acc
-    | None -> (* unknown table *) return acc
+    | None -> (* unknown table *) acc
+
+let fold_over_data_aux it tx table f acc ?first_column ~first_key ~up_to_key =
+  detach_ks_op tx.ks
+    (fun () ->
+       fold_over_data_aux it tx table f acc ?first_column ~first_key ~up_to_key)
+    ()
 
 let fold_over_data tx table f ?first_column acc ~first_key ~up_to_key =
   match tx.iter_pool with
@@ -530,16 +540,19 @@ let fold_over_data tx table f ?first_column acc ~first_key ~up_to_key =
 
 let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
     Keys l ->
-      let exists_key = exists_key tx table in
-      let s = S.of_list l in
-      let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
-      let s =
-        S.filter
-          (fun k ->
-             S.mem k (M.find_default S.empty table tx.added_keys) ||
-             exists_key k)
-          s
-      in return (map_f s)
+      detach_ks_op tx.ks
+        (fun () ->
+           let exists_key = exists_key tx table in
+           let s = S.of_list l in
+           let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
+           let s =
+             S.filter
+               (fun k ->
+                  S.mem k (M.find_default S.empty table tx.added_keys) ||
+                  exists_key k)
+               s
+           in map_f s)
+        ()
 
   | Key_range { first; up_to } ->
       (* we recover all the keys added in the transaction *)
@@ -1056,7 +1069,7 @@ let load tx data =
         else begin
           tx.backup_writebatch <- lazy (L.Batch.make ());
           tx.backup_writebatch_size <- 0;
-          Lwt_preemptive.detach (L.Batch.write ~sync:true tx.ks.ks_db.db) wb
+          detach_ks_op tx.ks (L.Batch.write ~sync:true tx.ks.ks_db.db) wb
         end
       end >>
       return true
