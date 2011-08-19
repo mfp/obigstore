@@ -1,0 +1,30 @@
+
+obigstore: multi-dimensional DB with BigTable-like data model atop LevelDB
+==========================================================================
+Copyright (c) 2011 Mauricio Fernandez <mfp@acm.org>
+
+obigstore is a database server + client library. It exposes a
+multidimensional BigTable-like data model built on top of the LevelDB.
+
+Requirements
+------------
+
+(Debian package names parenthesized)
+
+* OCaml >= 3.12.0 (ocaml-nox)
+* omake to build (omake)
+* GCC with C++ frontend (g++)
+* OCaml Batteries (libbatteries-ocaml-dev)
+* Lwt (liblwt-ocaml-dev)
+* oUnit for the unit tests  (libounit-ocaml-dev)
+* extlib (libextlib-ocaml-dev)
+
+Building
+--------
+Just 
+
+   $ omake
+
+should do. This will build the server, client programs and libraries, as well
+as run the tests.
+
