@@ -64,12 +64,12 @@ decode_var_int(const char *p)
  return n;
 }
 
-class OStoreComparator1 : public leveldb::Comparator {
+class OBigStoreComparator1 : public leveldb::Comparator {
     public:
-    OStoreComparator1() {}
+    OBigStoreComparator1() {}
 
     virtual const char* Name() const {
-        return "org.eigenclass/OStoreComparator1";
+        return "org.eigenclass/OBigStoreComparator1";
     }
 
     virtual int Compare(const leveldb::Slice& a, const leveldb::Slice& b) const {
@@ -161,15 +161,15 @@ class OStoreComparator1 : public leveldb::Comparator {
     }
 };
 
-static const OStoreComparator1 comparator1;
+static const OBigStoreComparator1 comparator1;
 
 CAMLprim const leveldb::Comparator*
-ostore_custom_comparator() {
+obigstore_custom_comparator() {
     return &comparator1;
 }
 
 CAMLprim value
-ostore_apply_custom_comparator(value s1, value s2)
+obigstore_apply_custom_comparator(value s1, value s2)
 {
  CAMLparam2(s1, s2);
  leveldb::Slice d1(String_val(s1), string_length(s1)),
@@ -179,7 +179,7 @@ ostore_apply_custom_comparator(value s1, value s2)
 }
 
 CAMLprim value
-ostore_bytea_blit_int64_complement_le(value dst, value off, value n)
+obigstore_bytea_blit_int64_complement_le(value dst, value off, value n)
 {
  int64_t v = Int64_val(n);
  v = v ^ -1;
@@ -200,7 +200,7 @@ ostore_bytea_blit_int64_complement_le(value dst, value off, value n)
 }
 
 CAMLprim value
-ostore_bytea_blit_int64_le(value dst, value off, value n)
+obigstore_bytea_blit_int64_le(value dst, value off, value n)
 {
  int64_t v = Int64_val(n);
 
@@ -221,7 +221,7 @@ ostore_bytea_blit_int64_le(value dst, value off, value n)
 
 
 CAMLprim value
-ostore_bytea_blit_int_as_i32_le(value dst, value off, value n)
+obigstore_bytea_blit_int_as_i32_le(value dst, value off, value n)
 {
  int32_t v = Long_val(n);
 
@@ -240,7 +240,7 @@ ostore_bytea_blit_int_as_i32_le(value dst, value off, value n)
 }
 
 CAMLprim value
-ostore_decode_int64_le(value s, value off)
+obigstore_decode_int64_le(value s, value off)
 {
 #ifdef IS_LITTLE_ENDIAN
   int64_t p = *((int64_t *)(&Byte_u(s, Long_val(off)))) ^ -1;
@@ -261,7 +261,7 @@ ostore_decode_int64_le(value s, value off)
 
 
 CAMLprim value
-ostore_decode_int64_complement_le(value s, value off)
+obigstore_decode_int64_complement_le(value s, value off)
 {
 #ifdef IS_LITTLE_ENDIAN
   int64_t p = *((int64_t *)(&Byte_u(s, Long_val(off)))) ^ -1;
@@ -292,7 +292,7 @@ update_crc32c(uint32_t crc, const uint8_t *buf, size_t size)
 }
 
 CAMLprim value
-ostore_crc32c_string(value s)
+obigstore_crc32c_string(value s)
 {
  CAMLparam1(s);
  CAMLlocal1(ret);
@@ -304,7 +304,7 @@ ostore_crc32c_string(value s)
 }
 
 CAMLprim value
-ostore_crc32c_update(value t, value s, value off, value len)
+obigstore_crc32c_update(value t, value s, value off, value len)
 {
  uint32_t *p = (uint32_t *)String_val(t);
  *p = update_crc32c(*p, &Byte_u(s, Long_val(off)), Long_val(len));
@@ -312,7 +312,7 @@ ostore_crc32c_update(value t, value s, value off, value len)
 }
 
 CAMLprim value
-ostore_crc32c_ensure_lsb(value t)
+obigstore_crc32c_ensure_lsb(value t)
 {
  #ifndef IS_LITTLE_ENDIAN
  const uint8_t *p = &Byte_u(t, 0);

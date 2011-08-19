@@ -22,12 +22,12 @@ module String = struct include String include BatString end
 type ks = int
 
 external custom_comparator_ : unit ->  LevelDB.comparator =
-  "ostore_custom_comparator"
+  "obigstore_custom_comparator"
 
 let custom_comparator = custom_comparator_ ()
 
 external apply_custom_comparator : string -> string -> int =
-  "ostore_apply_custom_comparator"
+  "obigstore_apply_custom_comparator"
 
 module TS : sig
   type timestamp_buf = private string
@@ -121,16 +121,16 @@ let encode_table_successor dst ks table =
   encode_datum_key dst ks
     ~table:(table + 1) ~key:"" ~column:"" ~timestamp:Int64.min_int
 
-external ostore_decode_int64_complement_le : string -> int -> Int64.t =
-  "ostore_decode_int64_complement_le"
+external obigstore_decode_int64_complement_le : string -> int -> Int64.t =
+  "obigstore_decode_int64_complement_le"
 
 let decode_timestamp (s : timestamp_buf) =
-  ostore_decode_int64_complement_le (s :> string) 0
+  obigstore_decode_int64_complement_le (s :> string) 0
 
 let decode_timestamp' s =
   if String.length s <> 8 then
     invalid_arg "Datum_encoding.decode_timestamp': want string of length 8";
-  ostore_decode_int64_complement_le s 0
+  obigstore_decode_int64_complement_le s 0
 
 let encode_datum_key_to_string ks ~table ~key ~column ~timestamp =
   let b = Bytea.create 13 in

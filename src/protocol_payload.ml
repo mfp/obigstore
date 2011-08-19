@@ -174,7 +174,7 @@ struct
       No_timestamp -> E.add_raw_string b null_timestamp
     | Timestamp t -> E.add_int64_le b t
 
-  external decode_int64_le : string -> int -> Int64.t = "ostore_decode_int64_le"
+  external decode_int64_le : string -> int -> Int64.t = "obigstore_decode_int64_le"
 
   let timestamp_buf = String.create 8
 

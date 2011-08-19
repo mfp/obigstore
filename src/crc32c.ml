@@ -21,9 +21,9 @@ type t = string
 
 let create () = String.copy "\000\000\000\000"
 
-external update_unsafe : t -> string -> int -> int -> unit = "ostore_crc32c_update" "noalloc"
-external string : string -> string = "ostore_crc32c_string"
-external fix_endianness : t -> unit = "ostore_crc32c_ensure_lsb" "noalloc"
+external update_unsafe : t -> string -> int -> int -> unit = "obigstore_crc32c_update" "noalloc"
+external string : string -> string = "obigstore_crc32c_string"
+external fix_endianness : t -> unit = "obigstore_crc32c_ensure_lsb" "noalloc"
 
 let reset t =
   String.unsafe_set t 0 '\000';

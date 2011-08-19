@@ -1,1 +1,0 @@
-ostore_stubs.cc

@@ -24,37 +24,37 @@ OBJECTS[] =
 request.ml: request.proto
 	./libs/extprot/extprotc $<
 
-ostore_stubs.o: ostore_stubs.cc
+obigstore_stubs.o: obigstore_stubs.cc
 
-ostore.cma ostore.a ostore.cmxa: ostore_stubs.o \
+obigstore.cma obigstore.a obigstore.cmxa: obigstore_stubs.o \
     $(addsuffixes .cmo .cmx, $(OBJECTS))
-	ocamlmklib -verbose -oc camlostore -o ostore \
-	    ostore_stubs.o \
+	ocamlmklib -verbose -oc camlobigstore -o obigstore \
+	    obigstore_stubs.o \
 	    $(OCamlLinkSort $(addsuffixes .cmo, $(OBJECTS))) \
 	    $(OCamlLinkSort $(addsuffixes .cmx, $(OBJECTS)))
 
-OCamlLibrary(ostore_server, server)
+OCamlLibrary(obigstore_server, server)
 
 section
     OCAMLPACKS[] += unix extlib threads oUnit
     OCAML_LIBS[] +=
 	libs/ocaml-leveldb/src/leveldb
 	libs/extprot/runtime/extprot
-	ostore
-	ostore_server
+	obigstore
+	obigstore_server
     OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
 		  -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src
     OCamlProgram(obigstore, run_server)
     OCamlProgram(ob_dump, ob_dump)
     OCamlProgram(ob_load, ob_load)
 
-toplevel: ostore.cma libs/ocaml-leveldb/src/leveldb.cma
+toplevel: obigstore.cma libs/ocaml-leveldb/src/leveldb.cma
 	ocamlfind ocamlmktop \
 	    $(mapprefix -package, $(OCAMLPACKS)) \
 	    -cc g++ -verbose -o toplevel \
 	    -cclib -L. \
 	    -cclib -Llibs/ocaml-leveldb/src \
-	    libs/ocaml-leveldb/src/leveldb.cma ostore.cma \
+	    libs/ocaml-leveldb/src/leveldb.cma obigstore.cma \
 	    -linkpkg
 
 .DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE)
