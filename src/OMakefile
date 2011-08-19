@@ -21,7 +21,7 @@ OBJECTS[] =
   storage
   string_util
 
-request.ml: request.proto
+request.ml: request.proto ./libs/extprot/extprotc
 	./libs/extprot/extprotc $<
 
 obigstore_stubs.o: obigstore_stubs.cc
