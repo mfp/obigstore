@@ -108,7 +108,19 @@ struct
           None -> service c
         | Some r ->
             if Protocol.is_sync_req request_id then begin
-              respond c ~buf:c.out_buf ~request_id r >>
+              begin try_lwt
+                respond c ~buf:c.out_buf ~request_id r
+              with
+                | Abort_exn | Commit_exn as e -> raise_lwt e
+                | e ->
+                Format.eprintf
+                  "Internal error %s@\n\
+                   request:@\n\
+                   %a@."
+                  (Printexc.to_string e)
+                  Request.pp r;
+                P.internal_error c.och ~request_id ()
+              end >>
               service c
             end else begin
               ignore begin

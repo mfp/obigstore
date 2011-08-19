@@ -22,8 +22,8 @@ open Lwt
 open Data_model
 
 type error =
-    Closed | Corrupted_frame | Bad_request | Unknown_serialization
-  | Unknown_keyspace
+    Internal_error | Closed | Corrupted_frame | Bad_request
+  | Unknown_serialization | Unknown_keyspace
   | Inconsistent_length of int * int  (* expected, actual *)
   | Other of int | Exception of exn
 
@@ -32,6 +32,7 @@ type request_id = string
 exception Error of error
 
 let string_of_error = function
+    Internal_error -> "Internal_error"
   | Closed -> "Closed"
   | Corrupted_frame -> "Corrupted_frame"
   | Bad_request -> "Bad_request"
@@ -119,6 +120,7 @@ sig
   val bad_request : unit writer
   val unknown_keyspace : unit writer
   val unknown_serialization : unit writer
+  val internal_error : unit writer
 
   val return_keyspace : int writer
   val return_keyspace_maybe : int option writer

@@ -112,6 +112,7 @@ struct
       | -1 -> raise_lwt (Error Bad_request)
       | -2 -> raise_lwt (Error Unknown_keyspace)
       | -3 -> raise_lwt (Error Unknown_serialization)
+      | -4 -> raise_lwt (Error Internal_error)
       | n -> raise_lwt (Error (Other n))
 
   let bad_request =
@@ -122,6 +123,9 @@ struct
 
   let unknown_serialization =
     writer (fun b () -> E.add_status b (-3))
+
+  let internal_error =
+    writer (fun b () -> E.add_status b (-4))
 
   let return_keyspace =
     writer (fun b ks ->
