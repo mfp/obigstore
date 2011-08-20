@@ -25,3 +25,8 @@ val open_db : string -> db
 
 (** Close the DB. All further actions on it will raise an error. *)
 val close_db : db -> unit
+
+(** [use_thread_pool db x] indicates whether blocking operations should be
+  * performed in a separate thread so as to avoid blocking. By default, all
+  * operations are performed in the main thread. *)
+val use_thread_pool : db -> bool -> unit

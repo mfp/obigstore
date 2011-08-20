@@ -40,6 +40,7 @@ type db =
       basedir : string;
       db : L.db;
       keyspaces : (string, keyspace) Hashtbl.t;
+      mutable use_thread_pool : bool;
     }
 
 and keyspace =
@@ -96,13 +97,17 @@ let open_db basedir =
     (* ensure we have a end_of_db record *)
     if not (L.mem db Datum_encoding.end_of_db_key) then
       L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
-    let db = { basedir; db; keyspaces = Hashtbl.create 13; } in
+    let db = { basedir; db; keyspaces = Hashtbl.create 13; use_thread_pool = false; } in
     let keyspaces = read_keyspaces db in
       { db with keyspaces }
 
+let use_thread_pool db v = db.use_thread_pool <- v
+
 let close_db t = L.close t.db
 
-let detach_ks_op ks f x = Lwt_preemptive.detach f x
+let detach_ks_op ks f x =
+  if ks.ks_db.use_thread_pool then Lwt_preemptive.detach f x
+  else return (f x)
 
 let list_keyspaces t =
   Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>

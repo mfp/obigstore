@@ -26,6 +26,7 @@ module Make
   (D : sig
      include Data_model.S
      include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+     val use_thread_pool : db -> bool -> unit
    end)
   (P : PAYLOAD) =
 struct
@@ -65,15 +66,20 @@ struct
 
   let setup_auto_yield t =
     incr num_clients;
-    if !num_clients == 2 then begin
+    if !num_clients >= 2 then begin
+      D.use_thread_pool t.db true;
       let f = Lwt_unix.auto_yield 0.5e-3 in
         auto_yielder := f
     end;
-    Gc.finalise
-      (fun _ ->
-         decr num_clients;
-         if !num_clients <= 1 then auto_yielder := dummy_auto_yield)
-      t
+    let db = t.db in
+      Gc.finalise
+        (fun _ ->
+           decr num_clients;
+           if !num_clients <= 1 then begin
+             D.use_thread_pool db false;
+             auto_yielder := dummy_auto_yield
+           end)
+        t
 
   let init ?(max_async_reqs = 1000) ?(debug=false) db ich och =
     let t =
