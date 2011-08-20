@@ -91,7 +91,7 @@ let read_header ich =
                 crc)
     end
 
-let write_msg och req_id msg =
+let write_msg ?(flush=true) och req_id msg =
   (* FIXME: ensure req_id's size is 8 *)
   Lwt_io.atomic
     (fun och ->
@@ -106,7 +106,7 @@ let write_msg och req_id msg =
           let crc2 = Crc32c.substring (Bytea.unsafe_string msg) 0 len in
             Crc32c.xor crc2 crc;
             Lwt_io.write och crc2 >>
-            Lwt_io.flush och)
+            (if flush then Lwt_io.flush och else return ()))
     och
 
 type 'a writer =

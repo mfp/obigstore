@@ -48,14 +48,18 @@ section
     OCamlProgram(ob_dump, ob_dump)
     OCamlProgram(ob_load, ob_load)
 
-toplevel: obigstore.cma libs/ocaml-leveldb/src/leveldb.cma
-	ocamlfind ocamlmktop \
-	    $(mapprefix -package, $(OCAMLPACKS)) \
-	    -cc g++ -verbose -o toplevel \
-	    -cclib -L. \
-	    -cclib -Llibs/ocaml-leveldb/src \
-	    libs/ocaml-leveldb/src/leveldb.cma obigstore.cma \
-	    -linkpkg
+    toplevel: libs/ocaml-leveldb/src/leveldb.cma \
+	      libs/extprot/runtime/extprot.cma \
+	      obigstore.cma
+	    ocamlfind ocamlmktop \
+		$(mapprefix -package, $(OCAMLPACKS)) \
+		-cc g++ -verbose -o toplevel \
+		-cclib -L. \
+		-cclib -Llibs/ocaml-leveldb/src \
+		libs/ocaml-leveldb/src/leveldb.cma \
+		libs/extprot/runtime/extprot.cma \
+		obigstore.cma \
+		-linkpkg -thread
 
 .DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE)
 
