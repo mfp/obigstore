@@ -99,7 +99,8 @@ let open_db basedir =
       L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
     let db = { basedir; db; keyspaces = Hashtbl.create 13; use_thread_pool = false; } in
     let keyspaces = read_keyspaces db in
-      { db with keyspaces }
+      Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
+      db
 
 let use_thread_pool db v = db.use_thread_pool <- v
 
