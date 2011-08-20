@@ -143,38 +143,59 @@ struct
         (truncate (float !n_columns /. dt));
       return ()
 
-  let bm_random_read db =
-    lwt ks = D.register_keyspace db "random" in
+  let bm_sequential_write db =
+    lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
-      D.read_committed_transaction ks
-        (fun tx ->
-           let keys = List.init nkeys string_of_int in
-             Lwt_list.iter_p
-               (fun key -> D.put_columns tx table key [mk_col "value" key])
-               keys) >>
+    lwt dt =
+      time
+        (fun () ->
+           D.read_committed_transaction ks
+             (fun tx ->
+                let keys = List.init nkeys string_of_int in
+                  Lwt_list.iter_p
+                    (fun key -> D.put_columns tx table key [mk_col "value" key])
+                    keys))
+    in
+      print_newline ();
+      printf "Seq write: %d keys in %8.5fs (%d/s)\n%!"
+        nkeys dt (truncate (float nkeys /. dt));
+      return ()
+
+  let bm_random_read db =
+    lwt ks = D.register_keyspace db "seq" in
+    let table = "nums" in
+    let nkeys = 100000 in
+    let max_parallelism = 50 in
+    let region = Lwt_util.make_region max_parallelism in
       let keys = List.init nkeys (fun _ -> string_of_int (Random.int nkeys)) in
       lwt dt =
         time
           (fun () ->
              D.read_committed_transaction ks
                (fun tx ->
-                  Lwt_list.map_p (fun k -> D.get_column tx table k "value") keys >|=
-                  ignore))
+                  Lwt_list.map_p
+                    (fun k ->
+                       Lwt_util.run_in_region region 1
+                         (fun () -> D.get_column tx table k "value"))
+                    keys >>
+                  return ()))
       in
         print_newline ();
-        printf "Rand read: %d keys in %8.5fs (%d/s)\n%!"
+        printf "Rand read: %d columns in %8.5fs (%d/s)\n%!"
            nkeys dt (truncate (float nkeys /. dt));
         return ()
 
   let run_if x f = if x then f () else return ()
 
   let run ~rounds ~iterations ~avg_cols ~batch_size
-          ~bm_put ~bm_seq_read ~bm_read_committed ~bm_rand_read =
+          ~bm_put ~bm_seq_write
+          ~bm_seq_read ~bm_read_committed ~bm_rand_read =
     lwt db = C.make_tmp_db () in
       Test_00util.keep_tmp := false;
       run_if bm_put
         (fun () -> run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db) >>
+      run_if bm_seq_write (fun () -> bm_sequential_write db) >>
       run_if bm_rand_read (fun () -> bm_random_read db) >>
       run_if bm_seq_read
         (fun () ->
@@ -199,6 +220,7 @@ let port = ref 12050
 let remote_test = ref false
 let run_put = ref true
 let run_seq_read = ref true
+let run_seq_write = ref true
 let run_random_read = ref true
 let db_dir = ref None
 let rounds = ref 10
@@ -220,12 +242,14 @@ let params =
       "-put-only",
         Arg.Unit (fun () -> run_put := true;
                             run_seq_read := false;
-                            run_random_read := false;),
+                            run_random_read := false;
+                            run_seq_write := true;),
         " Benchmark only put_columns.";
       "-read-only",
         Arg.Unit (fun () -> run_put := false;
                             run_seq_read := true;
-                            run_random_read := true;),
+                            run_random_read := true;
+                            run_seq_write := false;),
         " Benchmark only sequential and random read.";
       "-dir", Arg.String (fun s -> db_dir := Some s; remote_test := false),
         "PATH Run locally against LocalDB at PATH.";
@@ -257,7 +281,9 @@ let () =
       (BM_Storage.run
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
          ~batch_size:!batch_size
-         ~bm_put:!run_put ~bm_seq_read:!run_seq_read
+         ~bm_put:!run_put
+         ~bm_seq_write:!run_seq_write
+         ~bm_seq_read:!run_seq_read
          ~bm_rand_read:!run_random_read
          ~bm_read_committed:true)
   else begin
@@ -273,7 +299,9 @@ let () =
         (BM.run
            ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
            ~batch_size:!batch_size
-           ~bm_put:!run_put ~bm_seq_read:!run_seq_read
+           ~bm_put:!run_put
+           ~bm_seq_read:!run_seq_read
+           ~bm_seq_write:!run_seq_write
            ~bm_rand_read:!run_random_read
            ~bm_read_committed:false)
   end
