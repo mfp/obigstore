@@ -143,30 +143,55 @@ struct
         (truncate (float !n_columns /. dt));
       return ()
 
-  let run ~rounds ~iterations ~avg_cols ~batch_size
-          ~bm_put ~bm_seq_read ~bm_read_committed =
-    lwt db = C.make_tmp_db () in
-    lwt () =
-      if not bm_put then return ()
-      else run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db
-    in
-      Test_00util.keep_tmp := false;
-      if not bm_seq_read then
+  let bm_random_read db =
+    lwt ks = D.register_keyspace db "random" in
+    let table = "nums" in
+    let nkeys = 100000 in
+      D.read_committed_transaction ks
+        (fun tx ->
+           let keys = List.init nkeys string_of_int in
+             Lwt_list.iter_p
+               (fun key -> D.put_columns tx table key [mk_col "value" key])
+               keys) >>
+      let keys = List.init nkeys (fun _ -> string_of_int (Random.int nkeys)) in
+      lwt dt =
+        time
+          (fun () ->
+             D.read_committed_transaction ks
+               (fun tx ->
+                  Lwt_list.map_p (fun k -> D.get_column tx table k "value") keys >|=
+                  ignore))
+      in
+        print_newline ();
+        printf "Rand read: %d keys in %8.5fs (%d/s)\n%!"
+           nkeys dt (truncate (float nkeys /. dt));
         return ()
-      else begin
-        Lwt_list.iter_s
-          (fun max_columns ->
-             printf "\nmax_columns: %d\n" max_columns;
-             pr_separator ();
-             Lwt_list.iter_s
-               (fun read_committed ->
-                  Lwt_list.iter_s
-                    (fun max_keys ->
-                       bm_sequential_read ~max_columns ~read_committed ~max_keys db)
-                    [ 1000; 500; 200; 100; 50; 20; 10; 1 ])
-               (if bm_read_committed then [ true; false ] else [false]))
-          [ 1; 5; 10; 100 ]
-      end
+
+  let run_if x f = if x then f () else return ()
+
+  let run ~rounds ~iterations ~avg_cols ~batch_size
+          ~bm_put ~bm_seq_read ~bm_read_committed ~bm_rand_read =
+    lwt db = C.make_tmp_db () in
+      Test_00util.keep_tmp := false;
+      run_if bm_put
+        (fun () -> run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db) >>
+      run_if bm_rand_read (fun () -> bm_random_read db) >>
+      run_if bm_seq_read
+        (fun () ->
+           Lwt_list.iter_s
+             (fun max_columns ->
+                printf "\nmax_columns: %d\n" max_columns;
+                pr_separator ();
+                Lwt_list.iter_s
+                  (fun read_committed ->
+                     Lwt_list.iter_s
+                       (fun max_keys ->
+                          bm_sequential_read ~max_columns ~read_committed ~max_keys db)
+                       [ 1000; 500; 200; 100; 50; 20; 10; 1 ])
+                  (if bm_read_committed then [ true; false ] else [false]))
+             [ 1; 5; 10; 100 ]) >>
+      return ()
+
 end
 
 let server = ref "127.0.0.1"
@@ -174,6 +199,7 @@ let port = ref 12050
 let remote_test = ref false
 let run_put = ref true
 let run_seq_read = ref true
+let run_random_read = ref true
 let db_dir = ref None
 let rounds = ref 10
 let iterations = ref 10000
@@ -191,10 +217,16 @@ let params =
         "N Insert N columns in average per key. (default: 10)";
       "-batch-size", Arg.Set_int batch_size,
         "N Insert N keys per batch insert. (default: 1000)";
-      "-put-only", Arg.Unit (fun () -> run_put := true; run_seq_read := false),
+      "-put-only",
+        Arg.Unit (fun () -> run_put := true;
+                            run_seq_read := false;
+                            run_random_read := false;),
         " Benchmark only put_columns.";
-      "-read-only", Arg.Unit (fun () -> run_put := false; run_seq_read := true),
-        " Benchmark only sequential read.";
+      "-read-only",
+        Arg.Unit (fun () -> run_put := false;
+                            run_seq_read := true;
+                            run_random_read := true;),
+        " Benchmark only sequential and random read.";
       "-dir", Arg.String (fun s -> db_dir := Some s; remote_test := false),
         "PATH Run locally against LocalDB at PATH.";
       "-remote", Arg.Set remote_test, " Benchmark against server.";
@@ -226,6 +258,7 @@ let () =
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
          ~batch_size:!batch_size
          ~bm_put:!run_put ~bm_seq_read:!run_seq_read
+         ~bm_rand_read:!run_random_read
          ~bm_read_committed:true)
   else begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
@@ -241,5 +274,6 @@ let () =
            ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
            ~batch_size:!batch_size
            ~bm_put:!run_put ~bm_seq_read:!run_seq_read
+           ~bm_rand_read:!run_random_read
            ~bm_read_committed:false)
   end
