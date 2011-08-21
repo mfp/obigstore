@@ -301,6 +301,18 @@ let transaction_aux make_access_and_iters ks f =
             backup_writebatch_size = 0;
           } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
+
+        (* early termination for read-only or NOP txs if:
+         * * backup_writebatch has not be forced (i.e., not used for bulk
+         *   load)
+         * * no columns have been added / deleted *)
+        if not (Lazy.lazy_is_val tx.backup_writebatch) &&
+           M.is_empty tx.deleted && M.is_empty tx.added
+        then return y
+
+        else
+        (* normal procedure: write to writebatch, then sync it *)
+
         let b = Lazy.force tx.backup_writebatch in
         let datum_key = Bytea.create 13 in
         let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
