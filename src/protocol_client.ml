@@ -303,7 +303,7 @@ struct
 
   let get_slice ks table ?max_keys ?max_columns ?(decode_timestamps=false)
     key_range column_range =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_slice { Get_slice.keyspace = ks.ks_id; table;
                    max_keys; max_columns; decode_timestamps;
                    key_range; column_range })
@@ -329,7 +329,7 @@ struct
       P.read_column_values
 
   let get_column ks table key column =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_column { Get_column.keyspace = ks.ks_id; table; key; column; })
       P.read_column
 
