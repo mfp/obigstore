@@ -1113,3 +1113,56 @@ let load tx data =
 
 let cursor_of_string = Backup.cursor_of_string
 let string_of_cursor = Backup.string_of_cursor
+
+let with_transaction ks f =
+  match Lwt.get tx_key with
+      None -> read_committed_transaction ks f
+    | Some tx -> f tx
+
+let get_keys ks table ?max_keys key_range =
+  with_transaction ks (fun tx -> get_keys tx table ?max_keys key_range)
+
+let count_keys ks table key_range =
+  with_transaction ks (fun tx -> count_keys tx table key_range)
+
+let get_slice ks table ?max_keys ?max_columns ?decode_timestamps
+      key_range column_range =
+  with_transaction ks
+    (fun tx ->
+       get_slice tx table ?max_keys ?max_columns ?decode_timestamps
+         key_range column_range)
+
+let get_slice_values ks table ?max_keys key_range columns =
+  with_transaction ks
+    (fun tx -> get_slice_values tx table ?max_keys key_range columns)
+
+let get_columns ks table ?max_columns ?decode_timestamps key column_range =
+  with_transaction ks
+    (fun tx -> get_columns tx table ?max_columns ?decode_timestamps key column_range)
+
+let get_column_values ks table key columns =
+  with_transaction ks
+    (fun tx -> get_column_values tx table key columns)
+
+let get_column ks table key column =
+  with_transaction ks (fun tx -> get_column tx table key column)
+
+let put_columns ks table key columns =
+  with_transaction ks (fun tx -> put_columns tx table key columns)
+
+let delete_columns ks table key columns =
+  with_transaction ks (fun tx -> delete_columns tx table key columns)
+
+let delete_key ks table key =
+  with_transaction ks (fun tx -> delete_key tx table key)
+
+let dump ks ?format ?only_tables ?offset () =
+  with_transaction ks (fun tx -> dump tx ?format ?only_tables ?offset ())
+
+let load ks data = with_transaction ks (fun tx -> load tx data)
+
+let read_committed_transaction ks f =
+  read_committed_transaction ks (fun _ -> f ks)
+
+let repeatable_read_transaction ks f =
+  repeatable_read_transaction ks (fun _ -> f ks)

@@ -68,35 +68,35 @@ sig
   val keyspace_name : keyspace -> string
   val keyspace_id : keyspace -> int
 
+  (** List the tables that contained data at the time the outermost
+    * transaction began. *)
   val list_tables : keyspace -> table list Lwt.t
 
   (** @return approximate size on disk of the data for the given table. *)
   val table_size_on_disk : keyspace -> table -> Int64.t Lwt.t
 
+  (** @return approximate size on disk of the data for the given key range in
+    * the specified table. *)
   val key_range_size_on_disk :
     keyspace -> ?first:string -> ?up_to:string -> table -> Int64.t Lwt.t
 
   (** {3 Transactions} *)
-  type transaction
+  val read_committed_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
-  val read_committed_transaction :
-    keyspace -> (transaction -> 'a Lwt.t) -> 'a Lwt.t
-
-  val repeatable_read_transaction :
-    keyspace -> (transaction -> 'a Lwt.t) -> 'a Lwt.t
+  val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   (** {3 Read operations} *)
 
   (** Return up to [max_keys] keys (default: [max_int]) in the given range. *)
   val get_keys :
-    transaction -> table ->
+    keyspace -> table ->
     ?max_keys:int ->
     key_range -> string list Lwt.t
 
   (** Count the keys in the given range: [count_keys tx table range] is
     * functionality equivalent to [get_keys tx table range >|= List.length]
     * but somewhat faster, by a constant factor, and more memory-efficient. *)
-  val count_keys : transaction -> table -> key_range -> Int64.t Lwt.t
+  val count_keys : keyspace -> table -> key_range -> Int64.t Lwt.t
 
   (** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
     *  key_range column_range] returns a data slice corresponding to the keys
@@ -107,7 +107,7 @@ sig
     * @param decode_timestamp whether to decode the timestamp (default: false)
     *  *)
   val get_slice :
-    transaction -> table ->
+    keyspace -> table ->
     ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
     key_range -> column_range -> slice Lwt.t
 
@@ -119,7 +119,7 @@ sig
     * * it is specified in a [Keys l] range
     * * it exists in the given [Key_range r] range *)
   val get_slice_values :
-    transaction -> table ->
+    keyspace -> table ->
     ?max_keys:int ->
     key_range -> column_name list ->
     (key option * (key * string option list) list) Lwt.t
@@ -127,7 +127,7 @@ sig
   (** @return [Some last_column_name, column_list] if any column exists for the
     * selected key, [None] otherwise. *)
   val get_columns :
-    transaction -> table ->
+    keyspace -> table ->
     ?max_columns:int -> ?decode_timestamps:bool ->
     key -> column_range ->
     (column_name * (column list)) option Lwt.t
@@ -136,37 +136,37 @@ sig
     * the given [columns] (if existent). If [key] doesn't exist (that is, it has
     * got no associated columns), all the values will be [None]. *)
   val get_column_values :
-    transaction -> table ->
+    keyspace -> table ->
     key -> column_name list ->
     string option list Lwt.t
 
   val get_column :
-    transaction -> table ->
+    keyspace -> table ->
     key -> column_name -> (string * timestamp) option Lwt.t
 
   (** {3} Write operations *)
 
   val put_columns :
-    transaction -> table -> key -> column list ->
+    keyspace -> table -> key -> column list ->
     unit Lwt.t
 
   val delete_columns :
-    transaction -> table -> key -> column_name list -> unit Lwt.t
+    keyspace -> table -> key -> column_name list -> unit Lwt.t
 
-  val delete_key : transaction -> table -> key -> unit Lwt.t
+  val delete_key : keyspace -> table -> key -> unit Lwt.t
 
   (** {3} Backup *)
   type backup_cursor
 
   val dump :
-    transaction ->
+    keyspace ->
     ?format:backup_format ->
     ?only_tables:table list ->
     ?offset:backup_cursor -> unit ->
     (string * backup_cursor option) option Lwt.t
 
   (** [load tx data] returns [false] if the data is in an unknown format. *)
-  val load : transaction -> string -> bool Lwt.t
+  val load : keyspace -> string -> bool Lwt.t
 end
 
 module type BACKUP_SUPPORT =
