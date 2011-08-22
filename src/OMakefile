@@ -17,9 +17,15 @@ OBJECTS[] =
   protocol_client
   protocol_server
   protocol_payload
+  repl_common
+  repl_gram
+  repl_lex
+  ob_repl
   request
   storage
   string_util
+
+OCamlGeneratedFiles(repl_gram.ml repl_gram.mli repl_lex.ml)
 
 request.ml: request.proto ./libs/extprot/extprotc
 	./libs/extprot/extprotc $<
@@ -47,6 +53,7 @@ section
     OCamlProgram(obigstore, run_server)
     OCamlProgram(ob_dump, ob_dump)
     OCamlProgram(ob_load, ob_load)
+    OCamlProgram(ob_repl, ob_repl)
 
     toplevel: libs/ocaml-leveldb/src/leveldb.cma \
 	      libs/extprot/runtime/extprot.cma \
@@ -61,6 +68,6 @@ section
 		obigstore.cma \
 		-linkpkg -thread
 
-.DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE)
+.DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE) ob_repl$(EXE)
 
 
