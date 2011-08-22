@@ -125,7 +125,7 @@ struct
     let rec read_from tx first =
       lwt (last_key, l) =
         D.get_slice tx "dummy" ~max_keys ~max_columns
-          (DM.Key_range { DM.first; up_to = None })
+          (DM.Key_range { DM.first; up_to = None; reverse = false; })
           DM.All_columns in
       let len = List.length l in
         n_keys := !n_keys + len;

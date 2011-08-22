@@ -35,10 +35,11 @@ module Run_test
 struct
   let string_of_key_range = function
       DM.Keys l -> sprintf "Keys %s" (string_of_list (sprintf "%S") l)
-    | DM.Key_range { DM.first; up_to } ->
-        sprintf "Key_range { first: %s; up_to: %s }"
+    | DM.Key_range { DM.first; up_to; reverse; } ->
+        sprintf "Key_range { first: %s; up_to: %s; reverse: %b; }"
           (string_of_option (sprintf "%S") first)
           (string_of_option (sprintf "%S") up_to)
+          reverse
 
   let string_of_column c =
     sprintf "{ name = %S; data = %S; }" c.DM.name c.DM.data
@@ -68,15 +69,18 @@ struct
     let up_to = match last with
         None -> None
       | Some l -> Some (l ^ "\000")
-    in DM.Key_range { DM.first; up_to; }
+    in DM.Key_range { DM.first; up_to; reverse = false; }
 
-  let col_range ?first ?last ?up_to () =
+  let rev_key_range ?first ?up_to () =
+    DM.Key_range { DM.first; up_to; reverse = true; }
+
+  let col_range ?(reverse = false) ?first ?last ?up_to () =
     let up_to = match up_to with
         Some _ as x -> x
       | None -> match last with
             None -> None
           | Some x -> Some (x ^ "\000")
-    in DM.Column_range { DM.first; up_to; }
+    in DM.Column_range { DM.first; up_to; reverse; }
 
   let put_slice ks tbl l =
     D.read_committed_transaction ks
@@ -323,6 +327,42 @@ struct
            get_key_range ks1 "tbl1" ~first:"e" >|=
              aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
+  let test_get_keys_reverse_ranges db =
+    lwt ks = D.register_keyspace db "test_get_keys_ranges" in
+
+    let expect ?first ?up_to expected =
+      lwt actual = D.get_keys ks "tbl" (rev_key_range ?first ?up_to ()) in
+      let range = rev_key_range ?first ?up_to () in
+        aeq_string_list
+          ~msg:(sprintf "range %s" (string_of_key_range range))
+          expected actual;
+        return ()
+    in
+      expect [] >>
+      put_slice ks "tbl"
+        ["a", ["x", ""]; "c", ["c", ""]; "d", ["d", ""]] >>
+      D.read_committed_transaction ks
+        (fun tx ->
+           expect [ "d"; "c"; "a"] >>
+           expect ~up_to:"b" ["d"; "c"] >>
+           expect ~up_to:"a" ["d"; "c"; "a"] >>
+           expect ~first:"c" ["a"] >>
+           put_slice ks "tbl" ["e", ["ee", "eee"]] >>
+           D.delete_columns tx "tbl" "d" ["d"] >>
+           expect ~up_to:"b" ["e"; "c"] >>
+           expect ~first:"e" ["c"; "a"] >>
+           expect ~first:"e" ~up_to:"b" ["c"] >>
+           expect ~first:"e" ~up_to:"a" ["c"; "a"] >>
+           expect ~first:"e" ~up_to:"e" []) >>
+      (* now after commit *)
+      D.read_committed_transaction ks
+        (fun tx ->
+           expect ~up_to:"b" ["e"; "c"] >>
+           expect ~first:"e" ["c"; "a"] >>
+           expect ~first:"e" ~up_to:"b" ["c"] >>
+           expect ~first:"e" ~up_to:"a" ["c"; "a"] >>
+           expect ~first:"e" ~up_to:"e" [])
+
   let test_get_keys_with_del_put db =
     lwt ks = D.register_keyspace db "test_get_keys_with_del_put" in
     let key_name i = sprintf "%03d" i in
@@ -487,6 +527,30 @@ struct
                 ["a", "v2", [ "k", "kk"; "v2", "v2"; ];
                  "c", "w", [ "w", "ww" ]]))
 
+  let test_get_slice_discrete_rev_col_range db =
+    lwt ks = D.register_keyspace db "test_get_slice_discrete_rev_col_range" in
+
+    let expect tx =
+      D.get_slice tx "tbl"
+        (DM.Keys ["08"; "01"])
+        (col_range ~reverse:true ~first:"8" ~up_to:"6" ()) >|=
+      aeq_slice (Some "08", ["01", "6", ["7", ""; "6", ""];
+                             "08", "6", ["7", ""; "6", ""]]) >>
+      D.get_slice tx "tbl" ~max_columns:1
+        (DM.Keys ["08"; "01"])
+        (col_range ~reverse:true ~first:"8" ~up_to:"6" ()) >|=
+      aeq_slice (Some "08", ["01", "7", ["7", ""];
+                             "08", "7", ["7", ""]])
+    in
+        D.read_committed_transaction ks
+          (fun tx ->
+             put_slice ks "tbl"
+               (List.init 10
+                  (fun i -> (sprintf "%02d" i,
+                             List.init 10 (fun i -> string_of_int i, "")))) >>
+             expect tx) >>
+        D.read_committed_transaction ks expect
+
   let test_get_slice_key_range db =
     lwt ks = D.register_keyspace db "test_get_slice_key_range" in
     let all = DM.All_columns in
@@ -512,6 +576,41 @@ struct
                (Some "c",
                 [ "b", "k1", [ "k1", "kk1" ];
                   "c", "w", [ "w", "ww" ] ]))
+
+  let test_get_slice_key_range_reverse db =
+    lwt ks = D.register_keyspace db "test_get_slice_key_range_reverse" in
+    let all = DM.All_columns in
+    let expect1 tx =
+      let e1 =
+        aeq_slice
+          (Some "a",
+           [
+             "b", "k1", [ "v", "vv1"; "k1", "kk1"; ];
+             "a", "k", [ "v", "vv"; "k", "kk"; ];])
+      in
+        D.get_slice tx "tbl"
+          (rev_key_range ~first:"c" ~up_to:"" ()) all >|= e1 >>
+        D.get_slice tx "tbl" (rev_key_range ~first:"c" ()) all >|= e1 >>
+        D.get_slice tx "tbl" (rev_key_range ~up_to:"b" ())
+          (DM.Columns ["k1"; "w"]) >|=
+          aeq_slice (Some "b", [ "c", "w", [ "w", "ww" ];
+                                 "b", "k1", [ "k1", "kk1" ];]) >>
+        (* reverse key range, normal col_range *)
+        D.get_slice tx "tbl"
+          (rev_key_range ~first:"b" ())
+          (col_range ~first:"a" ~up_to:"x" ()) >|=
+          aeq_slice (Some "a", [ "a", "k", [ "v", "vv"; "k", "kk" ] ])
+    in
+      D.read_committed_transaction ks
+        (fun tx ->
+           put_slice ks "tbl"
+             [
+               "a", ["k", "kk"; "v", "vv"];
+               "b", ["k1", "kk1"; "v", "vv1"];
+               "c", ["k2", "kk2"; "w", "ww"]
+             ] >>
+           expect1 tx) >>
+      D.read_committed_transaction ks expect1
 
   let test_get_slice_max_keys db =
     lwt ks = D.register_keyspace db "test_get_slice_max_keys" in
@@ -607,11 +706,15 @@ struct
       D.get_slice tx "tbl" ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
         (col_range ~first:"5" ~last:"6" ()) >|=
-      aeq_slice (Some "02", ["02", "6", ["5", ""; "6", ""]]) >>
+        aeq_slice (Some "02", ["02", "6", ["5", ""; "6", ""]]) >>
+      D.get_slice tx "tbl" ~max_keys:1
+        (key_range ~first:"02" ~last:"03" ())
+        (col_range ~reverse:true ~first:"7" ~up_to:"5" ()) >|=
+        aeq_slice (Some "02", ["02", "6", ["5", ""; "6", ""]]) >>
       D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
         (key_range ~first:"02" ())
         (col_range ~first:"5" ~last:"6" ()) >|=
-      aeq_slice (Some "02", ["02", "5", ["5", ""]]) >>
+        aeq_slice (Some "02", ["02", "5", ["5", ""]]) >>
       D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
         (key_range ~first:"02" ())
         (col_range ~first:"50" ~last:"6" ()) >|=
@@ -619,7 +722,21 @@ struct
       D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
         (key_range ~first:"02" ())
         (col_range ~first:"7" ~last:"6" ()) >|=
-          aeq_slice (None, [])
+          aeq_slice (None, []) >>
+      D.get_slice tx "tbl" ~max_keys:1 ~max_columns:1
+        (rev_key_range ~first:"02" ())
+        (col_range ~first:"6" ~up_to:"7" ()) >|=
+          aeq_slice (Some "01", ["01", "6", ["6", ""]]) >>
+      D.get_slice tx "tbl" ~max_keys:2 ~max_columns:1
+        (rev_key_range ~first:"02" ())
+        (col_range ~reverse:true ~first:"7" ~up_to:"6" ()) >|=
+          aeq_slice (Some "00", ["01", "6", ["6", ""];
+                                 "00", "6", ["6", ""]]) >>
+      D.get_slice tx "tbl" ~max_keys:3 ~max_columns:3
+        (rev_key_range ~first:"02" ())
+        (col_range ~reverse:true ~up_to:"8" ()) >|=
+          aeq_slice (Some "00", ["01", "8", ["9", ""; "8", ""];
+                                 "00", "8", ["9", ""; "8", ""]])
     in
       D.read_committed_transaction ks
         (fun tx ->
@@ -849,12 +966,15 @@ struct
       "list tables", test_list_tables;
       "list tables with diff keyspaces", test_list_tables_with_keyspaces;
       "get_keys ranges", test_get_keys_ranges;
+      "get_keys reverse ranges", test_get_keys_reverse_ranges;
       "get_keys discrete keys", test_get_keys_discrete;
       "get_keys honors max_keys", test_get_keys_max_keys;
       "get_keys with delete/put", test_get_keys_with_del_put;
       "count_keys", test_count_keys;
       "get_slice discrete", test_get_slice_discrete;
+      "get_slice discrete reverse col range", test_get_slice_discrete_rev_col_range;
       "get_slice key range", test_get_slice_key_range;
+      "get_slice reverse key range", test_get_slice_key_range_reverse;
       "get_slice honors max_keys", test_get_slice_max_keys;
       "get_slice nested transactions", test_get_slice_nested_transactions;
       "get_slice in open transaction", test_get_slice_read_tx_data;

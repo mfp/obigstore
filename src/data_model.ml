@@ -29,18 +29,34 @@ and column_name = string
 
 and timestamp = No_timestamp | Timestamp of Int64.t
 
-type key_data = { key : key; last_column : string; columns : column list }
+type key_data = {
+  key : key;
+  last_column : string; (** Name of last column in the following list *)
+  columns : column list;
+}
 
 type slice = key option * key_data list (** last_key * data *)
 
-(** Range representing elements between [first] (inclusive) and [up_to]
-  * (exclusive). If [first] is not provided, the range starts with the first
-  * available element; likewise, if [up_to] is not provided, the elements
-  * until the last one are selected. *)
+(** Range representing elements between [first] (inclusive if reverse is
+  * false, exclusive otherwise) and [up_to]
+  * (exclusive if reverse is false, inclusive otherwise). If [first] is not
+  * provided, the range starts with the first available element (last, if
+  * [reverse] is [true]); likewise, if [up_to] is not provided, the elements
+  * until the last (first, if [reverse is [true]) one are selected.
+  *
+  * Summarizing:
+  *
+  * * if reverse is false, elements x such that  [first <= x < up_to]
+  * * if reverse is true, elements x such that   [first > x >= up_to]
+  *
+  * where a side of the inequality disappears if the corresponding value
+  * ([first] or [up_to]) is [None].
+  * *)
 type range =
   {
     first : string option;
     up_to : string option;
+    reverse : bool;
   }
 
 type key_range =
@@ -102,6 +118,17 @@ sig
     *  key_range column_range] returns a data slice corresponding to the keys
     * included in the [key_range] which contain at least one of the columns
     * specified in the [column_range].
+    *
+    * If the key range is [Keys l] and the column range is a [Column_range]
+    * the columns will be returned:
+    * * in lexicographic order, if the column range is not reverse
+    * * in reverse lexicographic order, if the column range is reverse
+    *
+    * For the sake of efficiency, if the key range is [Key_range _], the
+    * columns are selected:
+    * * in lexicographic order, if the key range is not [reverse]
+    * * in reverse lexicographic order, if the key range is [reverse]
+    *
     * @param max_keys return no more than [max_keys] keys
     * @param max_columns return no more than [max_columns] columns per key
     * @param decode_timestamp whether to decode the timestamp (default: false)

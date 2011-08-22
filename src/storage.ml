@@ -466,7 +466,12 @@ type 'a fold_result =
   | Skip_key_with of 'a
   | Finish_fold of 'a
 
-let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_to_key =
+(* fold over cells whose key is in the range
+ * { reverse; first = first_key; up_to = up_to_key }
+ * with the semantics defined in Data_model
+ * *)
+let fold_over_data_aux it tx table_name f acc ?(first_column="")
+      ~reverse ~first_key ~up_to_key =
   let buf = ref "" in
   let table_r = ref (-1) in
   let key_buf = ref "" and key_len = ref 0 in
@@ -476,13 +481,18 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
   let timestamp_buf = Datum_encoding.make_timestamp_buf () in
   let some_timestamp_buf = Some timestamp_buf in
 
-  let at_or_past_upto_key = match up_to_key with
-      None -> (fun () -> false)
-    | Some k ->
+  let past_limit = match reverse, up_to_key with
+      _, None -> (fun () -> false)
+    | false, Some k -> (* normal *)
         (fun () ->
            String_util.cmp_substrings
              !key_buf 0 !key_len
-             k 0 (String.length k) >= 0) in
+             k 0 (String.length k) >= 0)
+    | true, Some k -> (* reverse *)
+        (fun () ->
+           String_util.cmp_substrings
+             !key_buf 0 !key_len
+             k 0 (String.length k) < 0) in
 
   let next_key () =
     let s = String.create (!key_len + 1) in
@@ -513,8 +523,8 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
           (* check that we're still in the table *)
           if !table_r <> !table_id then
             acc
-          (* check if we're at or past up_to *)
-          else if at_or_past_upto_key () then
+          (* check if we're past the limit *)
+          else if past_limit () then
             acc
           else begin
             let r = f acc it ~key_buf:!key_buf ~key_len:!key_len
@@ -523,14 +533,25 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
             in
               (* seeking to next datum/key/etc *)
               begin match r with
-                  Continue | Continue_with _ -> IT.next it;
-                | Skip_key | Skip_key_with _ ->
+                  Continue | Continue_with _ when not reverse -> IT.next it
+                | Continue | Continue_with _ (* reverse *) -> IT.prev it
+                | Skip_key | Skip_key_with _ when not reverse ->
                     Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
                       ~table:!table_id ~key:(next_key ())
                       ~column:"" ~timestamp:Int64.min_int;
                     IT.seek it
                       (Bytea.unsafe_string datum_key_buf) 0
                       (Bytea.length datum_key_buf)
+                | Skip_key | Skip_key_with _ (* when reverse *) ->
+                    (* we jump to the first datum for the current key, then go
+                     * one back *)
+                    Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
+                      ~table:!table_id ~key:(String.sub !key_buf 0 !key_len)
+                      ~column:"" ~timestamp:Int64.max_int;
+                    IT.seek it
+                      (Bytea.unsafe_string datum_key_buf) 0
+                      (Bytea.length datum_key_buf);
+                    if IT.valid it then IT.prev it
                 | Finish_fold _ -> ()
               end;
               match r with
@@ -545,34 +566,59 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="") ~first_key ~up_
       Some table ->
         table_id := table;
         (* jump to first entry *)
-        let first_datum_key =
-          Datum_encoding.encode_datum_key_to_string tx.ks.ks_id ~table
-            ~key:(Option.default "" first_key) ~column:first_column
-            ~timestamp:Int64.min_int
-        in
-          IT.seek it first_datum_key 0 (String.length first_datum_key);
-          do_fold_over_data acc
+        if not reverse then begin
+          let first_datum_key =
+            Datum_encoding.encode_datum_key_to_string tx.ks.ks_id ~table
+              ~key:(Option.default "" first_key) ~column:first_column
+              ~timestamp:Int64.min_int
+          in
+            IT.seek it first_datum_key 0 (String.length first_datum_key);
+        end else begin
+          match first_key with
+              None ->
+                (* we go to the first datum of the next table, then back *)
+                let datum_key =
+                  Datum_encoding.encode_datum_key_to_string tx.ks.ks_id
+                    ~table:(table + 1)
+                    ~key:"" ~column:"" ~timestamp:Int64.min_int
+                in
+                  IT.seek it datum_key 0 (String.length datum_key);
+                  if IT.valid it then IT.prev it
+            | Some k ->
+                (* we go to the datum for the key, then back (it's exclusive) *)
+                let datum_key =
+                  Datum_encoding.encode_datum_key_to_string tx.ks.ks_id
+                    ~table
+                    ~key:k ~column:"" ~timestamp:Int64.min_int
+                in
+                  IT.seek it datum_key 0 (String.length datum_key);
+                  if IT.valid it then IT.prev it
+        end;
+        do_fold_over_data acc
     | None -> (* unknown table *) acc
 
-let fold_over_data_aux it tx table f acc ?first_column ~first_key ~up_to_key =
+let fold_over_data_aux
+      it tx table f acc ?first_column ~reverse ~first_key ~up_to_key =
   detach_ks_op tx.ks
     (fun () ->
-       fold_over_data_aux it tx table f acc ?first_column ~first_key ~up_to_key)
+       fold_over_data_aux it tx table f acc ?first_column
+         ~reverse ~first_key ~up_to_key)
     ()
 
-let fold_over_data tx table f ?first_column acc ~first_key ~up_to_key =
+let fold_over_data tx table f ?first_column acc ~reverse ~first_key ~up_to_key =
   match tx.iter_pool with
       None ->
         let it = RA.iterator tx.access in
           try_lwt
-            fold_over_data_aux it tx table f acc ?first_column ~first_key ~up_to_key
+            fold_over_data_aux it tx table f acc ?first_column
+            ~reverse ~first_key ~up_to_key
           finally
             IT.close it;
             return ()
     | Some pool ->
         Lwt_pool.use pool
           (fun it -> fold_over_data_aux it tx table f acc ?first_column
-                       ~first_key ~up_to_key)
+                       ~reverse ~first_key ~up_to_key)
 
 let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
     Keys l ->
@@ -590,10 +636,12 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
            in map_f s)
         ()
 
-  | Key_range { first; up_to } ->
+  | Key_range { first; up_to; reverse; } ->
       (* we recover all the keys added in the transaction *)
       let s = M.find_default S.empty table tx.added_keys in
-      let s = S.subset ?first ?up_to s in
+      let s =
+        let first, up_to = if reverse then (up_to, first) else (first, up_to) in
+          S.subset ?first ?up_to s in
       (* now s contains the added keys in the wanted range *)
 
       let is_key_deleted =
@@ -625,14 +673,21 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
           end
         end
       in
-        fold_over_data tx table fold_datum (init_f s) ~first_key:first ~up_to_key:up_to
+        fold_over_data tx table fold_datum (init_f s)
+          ~reverse ~first_key:first ~up_to_key:up_to
 
 let get_keys tx table ?(max_keys = max_int) range =
-  get_keys_aux
-    (fun s -> s)
-    (fun s -> s)
-    (fun s key_buf key_len -> S.add (String.sub key_buf 0 key_len) s)
-    tx table ~max_keys range >|= S.to_list >|= List.take max_keys
+  lwt keys_in_lexicographic_order =
+    get_keys_aux
+      (fun s -> s)
+      (fun s -> s)
+      (fun s key_buf key_len -> S.add (String.sub key_buf 0 key_len) s)
+      tx table ~max_keys range >|= S.to_list in
+  let all_keys_in_wanted_order =
+    match range with
+        Key_range { reverse = true; } -> List.rev keys_in_lexicographic_order
+      | _ -> keys_in_lexicographic_order
+  in return (List.take max_keys all_keys_in_wanted_order)
 
 let count_keys tx table range =
   let s = ref S.empty in
@@ -705,13 +760,14 @@ let get_slice_aux
                  else String.sub buf 0 len
                in S.mem c s)
         end
-    | Column_range r ->
-        let cmp_first = match r.first with
+    | Column_range { first; up_to; reverse; } ->
+        let first, up_to = if reverse then (up_to, first) else (first, up_to) in
+        let cmp_first = match first with
             None -> (fun ~buf ~len -> true)
           | Some x ->
               (fun ~buf ~len ->
                  String_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
-        let cmp_up_to = match r.up_to with
+        let cmp_up_to = match up_to with
             None -> (fun ~buf ~len -> true)
           | Some x ->
               (fun ~buf ~len ->
@@ -726,6 +782,9 @@ let get_slice_aux
         List.filter
           (fun k -> not (S.mem k (M.find_default S.empty table tx.deleted_keys)))
           (List.sort String.compare l) in
+      let reverse = match column_range with
+          Column_range { reverse } -> reverse
+        | _ -> false in
       lwt key_data_list, _ =
         Lwt_list.fold_left_s
           (fun (key_data_list, keys_so_far) key ->
@@ -759,8 +818,13 @@ let get_slice_aux
                  end in
 
                lwt rev_cols1 =
-                 fold_over_data tx table fold_datum []
-                     ~first_key:(Some key) ~up_to_key:(Some (key ^ "\000")) in
+                 let first_key, up_to_key =
+                   if reverse then
+                     (Some (key ^ "\000"), Some key)
+                   else
+                     (Some key, Some (key ^ "\000"))
+                 in fold_over_data tx table fold_datum []
+                      ~reverse ~first_key ~up_to_key in
 
                let rev_cols2 =
                  M.fold
@@ -772,12 +836,18 @@ let get_slice_aux
                     M.find_default M.empty table |> M.find_default M.empty key)
                    [] in
 
-               let cols =
-                 merge_rev
-                   (fun c1 c2 -> String.compare c1.name c2.name)
-                   rev_cols1 rev_cols2
+               (* rev_cols2 is G-to-S, want S-to-G if ~reverse *)
+               let rev_cols2 = if reverse then List.rev rev_cols2 else rev_cols2 in
 
-               in match postproc_keydata (key, List.rev cols) with
+               let cmp_cols =
+                 if reverse then
+                   (fun c1 c2 -> String.compare c2.name c1.name)
+                 else
+                   (fun c1 c2 -> String.compare c1.name c2.name) in
+
+               let cols = merge_rev cmp_cols rev_cols1 rev_cols2 in
+
+                 match postproc_keydata (key, List.rev cols) with
                    None -> return (key_data_list, keys_so_far)
                  | Some x -> return (x :: key_data_list, keys_so_far + 1))
           ([], 0) l in
@@ -786,7 +856,7 @@ let get_slice_aux
         | [] -> None
       in return (last_key, List.rev key_data_list)
 
-    | Key_range { first; up_to } ->
+    | Key_range { first; up_to; reverse; } ->
         let first_pass = ref true in
         let keys_so_far = ref 0 in
         let prev_key = Bytea.create 13 in
@@ -865,14 +935,12 @@ let get_slice_aux
         lwt rev_key_data_list1 =
           lwt l1, d1 =
             fold_over_data tx table fold_datum ([], [])
-              ~first_key:first ~up_to_key:up_to
+              ~reverse ~first_key:first ~up_to_key:up_to
           in match d1 with
               [] when not !first_pass && keep_columnless_keys ->
                 return ((Bytea.contents prev_key, d1) :: l1)
             | [] -> return l1
             | cols -> return ((Bytea.contents prev_key, cols) :: l1) in
-
-        (* rev_key_data_listN : (key * column list) list   cols also in rev order *)
 
         let rev_key_data_list2 =
           M.fold
@@ -886,23 +954,49 @@ let get_slice_aux
                       else l)
                    key_data_in_mem
                    []
-               in (key, cols) :: l)
-            (M.submap ?first ?up_to (M.find_default M.empty table tx.added))
+               in (key, if reverse then List.rev cols else cols) :: l)
+            (let first, up_to =
+               if reverse then (up_to, first) else (first, up_to)
+             in M.submap ?first ?up_to (M.find_default M.empty table tx.added))
             [] in
 
+        (* if the key range was reverse,
+         * rev_key_data_list1 : (key * column list) list
+         * holds the keys in normal order (smaller to greater),
+         * otherwise in reverse order (greater to smaller).
+         * rev_key_data_list2 is always in reverse order.
+         * *)
+
         let key_data_list1 = List.rev rev_key_data_list1 in
-        let key_data_list2 = List.rev rev_key_data_list2 in
+        let key_data_list2 =
+          if not reverse then
+            List.rev rev_key_data_list2
+          else rev_key_data_list2 in
+
+        (* now both are in the desired order *)
+
+        let cmp_keys =
+          if reverse then
+            (fun (k1, _) (k2, _) -> - String.compare k1 k2)
+          else
+            (fun (k1, _) (k2, _) -> String.compare k1 k2) in
+
+        let cmp_cols c1 c2 = String.compare c1.name c2.name in
+
+        let merge =
+          if reverse then
+            (* both are S-to-G *)
+            (fun cols1 cols2 -> List.merge cmp_cols cols1 cols2)
+          else (* both are G-to-S *)
+            (fun cols1 cols2 -> merge_rev cmp_cols cols1 cols2) in
 
         let rev_key_data_list =
           filter_map_merge
-            (fun (k1, _) (k2, _) -> String.compare k1 k2)
+            cmp_keys
             postproc_keydata
             (fun (k, rev_cols1) (_, rev_cols2) ->
-               let cols =
-                 merge_rev
-                   (fun c1 c2 -> String.compare c1.name c2.name)
-                   rev_cols1 rev_cols2
-               in (k, List.rev cols))
+               let cols = merge rev_cols1 rev_cols2 in
+                 (k, List.rev cols))
             ~limit:max_keys key_data_list1 key_data_list2 in
 
         let last_key = match rev_key_data_list with
@@ -1064,6 +1158,7 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
     | curr_table :: tl as tables ->
         lwt _ =
           fold_over_data tx curr_table fold_datum curr_table
+            ~reverse:false
             ~first_key:curr_key ?first_column:curr_col ~up_to_key:None
         in
           if got_enough_data () then begin

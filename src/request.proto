@@ -17,6 +17,7 @@ type range =
     { 
       first : opt<string>;
       up_to : opt<string>;
+      reverse : bool;
     }
   options "ocaml.type_equals" = "Data_model.range"
 

@@ -265,7 +265,7 @@ struct
     sync_request_ks ks
       (Key_range_size_on_disk
          { Key_range_size_on_disk.keyspace = ks.ks_id; table;
-           range = { first; up_to; } }; )
+           range = { first; up_to; reverse = false; } }; )
       P.read_key_range_size_on_disk
 
   let wait_for_pending_responses t =
