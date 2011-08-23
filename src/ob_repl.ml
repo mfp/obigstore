@@ -100,49 +100,45 @@ struct
 
   let quick_ref =
     "\
-     KEYSPACES                 List keyspaces\n\
-     TABLES                    List tables in present keyspace\n\
+     KEYSPACES;                 List keyspaces\n\
+     TABLES;                    List tables in present keyspace\n\
      \n\
-     SIZE table                Show approx size of table\n\
-     SIZE table[x:y]           Show approx size of table between keys x and y\n\
+     SIZE table;                Show approx size of table\n\
+     SIZE table[x:y];           Show approx size of table between keys x and y\n\
      \n\
-     BEGIN                     Start a transaction block\n\
-     COMMIT                    Commit current transaction\n\
-     ABORT                     Abort current transaction\n\
+     BEGIN;                     Start a transaction block\n\
+     COMMIT;                    Commit current transaction\n\
+     ABORT;                     Abort current transaction\n\
 \n\
-     COUNT table               Count keys in table\n\
-     COUNT table[x:y]          Count keys in table between keys x and y\n\
+     COUNT table;               Count keys in table\n\
+     COUNT table[x:y];          Count keys in table between keys x and y\n\
 \n\
-     GET KEYS table            Get all keys in table\n\
-     GET KEYS table[/10]       Get up to 10 keys from table\n\
-     GET KEYS table[~/10]      Get up to 10 keys from table, in reverse order\n\
-     GET KEYS table[k1:k2/10]  Get up to 10 keys from table between k1 and k2\n\
-     GET KEYS table[k2~k1/10]  Same as above in reverse order\n\
+     GET KEYS table;            Get all keys in table\n\
+     GET KEYS table[/10];       Get up to 10 keys from table\n\
+     GET KEYS table[~/10];      Get up to 10 keys from table, in reverse order\n\
+     GET KEYS table[k1:k2/10];  Get up to 10 keys from table between k1 and k2\n\
+     GET KEYS table[k2~k1/10];  Same as above in reverse order\n\
 \n\
-     GET table[key]            Get all columns for key in table\n\
-     GET table[key][c1,c2]     Get columns c1 and c2 from key in table\n\
-     GET table[k1:k2/10]       Get all columns for up to 10 keys between k1 and k2\n\
-     GET table[k2~k1/10]       Similar to above in reverse order\n\
+     GET table[key];            Get all columns for key in table\n\
+     GET table[key][c1,c2];     Get columns c1 and c2 from key in table\n\
+     GET table[k1:k2/10];       Get all columns for up to 10 keys between k1 and k2\n\
+     GET table[k2~k1/10];       Similar to above in reverse order\n\
      \n\
-     PUT table[key][c1=\"v1\", c2=\"v2\"]
-                          Put columns c1 and c2 into given key in table\n\
+     PUT table[key][c1=\"v1\", c2=\"v2\"];
+                           Put columns c1 and c2 into given key in table\n\
 \n\
-     DELETE table[key][col]    Delete column col for given key in table\n\
-     DELETE table[key]         Delete all columns for given key in table"
+     DELETE table[key][col];    Delete column col for given key in table\n\
+     DELETE table[key];         Delete all columns for given key in table"
 
   let help_message = function
-      `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" cmd h
+      `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" (cmd ^ ";") h
     | `Exactly (cmd, _, _, (args, h))
     | `At_least (cmd, _, _, (args, h)) ->
-        sprintf ".%-24s  %s" (sprintf "%s %s" cmd args) h
+        sprintf ".%-24s  %s" (sprintf "%s %s;" cmd args) h
 
   let show_directive_help d =
-    let cmd = match d with
-        `Ignore_args (s, _, _) | `Exactly (s, _, _, _)
-      | `At_least (s, _, _, _) -> s
-    in
-      puts "usage:";
-      puts "%s %s" cmd (help_message d)
+    puts "usage:";
+    puts "%s" (help_message d)
 
   let eval_directive cmd args =
     try
@@ -181,7 +177,7 @@ struct
     | cmd :: _ ->
         try
           puts (Hashtbl.find cmd_desc_tbl cmd)
-        with Not_found -> puts "Unknown command %s" cmd
+        with Not_found -> puts "No help available for command %s" cmd
 
   let () = at_least 0
              ~name:"help"
