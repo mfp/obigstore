@@ -47,20 +47,28 @@ let dump db ~keyspace ~only_tables och =
   match_lwt D.get_keyspace db keyspace with
       None -> return ()
     | Some ks ->
-        D.repeatable_read_transaction ks
-          (fun tx ->
-             let rec loop_dump offset progress =
-               Progress_report.update progress (Lwt_io.position och) >>
-               match_lwt D.dump tx ?only_tables ?offset () with
-                   None -> return ()
-                 | Some (data, cursor) ->
-                     Lwt_io.LE.write_int och (String.length data) >>
-                     Lwt_io.write och data >>
-                     match cursor with
-                       | Some _ -> loop_dump cursor progress
-                       | None -> return ()
-             in Progress_report.with_progress_report Lwt_io.stderr
-                    (loop_dump None))
+        lwt all_tables = match only_tables with
+            Some l -> return l
+          | None -> D.list_tables ks in
+        lwt approx_size =
+          Lwt_list.fold_left_s
+            (fun s table -> D.table_size_on_disk ks table >|= Int64.add s)
+            0L all_tables
+        in
+          D.repeatable_read_transaction ks
+            (fun tx ->
+               let rec loop_dump offset progress =
+                 Progress_report.update progress (Lwt_io.position och) >>
+                 match_lwt D.dump tx ?only_tables ?offset () with
+                     None -> return ()
+                   | Some (data, cursor) ->
+                       Lwt_io.LE.write_int och (String.length data) >>
+                       Lwt_io.write och data >>
+                       match cursor with
+                         | Some _ -> loop_dump cursor progress
+                         | None -> return ()
+               in Progress_report.with_progress_report ~max:approx_size
+                    Lwt_io.stderr (loop_dump None))
 
 let () =
   Printexc.record_backtrace true;

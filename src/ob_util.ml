@@ -33,6 +33,8 @@ struct
         mutable delta_start : Int64.t;
         mutable curr_speed : string;
         mutable finished : bool;
+        mutable eta_counter : int;
+        mutable avg_speed : int;
       }
 
   let format_size factor n =
@@ -48,21 +50,33 @@ struct
   let format_speed since now delta =
     format_size (1. /. (now -. since)) delta ^ "/second"
 
+  let format_eta t =
+    match t.max with
+      | Some m when t.avg_speed > 0 ->
+          sprintf "ETA: %ds" Int64.(to_int (div m (of_int t.avg_speed)))
+      | _ -> ""
+
   let output t =
     let now = Unix.gettimeofday () in
     lwt () =
       Lwt_io.fprintf t.och
-        " %6.2fs:  %10s  %16s                \r"
+        " %6.2fs:  %10s  %16s  %s              \r"
         (Unix.gettimeofday () -. t.start_time)
         (format_count t)
-        t.curr_speed >>
+        t.curr_speed
+        (format_eta t)
+        >>
       Lwt_io.flush t.och
     in
       if now -. t.delta_start_time > 1.0 then begin
         t.curr_speed <- format_speed t.delta_start_time now
                           Int64.(sub t.curr t.delta_start);
+        t.avg_speed <- (4 * t.avg_speed +
+                          Int64.(to_int (sub t.curr t.delta_start))) /
+                       min 5 (1 + t.eta_counter);
         t.delta_start_time <- now;
         t.delta_start <- t.curr;
+        t.eta_counter <- t.eta_counter + 1;
       end;
       return ()
 
@@ -76,7 +90,8 @@ struct
       {
         och; max;
         start_time = now; delta_start_time = now;
-        curr = 0L; curr_speed = ""; delta_start = 0L; finished = false
+        curr = 0L; curr_speed = ""; delta_start = 0L; finished = false;
+        eta_counter = 0; avg_speed = 0;
       }
     in
       ignore begin try_lwt
@@ -96,7 +111,7 @@ struct
     t.finished <- true;
     let now = Unix.gettimeofday () in
       Lwt_io.fprintf t.och
-        " %6.2fs:  %10s  %16s                \n\n"
+        " %6.2fs:  %10s  %16s            \n\n"
         (now -. t.start_time)
         (format_count t)
         (format_speed t.start_time now t.curr) >>
