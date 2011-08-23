@@ -282,18 +282,25 @@ let execute ks db loop req =
               | n -> [sprintf fmt n] in
             let if_read_cnt_not_zero =
               if_not_zero ~cond:(not (Timing.is_read_count_ignored ())) in
+            let join l = String.concat ", " (List.concat l) in
             let did_what =
-              String.concat ", "
-                (List.concat
-                   [
-                     if_read_cnt_not_zero "read %d keys" d_keys;
-                     if_read_cnt_not_zero "read %d columns" d_cols;
-                     if_not_zero "wrote %d keys" d_put_keys;
-                     if_not_zero "wrote %d columns" d_put_cols;
-                   ])
+              join
+                [
+                  if_read_cnt_not_zero "read %d keys" d_keys;
+                  if_read_cnt_not_zero "read %d columns" d_cols;
+                  if_not_zero "wrote %d keys" d_put_keys;
+                  if_not_zero "wrote %d columns" d_put_cols;
+                ] in
+            let read_col_rate = truncate (float d_cols /. dt) in
+            let write_col_rate = truncate (float d_put_cols /. dt) in
+            let rate_info =
+              join
+                [ if_not_zero "read %d columns/second" read_col_rate;
+                  if_not_zero "wrote %d columns/second" write_col_rate; ]
             in
                print ();
                puts "%s in %8.5fs (sys %8.5fs)" did_what dt sysdt;
+               if rate_info <> "" then puts "%s" rate_info;
                return ()
 
 let () =
