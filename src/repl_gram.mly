@@ -149,6 +149,9 @@ range :
   | LBRACKET opt_id REVRANGE opt_id opt_cond RBRACKET
                  { (Range { Range.first = $2; up_to = $4; reverse = true; },
                          $5) }
+  | LBRACKET opt_cond RBRACKET
+                 { (Range { Range.first = None; up_to = None; reverse = false; },
+                         $2) }
   | LBRACKET id_list opt_cond RBRACKET
                  { (List $2, $3) }
 
