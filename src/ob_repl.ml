@@ -29,7 +29,7 @@ let tx_level = ref 0
 
 module Timing =
 struct
-  let timing = ref false
+  let timing = ref true
 
   (* counters used for .timing *)
   let cnt_keys = ref 0L
