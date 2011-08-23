@@ -98,6 +98,38 @@ struct
   let directive_tbl = Hashtbl.create 13
   let cmd_desc_tbl = Hashtbl.create 13
 
+  let quick_ref =
+    "\
+     KEYSPACES                 List keyspaces\n\
+     TABLES                    List tables in present keyspace\n\
+     \n\
+     SIZE table                Show approx size of table\n\
+     SIZE table[x:y]           Show approx size of table between keys x and y\n\
+     \n\
+     BEGIN                     Start a transaction block\n\
+     COMMIT                    Commit current transaction\n\
+     ABORT                     Abort current transaction\n\
+\n\
+     COUNT table               Count keys in table\n\
+     COUNT table[x:y]          Count keys in table between keys x and y\n\
+\n\
+     GET KEYS table            Get all keys in table\n\
+     GET KEYS table[/10]       Get up to 10 keys from table\n\
+     GET KEYS table[~/10]      Get up to 10 keys from table, in reverse order\n\
+     GET KEYS table[k1:k2/10]  Get up to 10 keys from table between k1 and k2\n\
+     GET KEYS table[k2~k1/10]  Same as above in reverse order\n\
+\n\
+     GET table[key]            Get all columns for key in table\n\
+     GET table[key][c1,c2]     Get columns c1 and c2 from key in table\n\
+     GET table[k1:k2/10]       Get all columns for up to 10 keys between k1 and k2\n\
+     GET table[k2~k1/10]       Similar to above in reverse order\n\
+     \n\
+     PUT table[key][c1=\"v1\", c2=\"v2\"]
+                          Put columns c1 and c2 into given key in table\n\
+\n\
+     DELETE table[key][col]    Delete column col for given key in table\n\
+     DELETE table[key]         Delete all columns for given key in table"
+
   let help_message = function
       `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" cmd h
     | `Exactly (cmd, _, _, (args, h))
@@ -142,7 +174,10 @@ struct
         let l = Hashtbl.fold
                   (fun _ cmd l -> help_message cmd :: l)
                   directive_tbl []
-        in List.iter (puts "%s") (List.sort compare l)
+        in
+          puts "Directives:";
+          List.iter print_endline (List.sort compare l);
+          puts "\nQuick command reference:\n%s" quick_ref
     | cmd :: _ ->
         try
           puts (Hashtbl.find cmd_desc_tbl cmd)
