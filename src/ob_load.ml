@@ -26,6 +26,7 @@ module D = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 let keyspace = ref ""
 let server = ref "127.0.0.1"
 let port = ref 12050
+let file = ref "-"
 
 let usage_message = "Usage: ob_load -keyspace NAME [options]"
 
@@ -35,9 +36,10 @@ let params =
       "-keyspace", Arg.Set_string keyspace, "NAME Dump tables in keyspace NAME.";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+      "-i", Arg.Set_string file, "FILE Load from FILE (default: -)";
     ]
 
-let load db ~keyspace ich =
+let load db ~keyspace ?size ich =
   let region = Lwt_util.make_region 10 in (* max parallel reqs *)
   lwt ks = D.register_keyspace db keyspace in
   let error = ref None in
@@ -63,7 +65,8 @@ let load db ~keyspace ich =
                    loop_load progress
              | Some error -> raise_lwt error
          in try_lwt
-              Progress_report.with_progress_report Lwt_io.stderr loop_load
+              Progress_report.with_progress_report
+                ?max:size Lwt_io.stderr loop_load
             with End_of_file -> return ())
 
 let () =
@@ -74,9 +77,15 @@ let () =
     exit 1
   end;
   in Lwt_unix.run begin
-    let input = Lwt_io.stdin in
+    lwt input, size = match !file with
+        "-" -> return (Lwt_io.stdin, None)
+      | "" -> Arg.usage params usage_message; exit 1
+      | f ->
+          lwt ich = Lwt_io.open_file ~mode:Lwt_io.input f in
+          lwt size = Lwt_io.file_length f in
+            return (ich, Some size) in
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     lwt ich, och = Lwt_io.open_connection addr in
     let db = D.make ich och in
-      load db ~keyspace:!keyspace input
+      load db ~keyspace:!keyspace ?size input
   end
