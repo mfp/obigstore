@@ -11,6 +11,7 @@ let all_keys =
 
 %token <string> ID
 %token <int> INT
+%token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF
 
@@ -34,6 +35,7 @@ phrase : /* empty */  { Nothing }
   | get       { $1 }
   | put       { $1 }
   | delete    { $1 }
+  | directive { $1 }
 
 size : 
     SIZE ID   { with_ks
@@ -129,6 +131,12 @@ delete :
         with_ks
           (fun keyspace ->
              R.Delete_key { R.Delete_key.keyspace; table = $2; key = $4; }) }
+
+directive : DIRECTIVE directive_params { Directive ($1, $2) }
+
+directive_params :
+    /* empty */         { [] }
+  | directive_params ID { $1 @ [ $2 ] }
 
 opt_range :
   | range        { Some $1 }

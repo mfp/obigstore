@@ -4,7 +4,7 @@ open Request
 type req =
     Command of Request.request
   | Error of string
-  | Directive of unit
+  | Directive of string * string list
   | Nothing
 
 type generic_range =

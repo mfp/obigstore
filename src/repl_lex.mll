@@ -31,6 +31,8 @@ rule token = parse
   | ']'            { RBRACKET }
   | ','            { COMMA }
   | '='            { EQ }
+  | '.' (['a'-'z']+ as lxm)
+                   { DIRECTIVE lxm }
   | ['0'-'9']+ as lxm { INT(int_of_string lxm) }
   | ['A'-'Z' 'a'-'z'] ['A'-'Z' 'a'-'z' '0'-'9' '_' '.'] * as id 
         { try
