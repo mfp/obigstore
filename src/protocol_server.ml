@@ -117,7 +117,11 @@ struct
               begin try_lwt
                 respond c ~buf:c.out_buf ~request_id r
               with
-                | Abort_exn | Commit_exn as e -> raise_lwt e
+                | Abort_exn | Commit_exn | End_of_file as e -> raise_lwt e
+                (* catch exns that indicate that the connection is gone,
+                 * and signal End_of_file *)
+                | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
+                    raise_lwt End_of_file
                 | e ->
                 Format.eprintf
                   "Internal error %s@\n\

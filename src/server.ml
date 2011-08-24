@@ -31,6 +31,10 @@ struct
         och : Lwt_io.output_channel;
       }
 
+  let string_of_addr = function
+      Unix.ADDR_UNIX s -> sprintf "unix socket %S" s
+    | Unix.ADDR_INET (a, p) -> sprintf "%s:%d" (Unix.string_of_inet_addr a) p
+
   let rec run_server ?(debug=false) db address port =
     let rec accept_loop sock =
       begin try_lwt
@@ -44,9 +48,13 @@ struct
                 handle_connection ~debug db { ich; och; addr }
               finally
                 Lwt_io.abort och
-          with e ->
-            eprintf "Error with connection: %s\n%!" (Printexc.to_string e);
-            return ()
+          with
+            | End_of_file ->
+                eprintf "Closing connection from %s\n%!" (string_of_addr addr);
+                return ()
+            | e ->
+                eprintf "Error with connection: %s\n%!" (Printexc.to_string e);
+                return ()
           end;
           return ()
       with e ->
