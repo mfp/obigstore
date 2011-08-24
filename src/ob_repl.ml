@@ -109,6 +109,7 @@ struct
      BEGIN;                     Start a transaction block\n\
      COMMIT;                    Commit current transaction\n\
      ABORT;                     Abort current transaction\n\
+     LOCK lock_name;            Acquire lock with given name\n\
 \n\
      COUNT table;               Count keys in table\n\
      COUNT table[x:y];          Count keys in table between keys x and y\n\
@@ -228,6 +229,7 @@ let execute ks db loop =
       ret_nothing
   | Abort _ -> raise_lwt Abort_exn
   | Commit _ -> raise_lwt Commit_exn
+  | Lock { Lock.name; _ } -> D.lock ks name >>= ret_nothing
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       lwt keys = D.get_keys ks table ?max_keys key_range in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));

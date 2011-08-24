@@ -35,6 +35,13 @@ struct
     String_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
 
+module LOCKS =
+  Weak.Make(struct
+              type t = (string * Lwt_mutex.t option)
+              let hash (s, _) = Hashtbl.hash s
+              let equal (s1, _) (s2, _) = String.compare s1 s2 = 0
+            end)
+
 type db =
     {
       basedir : string;
@@ -48,6 +55,7 @@ and keyspace =
     ks_db : db; ks_name : string; ks_id : int;
     ks_tables : (string, int) Hashtbl.t;
     ks_rev_tables : (int, string) Hashtbl.t;
+    ks_locks : LOCKS.t;
   }
 
 type backup_cursor = Backup.cursor
@@ -82,11 +90,12 @@ let read_keyspaces db =
                let ks_id = int_of_string v in
                let ks_tables = read_keyspace_tables db ks_name in
                let ks_rev_tables = Hashtbl.create (Hashtbl.length ks_tables) in
+               let ks_locks = LOCKS.create 13 in
                  Hashtbl.iter
                    (fun k v -> Hashtbl.add ks_rev_tables v k)
                    ks_tables;
                  Hashtbl.add h keyspace_name
-                   { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; };
+                   { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; ks_locks; };
                  true)
       db.db
       Datum_encoding.keyspace_table_prefix;
@@ -125,6 +134,7 @@ let register_keyspace t ks_name =
         { ks_db = t; ks_id; ks_name;
           ks_tables = Hashtbl.create 13;
           ks_rev_tables = Hashtbl.create 13;
+          ks_locks = LOCKS.create 31;
         }
       in
         Hashtbl.add t.keyspaces ks_name ks;
@@ -272,6 +282,8 @@ type transaction =
       mutable backup_writebatch : L.writebatch Lazy.t;
       (* approximate size of data written in current backup_writebatch *)
       mutable backup_writebatch_size : int;
+      outermost_tx : transaction;
+      mutable locks : (string * Lwt_mutex.t option) M.t;
     }
 
 let tx_key = Lwt.new_key ()
@@ -293,16 +305,22 @@ let rec transaction_aux make_access_and_iters ks f =
     | None -> begin
         let access, iter_pool, repeatable_read =
           make_access_and_iters ks.ks_db None in
-        let tx =
+        let rec tx =
           { added_keys = M.empty; deleted_keys = M.empty;
             added = M.empty; deleted = M.empty;
             access; repeatable_read; iter_pool; ks;
             backup_writebatch = lazy (L.Batch.make ());
             backup_writebatch_size = 0;
+            outermost_tx = tx; locks = M.empty;
           } in
-        lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
-          commit_outermost_transaction ks tx >>
-          return y
+        try_lwt
+          lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
+            commit_outermost_transaction ks tx >>
+            return y
+        finally
+          (* release locks *)
+          M.iter (fun _ (_, m) -> Option.may Lwt_mutex.unlock m) tx.locks;
+          return ()
       end
     | Some parent_tx ->
         let access, iter_pool, repeatable_read =
@@ -391,6 +409,26 @@ let repeatable_read_transaction f =
                         (fun () -> return (RA.iterator access))
            in (access, Some pool, true))
     f
+
+let lock ks name =
+  match Lwt.get tx_key with
+      None -> return ()
+    | Some tx ->
+      if M.mem name tx.locks then return ()
+      else
+        let ks = tx.ks in
+        let k, mutex =
+          try
+            let k = LOCKS.find ks.ks_locks (name, None) in
+              (k, Option.get (snd k))
+          with Not_found ->
+            let m = Lwt_mutex.create () in
+            let k = (name, Some m) in
+              LOCKS.add ks.ks_locks k;
+              (k, m)
+        in
+          tx.outermost_tx.locks <- M.add name k tx.outermost_tx.locks;
+          Lwt_mutex.lock mutex
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =

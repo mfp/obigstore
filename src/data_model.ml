@@ -101,6 +101,11 @@ sig
 
   val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
+  (** Acquire a lock with the given name. The lock will be released
+    * automatically when the outermost transaction is committed or aborted.
+    * This is a NOP unless inside a transaction. *)
+  val lock : keyspace -> string -> unit Lwt.t
+
   (** {3 Read operations} *)
 
   (** Return up to [max_keys] keys (default: [max_int]) in the given range. *)

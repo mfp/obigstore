@@ -13,6 +13,7 @@ let all_keys =
 %token <int> INT
 %token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
+%token LOCK
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF
 
 %start input
@@ -31,6 +32,7 @@ phrase : /* empty */  { Nothing }
   | BEGIN     { with_ks (fun keyspace -> R.Begin { R.Begin.keyspace }) }
   | COMMIT    { with_ks (fun keyspace -> R.Commit { R.Commit.keyspace }) }
   | ABORT     { with_ks (fun keyspace -> R.Abort { R.Abort.keyspace }) }
+  | LOCK ID   { with_ks (fun keyspace -> R.Lock { R.Lock.keyspace; name = $2 }) }
   | count     { $1 }
   | get       { $1 }
   | put       { $1 }

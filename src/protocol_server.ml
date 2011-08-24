@@ -256,6 +256,15 @@ struct
             None -> P.return_ok ?buf c.och ~request_id ()
           | Some _ -> raise_lwt Abort_exn
         end
+    | Lock { Lock.keyspace; name; } ->
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             try_lwt
+               D.lock ks name >>
+               P.return_ok ?buf c.och ~request_id ()
+             with Error Deadlock ->
+               P.deadlock ?buf c.och ~request_id () >>
+               raise_lwt Abort_exn)
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_tx c keyspace ~request_id
           (fun tx -> D.get_keys tx table ?max_keys key_range >>=

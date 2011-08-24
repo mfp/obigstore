@@ -18,6 +18,7 @@
        "get", GET;
        "put", PUT;
        "delete", DELETE;
+       "lock", LOCK;
      ]
      
 }
