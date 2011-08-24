@@ -284,6 +284,7 @@ type transaction =
       mutable backup_writebatch_size : int;
       outermost_tx : transaction;
       mutable locks : (string * Lwt_mutex.t option) M.t;
+      dump_buffer : Bytea.t;
     }
 
 let tx_key = Lwt.new_key ()
@@ -312,6 +313,7 @@ let rec transaction_aux make_access_and_iters ks f =
             backup_writebatch = lazy (L.Batch.make ());
             backup_writebatch_size = 0;
             outermost_tx = tx; locks = M.empty;
+            dump_buffer = Bytea.create 16;
           } in
         try_lwt
           lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
@@ -1162,7 +1164,7 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
   let open Backup in
   let max_chunk = 65536 in
   let module ENC = (val Backup.encoder format : Backup.ENCODER) in
-  let enc = ENC.make () in
+  let enc = ENC.make ~buffer:tx.dump_buffer () in
   lwt pending_tables = match offset with
       Some c -> return c.bc_remaining_tables
     | None -> (* FIXME: should use the tx's iterator to list the tables *)
