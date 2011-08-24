@@ -288,7 +288,7 @@ let register_new_table_and_add_to_writebatch ks wb table_name =
     Hashtbl.add ks.ks_rev_tables table table_name;
     table
 
-let transaction_aux make_access_and_iters ks f =
+let rec transaction_aux make_access_and_iters ks f =
   match Lwt.get tx_key with
     | None -> begin
         let access, iter_pool, repeatable_read =
@@ -301,63 +301,7 @@ let transaction_aux make_access_and_iters ks f =
             backup_writebatch_size = 0;
           } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
-
-        (* early termination for read-only or NOP txs if:
-         * * backup_writebatch has not be forced (i.e., not used for bulk
-         *   load)
-         * * no columns have been added / deleted *)
-        if not (Lazy.lazy_is_val tx.backup_writebatch) &&
-           M.is_empty tx.deleted && M.is_empty tx.added
-        then return y
-
-        else
-        (* normal procedure: write to writebatch, then sync it *)
-
-        let b = Lazy.force tx.backup_writebatch in
-        let datum_key = Bytea.create 13 in
-        let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
-          (* TODO: should iterate in Lwt monad so we can yield every once in a
-           * while*)
-          M.iter
-            (fun table_name m ->
-               match find_maybe ks.ks_tables table_name with
-                   Some table ->
-                     M.iter
-                       (fun key s ->
-                          S.iter
-                            (fun column ->
-                               Datum_encoding.encode_datum_key datum_key ks.ks_id
-                                 ~table ~key ~column ~timestamp;
-                               L.Batch.delete_substring b
-                                 (Bytea.unsafe_string datum_key) 0
-                                 (Bytea.length datum_key))
-                            s)
-                       m
-                 | None -> (* unknown table *) ())
-            tx.deleted;
-          M.iter
-            (fun table_name m ->
-               let table = match find_maybe ks.ks_tables table_name with
-                   Some t -> t
-                 | None ->
-                     (* must add table to keyspace table list *)
-                     register_new_table_and_add_to_writebatch ks b table_name
-               in M.iter
-                 (fun key m ->
-                    M.iter
-                      (fun column v ->
-                         (* FIXME: should save timestamp provided in
-                          * put_columns and use it here if it wasn't
-                          * Auto_timestamp *)
-                         Datum_encoding.encode_datum_key datum_key ks.ks_id
-                           ~table ~key ~column ~timestamp;
-                         L.Batch.put_substring b
-                           (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
-                           v 0 (String.length v))
-                      m)
-                 m)
-            tx.added;
-          detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b >>
+          commit_outermost_transaction ks tx >>
           return y
       end
     | Some parent_tx ->
@@ -370,6 +314,64 @@ let transaction_aux make_access_and_iters ks f =
           parent_tx.deleted <- tx.deleted;
           parent_tx.added_keys <- tx.added_keys;
           return y
+
+and commit_outermost_transaction ks tx =
+  (* early termination for read-only or NOP txs if:
+   * * backup_writebatch has not be forced (i.e., not used for bulk
+   *   load)
+   * * no columns have been added / deleted *)
+  if not (Lazy.lazy_is_val tx.backup_writebatch) &&
+     M.is_empty tx.deleted && M.is_empty tx.added
+  then return ()
+
+  else
+  (* normal procedure: write to writebatch, then sync it *)
+
+  let b = Lazy.force tx.backup_writebatch in
+  let datum_key = Bytea.create 13 in
+  let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+    (* TODO: should iterate in Lwt monad so we can yield every once in a
+     * while*)
+    M.iter
+      (fun table_name m ->
+         match find_maybe ks.ks_tables table_name with
+             Some table ->
+               M.iter
+                 (fun key s ->
+                    S.iter
+                      (fun column ->
+                         Datum_encoding.encode_datum_key datum_key ks.ks_id
+                           ~table ~key ~column ~timestamp;
+                         L.Batch.delete_substring b
+                           (Bytea.unsafe_string datum_key) 0
+                           (Bytea.length datum_key))
+                      s)
+                 m
+           | None -> (* unknown table *) ())
+      tx.deleted;
+    M.iter
+      (fun table_name m ->
+         let table = match find_maybe ks.ks_tables table_name with
+             Some t -> t
+           | None ->
+               (* must add table to keyspace table list *)
+               register_new_table_and_add_to_writebatch ks b table_name
+         in M.iter
+           (fun key m ->
+              M.iter
+                (fun column v ->
+                   (* FIXME: should save timestamp provided in
+                    * put_columns and use it here if it wasn't
+                    * Auto_timestamp *)
+                   Datum_encoding.encode_datum_key datum_key ks.ks_id
+                     ~table ~key ~column ~timestamp;
+                   L.Batch.put_substring b
+                     (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
+                     v 0 (String.length v))
+                m)
+           m)
+      tx.added;
+    detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b
 
 let read_committed_transaction f =
   transaction_aux
