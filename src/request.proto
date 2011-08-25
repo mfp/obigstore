@@ -56,6 +56,7 @@ type rates =
 
 type load_stats_ =
     {
+      uptime : float;
       total_writes : long;
       total_reads : long;
       total_bytes_wr : long;

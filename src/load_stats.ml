@@ -35,6 +35,7 @@ type t = {
 
 and stats =
   {
+    uptime : float;
     total_writes : Int64.t;
     total_reads : Int64.t;
     total_bytes_wr : Int64.t;
@@ -86,6 +87,7 @@ let update t =
   let prev = t.stats in
   let stats =
     {
+      uptime = now -. t.init_time;
       total_writes = Int64.(add prev.total_writes (of_int t.curr_writes));
       total_reads = Int64.(add prev.total_reads (of_int t.curr_reads));
       total_bytes_wr = Int64.(add prev.total_bytes_wr (of_int t.curr_bytes_wr));
@@ -120,7 +122,9 @@ let zero_rates =
   }
 
 let zero_stats periods =
-  { total_writes = 0L; total_reads = 0L;
+  {
+    uptime = 0.;
+    total_writes = 0L; total_reads = 0L;
     total_bytes_wr = 0L; total_bytes_rd = 0L;
     total_cols_wr = 0L; total_cols_rd = 0L;
     total_seeks = 0L; total_near_seeks = 0L;
