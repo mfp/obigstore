@@ -363,6 +363,10 @@ struct
     async_request_ks ks (Load { Load.keyspace = ks.ks_id; data; })
       P.read_backup_load_result
 
+  let load_stats ks =
+    async_request_ks ks (Stats { Stats.keyspace = ks.ks_id })
+      P.read_load_stats
+
   let string_of_cursor x = x
   let cursor_of_string x = Some x
 end

@@ -48,6 +48,7 @@ type db =
       db : L.db;
       keyspaces : (string, keyspace) Hashtbl.t;
       mutable use_thread_pool : bool;
+      load_stats : Load_stats.t;
     }
 
 and keyspace =
@@ -106,7 +107,11 @@ let open_db basedir =
     (* ensure we have a end_of_db record *)
     if not (L.mem db Datum_encoding.end_of_db_key) then
       L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
-    let db = { basedir; db; keyspaces = Hashtbl.create 13; use_thread_pool = false; } in
+    let db =
+      { basedir; db; keyspaces = Hashtbl.create 13;
+        use_thread_pool = false;
+        load_stats = Load_stats.make [1; 60; 300; 900];
+      } in
     let keyspaces = read_keyspaces db in
       Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
       db
@@ -350,6 +355,7 @@ and commit_outermost_transaction ks tx =
   let b = Lazy.force tx.backup_writebatch in
   let datum_key = Bytea.create 13 in
   let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+  let bytes_written = ref 0 in
     (* TODO: should iterate in Lwt monad so we can yield every once in a
      * while*)
     M.iter
@@ -362,9 +368,11 @@ and commit_outermost_transaction ks tx =
                       (fun column ->
                          Datum_encoding.encode_datum_key datum_key ks.ks_id
                            ~table ~key ~column ~timestamp;
-                         L.Batch.delete_substring b
-                           (Bytea.unsafe_string datum_key) 0
-                           (Bytea.length datum_key))
+                         let len = Bytea.length datum_key in
+                           bytes_written := !bytes_written + len;
+                           L.Batch.delete_substring b
+                             (Bytea.unsafe_string datum_key) 0
+                             len)
                       s)
                  m
            | None -> (* unknown table *) ())
@@ -385,13 +393,21 @@ and commit_outermost_transaction ks tx =
                     * Auto_timestamp *)
                    Datum_encoding.encode_datum_key datum_key ks.ks_id
                      ~table ~key ~column ~timestamp;
-                   L.Batch.put_substring b
-                     (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key)
-                     v 0 (String.length v))
+                   let klen = Bytea.length datum_key in
+                   let vlen = String.length v in
+                     bytes_written := !bytes_written + klen + vlen;
+                     L.Batch.put_substring b
+                       (Bytea.unsafe_string datum_key) 0 klen
+                       v 0 vlen)
                 m)
            m)
       tx.added;
-    detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b
+    lwt () =
+      detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b in
+    let stats = tx.ks.ks_db.load_stats in
+      Load_stats.record_writes stats 1;
+      Load_stats.record_bytes_wr stats !bytes_written;
+      return ()
 
 let read_committed_transaction f =
   transaction_aux
@@ -711,6 +727,7 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
           (* if neither the key nor the column were deleted *)
           else begin
             incr keys_on_disk_kept;
+            Load_stats.record_bytes_rd tx.ks.ks_db.load_stats key_len;
             Skip_key_with (fold_f acc key_buf key_len);
           end
         end
@@ -1054,30 +1071,50 @@ let get_slice tx table
       | _ :: _ as l when max_columns > 0 ->
           let columns = List.take max_columns (List.rev l) in
           let last_column = (List.last columns).name in
+          let col_bytes =
+            List.fold_left
+              (fun s col ->
+                 s + String.length col.data + String.length col.name)
+              0
+              columns
+          in
+            Load_stats.record_bytes_rd tx.ks.ks_db.load_stats
+              (String.length key + String.length last_column + col_bytes);
             Some ({ key; last_column; columns; })
       | _ -> None in
 
   let get_keydata_key { key; _ } = key
 
-  in get_slice_aux postproc_keydata get_keydata_key false tx table
+  in
+    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    get_slice_aux postproc_keydata get_keydata_key false tx table
       ~max_keys ~max_columns ~decode_timestamps key_range column_range
 
 let get_slice_values tx table
       ?(max_keys = max_int) key_range columns =
+  let bytes_read = ref 0 in
   let postproc_keydata (key, cols) =
     let l =
       List.map
         (fun column ->
-           try Some (List.find (fun c -> c.name = column) cols).data
+           try
+             let data = (List.find (fun c -> c.name = column) cols).data in
+               bytes_read := !bytes_read + String.length data;
+               Some data
            with Not_found -> None)
         columns
     in Some (key, l) in
 
-  let get_keydata_key (key, _) = key
+  let get_keydata_key (key, _) = key in
 
-  in get_slice_aux postproc_keydata get_keydata_key true tx table
+  lwt ret =
+    get_slice_aux postproc_keydata get_keydata_key true tx table
        ~max_keys ~max_columns:(List.length columns)
        ~decode_timestamps:false key_range (Columns columns)
+  in
+    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
+    return ret
 
 let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
                 key column_range =
@@ -1212,11 +1249,18 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
           (* we don't have enough data yet, move to next table *)
           end else begin
             collect_data ~curr_key:None ~curr_col:None tl
-          end
-
-  in collect_data ~curr_key ~curr_col pending_tables
+          end in
+  lwt ret = collect_data ~curr_key ~curr_col pending_tables in
+    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Option.may
+      (fun (d, _) ->
+         Load_stats.record_bytes_rd tx.ks.ks_db.load_stats (String.length d))
+      ret;
+    return ret
 
 let load tx data =
+  Load_stats.record_bytes_wr tx.ks.ks_db.load_stats (String.length data);
+  Load_stats.record_writes tx.ks.ks_db.load_stats 1;
   let wb = Lazy.force tx.backup_writebatch in
   let enc_datum_key datum_key ~table:table_name ~key ~column ~timestamp =
     match find_maybe tx.ks.ks_tables table_name with
@@ -1247,6 +1291,9 @@ let load tx data =
       end >>
       return true
     end
+
+let load_stats tx =
+  return (Load_stats.stats tx.ks.ks_db.load_stats)
 
 let cursor_of_string = Backup.cursor_of_string
 let string_of_cursor = Backup.string_of_cursor
@@ -1297,6 +1344,8 @@ let dump ks ?format ?only_tables ?offset () =
   with_transaction ks (fun tx -> dump tx ?format ?only_tables ?offset ())
 
 let load ks data = with_transaction ks (fun tx -> load tx data)
+
+let load_stats ks = with_transaction ks load_stats
 
 let read_committed_transaction ks f =
   read_committed_transaction ks (fun _ -> f ks)

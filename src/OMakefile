@@ -24,6 +24,8 @@ OBJECTS[] =
   request
   storage
   string_util
+  weak_ref
+  load_stats
 
 OCamlGeneratedFiles(repl_gram.ml repl_gram.mli repl_lex.ml)
 

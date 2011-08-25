@@ -338,6 +338,10 @@ struct
           (fun tx ->
              D.load tx data >>=
              P.return_backup_load_result ?buf c.och ~request_id)
+    | Stats { Stats.keyspace; } ->
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.load_stats ks >>=
+                     P.return_load_stats ?buf c.och ~request_id)
 
   and with_tx c keyspace_idx ~request_id f =
     match Lwt.get tx_key with

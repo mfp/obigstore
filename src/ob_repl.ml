@@ -121,6 +121,7 @@ struct
     "\
      KEYSPACES;                 List keyspaces\n\
      TABLES;                    List tables in present keyspace\n\
+     STATS;                     Show load statistics\n\
      \n\
      SIZE table;                Show approx size of table\n\
      SIZE table[x:y];           Show approx size of table between keys x and y\n\
@@ -281,6 +282,25 @@ let execute ks db loop =
       Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys 1L;
       D.delete_key ks table key >>=
       ret_nothing
+  | Stats _ ->
+      let open Load_stats_ in
+      let open Rates in
+      lwt stats = D.load_stats ks in
+      let pr_avg (period, r) =
+        puts "";
+        puts "%d-second average rates" period;
+        puts "%.0f writes, %.0f reads" r.writes r.reads;
+        puts "%s written, %s read"
+          (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_wr))
+          (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_rd))
+      in
+        puts "Totals:";
+        puts "%Ld writes, %Ld reads" stats.total_writes stats.total_reads;
+        puts "%s written, %s read"
+          (Ob_util.format_size 1.0 stats.total_bytes_wr)
+          (Ob_util.format_size 1.0 stats.total_bytes_rd);
+        List.iter pr_avg stats.averages;
+        ret_nothing ()
 
 let execute ks db loop req =
   let keys = !Timing.cnt_keys in

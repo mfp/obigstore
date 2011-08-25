@@ -37,6 +37,7 @@
        "put", PUT;
        "delete", DELETE;
        "lock", LOCK;
+       "stats", STATS;
      ]
      
 }

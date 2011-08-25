@@ -301,5 +301,16 @@ struct
                   0 -> true
                 | _ -> false)
 
+  let return_load_stats =
+    writer
+      (fun b stats ->
+         E.add_status b 0;
+         E.add_string b (Extprot.Conv.serialize Request.Load_stats.write stats))
+
+  let read_load_stats =
+    reader
+      (fun ich ->
+         lwt s = D.get_string ich in
+           return (Extprot.Conv.deserialize Request.Load_stats.read s))
 end
 

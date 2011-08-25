@@ -199,6 +199,9 @@ sig
 
   (** [load tx data] returns [false] if the data is in an unknown format. *)
   val load : keyspace -> string -> bool Lwt.t
+
+  (** Load statistics  *)
+  val load_stats : keyspace -> Load_stats.stats Lwt.t
 end
 
 module type BACKUP_SUPPORT =

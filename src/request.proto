@@ -45,6 +45,22 @@ type req = { keyspace : keyspace }
 
 type backup_cursor = string
 
+type rates = { writes : float; reads : float; bytes_wr : float; bytes_rd : float; }
+  options "ocaml.type_equals" = "Load_stats.rates"
+
+type load_stats_ =
+    {
+      total_writes : long;
+      total_reads : long;
+      total_bytes_wr : long;
+      total_bytes_rd : long;
+      averages : [(int * rates)];
+    }
+  options "ocaml.type_equals" = "Load_stats.stats"
+
+(* work around type_equals not being honored in messages *)
+message load_stats = load_stats_
+
 message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
@@ -83,5 +99,6 @@ message request =
   | Dump { keyspace : keyspace; only_tables : opt< [table] >;
            cursor : opt<backup_cursor>; format : opt<int>; }
   | Load { keyspace : keyspace; data : string; }
+  | Stats { keyspace : keyspace; }
 
 (* vim:set ft=omlet: *) 
