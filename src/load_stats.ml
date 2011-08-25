@@ -27,6 +27,10 @@ type t = {
   mutable curr_reads : int;
   mutable curr_bytes_wr : int;
   mutable curr_bytes_rd : int;
+  mutable curr_cols_wr : int;
+  mutable curr_cols_rd : int;
+  mutable curr_seeks : int;
+  mutable curr_near_seeks : int;
 }
 
 and stats =
@@ -35,10 +39,20 @@ and stats =
     total_reads : Int64.t;
     total_bytes_wr : Int64.t;
     total_bytes_rd : Int64.t;
+    total_cols_wr : Int64.t;
+    total_cols_rd : Int64.t;
+    total_seeks : Int64.t;
+    total_near_seeks : Int64.t;
     averages : (int * rates) list;
   }
 
-and rates = { writes : float; reads : float; bytes_wr : float; bytes_rd : float; }
+and rates =
+  {
+    writes : float; reads : float;
+    bytes_wr : float; bytes_rd : float;
+    cols_wr : float; cols_rd : float;
+    seeks : float; near_seeks : float;
+  }
 
 let update_avg t period ~now ~dt prev sample =
   let period = (min (float period) (now -. t.init_time)) in
@@ -50,6 +64,10 @@ let update_avg t period ~now ~dt prev sample =
       reads = avg prev.reads sample.reads;
       bytes_wr = avg prev.bytes_wr sample.bytes_wr;
       bytes_rd = avg prev.bytes_rd sample.bytes_rd;
+      cols_wr = avg prev.cols_wr sample.cols_wr;
+      cols_rd = avg prev.cols_rd sample.cols_rd;
+      seeks = avg prev.seeks sample.seeks;
+      near_seeks = avg prev.near_seeks sample.near_seeks;
     }
 
 let update t =
@@ -60,6 +78,10 @@ let update t =
       reads = float t.curr_reads /. dt;
       bytes_wr = float t.curr_bytes_wr /. dt;
       bytes_rd = float t.curr_bytes_rd /. dt;
+      cols_wr = float t.curr_cols_wr /. dt;
+      cols_rd = float t.curr_cols_rd /. dt;
+      seeks = float t.curr_seeks /. dt;
+      near_seeks = float t.curr_seeks /. dt;
     } in
   let prev = t.stats in
   let stats =
@@ -68,6 +90,10 @@ let update t =
       total_reads = Int64.(add prev.total_reads (of_int t.curr_reads));
       total_bytes_wr = Int64.(add prev.total_bytes_wr (of_int t.curr_bytes_wr));
       total_bytes_rd = Int64.(add prev.total_bytes_rd (of_int t.curr_bytes_rd));
+      total_cols_wr = Int64.(add prev.total_cols_wr (of_int t.curr_cols_wr));
+      total_cols_rd = Int64.(add prev.total_cols_rd (of_int t.curr_cols_rd));
+      total_seeks = Int64.(add prev.total_seeks (of_int t.curr_seeks));
+      total_near_seeks = Int64.(add prev.total_near_seeks (of_int t.curr_near_seeks));
       averages =
         List.map
           (fun (period, prev) ->
@@ -80,13 +106,24 @@ let update t =
     t.curr_reads <- 0;
     t.curr_bytes_wr <- 0;
     t.curr_bytes_rd <- 0;
+    t.curr_cols_wr <- 0;
+    t.curr_cols_rd <- 0;
+    t.curr_seeks <- 0;
+    t.curr_near_seeks <- 0;
     t.t0 <- now
 
-let zero_rates = { writes = 0.; reads = 0.; bytes_wr = 0.; bytes_rd = 0. }
+let zero_rates =
+  { writes = 0.; reads = 0.;
+    bytes_wr = 0.; bytes_rd = 0.;
+    cols_wr = 0.; cols_rd = 0.;
+    seeks = 0.; near_seeks = 0.;
+  }
 
 let zero_stats periods =
   { total_writes = 0L; total_reads = 0L;
     total_bytes_wr = 0L; total_bytes_rd = 0L;
+    total_cols_wr = 0L; total_cols_rd = 0L;
+    total_seeks = 0L; total_near_seeks = 0L;
     averages = List.map (fun p -> (p, zero_rates))
                  (List.filter ((<) 0) periods) (* only period > 0 *)
   }
@@ -98,6 +135,7 @@ let make avg_periods =
       stats = zero_stats avg_periods;
       init_time = now; t0 = now;
       curr_writes = 0; curr_reads = 0; curr_bytes_wr = 0; curr_bytes_rd = 0;
+      curr_cols_wr = 0; curr_cols_rd = 0; curr_seeks = 0; curr_near_seeks = 0;
     } in
   let r = Weak_ref.make t in
     ignore begin
@@ -118,4 +156,8 @@ let record_reads t n = t.curr_reads <- t.curr_reads + n
 let record_writes t n = t.curr_writes <- t.curr_writes + n
 let record_bytes_wr t n = t.curr_bytes_wr <- t.curr_bytes_wr + n
 let record_bytes_rd t n = t.curr_bytes_rd <- t.curr_bytes_rd + n
+let record_cols_wr t n = t.curr_cols_wr <- t.curr_cols_wr + n
+let record_cols_rd t n = t.curr_cols_rd <- t.curr_cols_rd + n
+let record_seeks t n = t.curr_seeks <- t.curr_seeks + n
+let record_near_seeks t n = t.curr_near_seeks <- t.curr_near_seeks + n
 

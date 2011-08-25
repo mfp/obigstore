@@ -290,15 +290,19 @@ let execute ks db loop =
         puts "";
         puts "%d-second average rates" period;
         puts "%.0f writes, %.0f reads" r.writes r.reads;
+        puts "%.0f columns written, %.0f columns read" r.cols_wr r.cols_rd;
         puts "%s written, %s read"
           (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_wr))
-          (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_rd))
+          (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_rd));
+        puts "%.0f seeks, %.0f near seeks" r.seeks r.near_seeks;
       in
         puts "Totals:";
         puts "%Ld writes, %Ld reads" stats.total_writes stats.total_reads;
+        puts "%Ld columns written, %Ld columns reads" stats.total_cols_wr stats.total_cols_rd;
         puts "%s written, %s read"
           (Ob_util.format_size 1.0 stats.total_bytes_wr)
           (Ob_util.format_size 1.0 stats.total_bytes_rd);
+        puts "%Ld seeks, %Ld near seeks" stats.total_seeks stats.total_near_seeks;
         List.iter pr_avg stats.averages;
         ret_nothing ()
 

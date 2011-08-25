@@ -154,6 +154,18 @@ let keyspace_name ks = ks.ks_name
 
 let keyspace_id ks = ks.ks_id
 
+let it_next ks it =
+  Load_stats.record_near_seeks ks.ks_db.load_stats 1;
+  IT.next it
+
+let it_prev ks it =
+  Load_stats.record_near_seeks ks.ks_db.load_stats 1;
+  IT.prev it
+
+let it_seek ks it s off len =
+  Load_stats.record_seeks ks.ks_db.load_stats 1;
+  IT.seek it s off len
+
 let list_tables ks =
   let it = L.iterator ks.ks_db.db in
   let table_r = ref (-1) in
@@ -164,10 +176,10 @@ let list_tables ks =
           let datum_key =
             Datum_encoding.encode_datum_key_to_string ks.ks_id
               ~table:0 ~key:"" ~column:"" ~timestamp:Int64.min_int
-          in IT.seek it datum_key 0 (String.length datum_key);
+          in it_seek ks it datum_key 0 (String.length datum_key);
       | table ->
           let datum_key = Datum_encoding.encode_table_successor_to_string ks.ks_id table in
-            IT.seek it datum_key 0 (String.length datum_key); in
+            it_seek ks it datum_key 0 (String.length datum_key); in
 
   let rec collect_tables acc =
     jump_to_next_table ();
@@ -356,6 +368,7 @@ and commit_outermost_transaction ks tx =
   let datum_key = Bytea.create 13 in
   let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
   let bytes_written = ref 0 in
+  let cols_written = ref 0 in
     (* TODO: should iterate in Lwt monad so we can yield every once in a
      * while*)
     M.iter
@@ -369,6 +382,7 @@ and commit_outermost_transaction ks tx =
                          Datum_encoding.encode_datum_key datum_key ks.ks_id
                            ~table ~key ~column ~timestamp;
                          let len = Bytea.length datum_key in
+                           incr cols_written;
                            bytes_written := !bytes_written + len;
                            L.Batch.delete_substring b
                              (Bytea.unsafe_string datum_key) 0
@@ -395,6 +409,7 @@ and commit_outermost_transaction ks tx =
                      ~table ~key ~column ~timestamp;
                    let klen = Bytea.length datum_key in
                    let vlen = String.length v in
+                     incr cols_written;
                      bytes_written := !bytes_written + klen + vlen;
                      L.Batch.put_substring b
                        (Bytea.unsafe_string datum_key) 0 klen
@@ -407,6 +422,7 @@ and commit_outermost_transaction ks tx =
     let stats = tx.ks.ks_db.load_stats in
       Load_stats.record_writes stats 1;
       Load_stats.record_bytes_wr stats !bytes_written;
+      Load_stats.record_cols_wr stats !cols_written;
       return ()
 
 let read_committed_transaction f =
@@ -491,7 +507,7 @@ let exists_key tx table_name =
         Some table ->
           Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
             ~table ~key ~column:"" ~timestamp:Int64.min_int;
-          IT.seek it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
+          it_seek tx.ks it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
           if not (IT.valid it) then
             false
           else begin
@@ -591,13 +607,13 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
             in
               (* seeking to next datum/key/etc *)
               begin match r with
-                  Continue | Continue_with _ when not reverse -> IT.next it
-                | Continue | Continue_with _ (* reverse *) -> IT.prev it
+                  Continue | Continue_with _ when not reverse -> it_next tx.ks it
+                | Continue | Continue_with _ (* reverse *) -> it_prev tx.ks it
                 | Skip_key | Skip_key_with _ when not reverse ->
                     Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
                       ~table:!table_id ~key:(next_key ())
                       ~column:"" ~timestamp:Int64.min_int;
-                    IT.seek it
+                    it_seek tx.ks it
                       (Bytea.unsafe_string datum_key_buf) 0
                       (Bytea.length datum_key_buf)
                 | Skip_key | Skip_key_with _ (* when reverse *) ->
@@ -606,10 +622,10 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
                     Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
                       ~table:!table_id ~key:(String.sub !key_buf 0 !key_len)
                       ~column:"" ~timestamp:Int64.max_int;
-                    IT.seek it
+                    it_seek tx.ks it
                       (Bytea.unsafe_string datum_key_buf) 0
                       (Bytea.length datum_key_buf);
-                    if IT.valid it then IT.prev it
+                    if IT.valid it then it_prev tx.ks it
                 | Finish_fold _ -> ()
               end;
               match r with
@@ -630,7 +646,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
               ~key:(Option.default "" first_key) ~column:first_column
               ~timestamp:Int64.min_int
           in
-            IT.seek it first_datum_key 0 (String.length first_datum_key);
+            it_seek tx.ks it first_datum_key 0 (String.length first_datum_key);
         end else begin
           match first_key with
               None ->
@@ -640,8 +656,8 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
                     ~table:(table + 1)
                     ~key:"" ~column:"" ~timestamp:Int64.min_int
                 in
-                  IT.seek it datum_key 0 (String.length datum_key);
-                  if IT.valid it then IT.prev it
+                  it_seek tx.ks it datum_key 0 (String.length datum_key);
+                  if IT.valid it then it_prev tx.ks it
             | Some k ->
                 (* we go to the datum for the key, then back (it's exclusive) *)
                 let datum_key =
@@ -649,8 +665,8 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
                     ~table
                     ~key:k ~column:"" ~timestamp:Int64.min_int
                 in
-                  IT.seek it datum_key 0 (String.length datum_key);
-                  if IT.valid it then IT.prev it
+                  it_seek tx.ks it datum_key 0 (String.length datum_key);
+                  if IT.valid it then it_prev tx.ks it
         end;
         do_fold_over_data acc
     | None -> (* unknown table *) acc
@@ -728,6 +744,7 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
           else begin
             incr keys_on_disk_kept;
             Load_stats.record_bytes_rd tx.ks.ks_db.load_stats key_len;
+            Load_stats.record_cols_rd tx.ks.ks_db.load_stats 1;
             Skip_key_with (fold_f acc key_buf key_len);
           end
         end
@@ -1080,6 +1097,7 @@ let get_slice tx table
           in
             Load_stats.record_bytes_rd tx.ks.ks_db.load_stats
               (String.length key + String.length last_column + col_bytes);
+            Load_stats.record_cols_rd tx.ks.ks_db.load_stats (List.length columns);
             Some ({ key; last_column; columns; })
       | _ -> None in
 
@@ -1093,6 +1111,7 @@ let get_slice tx table
 let get_slice_values tx table
       ?(max_keys = max_int) key_range columns =
   let bytes_read = ref 0 in
+  let cols_read = ref 0 in
   let postproc_keydata (key, cols) =
     let l =
       List.map
@@ -1100,6 +1119,7 @@ let get_slice_values tx table
            try
              let data = (List.find (fun c -> c.name = column) cols).data in
                bytes_read := !bytes_read + String.length data;
+               incr cols_read;
                Some data
            with Not_found -> None)
         columns
@@ -1114,6 +1134,7 @@ let get_slice_values tx table
   in
     Load_stats.record_reads tx.ks.ks_db.load_stats 1;
     Load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
+    Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
     return ret
 
 let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
@@ -1212,6 +1233,7 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
       Some c -> Some c.bc_key, Some c.bc_column
     | None -> None, None in
 
+  let cols_read = ref 0 in
   let next_key = ref "" in
   let next_col = ref "" in
 
@@ -1227,6 +1249,7 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
     end else begin
       ENC.add_datum enc curr_table it
         ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf ~value_buf;
+      incr cols_read;
       Continue
     end in
 
@@ -1252,6 +1275,7 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
           end in
   lwt ret = collect_data ~curr_key ~curr_col pending_tables in
     Load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
     Option.may
       (fun (d, _) ->
          Load_stats.record_bytes_rd tx.ks.ks_db.load_stats (String.length d))
@@ -1261,8 +1285,10 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
 let load tx data =
   Load_stats.record_bytes_wr tx.ks.ks_db.load_stats (String.length data);
   Load_stats.record_writes tx.ks.ks_db.load_stats 1;
+  let cols_written = ref 0 in
   let wb = Lazy.force tx.backup_writebatch in
   let enc_datum_key datum_key ~table:table_name ~key ~column ~timestamp =
+    incr cols_written;
     match find_maybe tx.ks.ks_tables table_name with
         Some table -> Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                         ~table ~key ~column ~timestamp
@@ -1277,6 +1303,7 @@ let load tx data =
     if not ok then
       return false
     else begin
+      Load_stats.record_cols_wr tx.ks.ks_db.load_stats !cols_written;
       tx.backup_writebatch_size <- tx.backup_writebatch_size + String.length data;
       begin
         (* we check if there's enough data in this batch, and write it if so *)

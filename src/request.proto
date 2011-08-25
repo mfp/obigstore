@@ -45,7 +45,13 @@ type req = { keyspace : keyspace }
 
 type backup_cursor = string
 
-type rates = { writes : float; reads : float; bytes_wr : float; bytes_rd : float; }
+type rates =
+  {
+    writes : float; reads : float;
+    bytes_wr : float; bytes_rd : float;
+    cols_wr : float; cols_rd : float;
+    seeks : float; near_seeks : float;
+  }
   options "ocaml.type_equals" = "Load_stats.rates"
 
 type load_stats_ =
@@ -54,6 +60,10 @@ type load_stats_ =
       total_reads : long;
       total_bytes_wr : long;
       total_bytes_rd : long;
+      total_cols_wr : long;
+      total_cols_rd : long;
+      total_seeks : long;
+      total_near_seeks : long;
       averages : [(int * rates)];
     }
   options "ocaml.type_equals" = "Load_stats.stats"
