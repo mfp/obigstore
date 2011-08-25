@@ -294,15 +294,26 @@ let execute ks db loop =
         puts "%s written, %s read"
           (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_wr))
           (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_rd));
-        puts "%.0f seeks, %.0f near seeks" r.seeks r.near_seeks;
-      in
+        puts "%.0f seeks, %.0f near seeks" r.seeks r.near_seeks; in
+      let dt = stats.uptime in
         puts "Totals:";
-        puts "%Ld writes, %Ld reads" stats.total_writes stats.total_reads;
-        puts "%Ld columns written, %Ld columns reads" stats.total_cols_wr stats.total_cols_rd;
-        puts "%s written, %s read"
+        puts "Uptime: %.1fs" dt;
+        puts "%Ld writes (%.0f/s), %Ld reads (%.0f/s)"
+          stats.total_writes (Int64.to_float stats.total_writes /. dt)
+          stats.total_reads (Int64.to_float stats.total_reads /. dt);
+        puts "%Ld columns written (%.0f/s), %Ld columns read (%.0f/s)"
+          stats.total_cols_wr (Int64.to_float stats.total_cols_wr /. dt)
+          stats.total_cols_rd (Int64.to_float stats.total_cols_rd /. dt);
+        puts "%s written (%s/s), %s read (%s/s)"
           (Ob_util.format_size 1.0 stats.total_bytes_wr)
-          (Ob_util.format_size 1.0 stats.total_bytes_rd);
-        puts "%Ld seeks, %Ld near seeks" stats.total_seeks stats.total_near_seeks;
+          (Ob_util.format_size (1.0 /. dt) stats.total_bytes_wr)
+          (Ob_util.format_size 1.0 stats.total_bytes_rd)
+          (Ob_util.format_size (1.0 /. dt) stats.total_bytes_rd);
+        puts "%Ld seeks (%.0f/s), %Ld near seeks (%.0f/s)"
+          stats.total_seeks
+          (Int64.to_float stats.total_seeks /. dt)
+          stats.total_near_seeks
+          (Int64.to_float stats.total_near_seeks /. dt);
         List.iter pr_avg stats.averages;
         ret_nothing ()
 
