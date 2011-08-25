@@ -19,6 +19,14 @@
 
 (** Misc. utility functions *)
 
+(** [format_size x n] represents [x *. Int64.to_float n] as an amount in bytes
+  * in a human-readable way. *)
+val format_size : float -> Int64.t -> string
+
+(** [format_speed ~since ~now n] represents the transfer speed
+  * [n * (1. /. (now -. since))] (bytes/s) in a human-readable way. *)
+val format_speed : since:float -> now:float -> Int64.t -> string
+
 (** Readable progress report.
   * Sample usage:
   *  [Progress_report.with_progress_report Lwt_io.stderr f]

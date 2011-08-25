@@ -20,6 +20,17 @@
 open Lwt
 open Printf
 
+let format_size factor n =
+  if n > 1048576L then
+    sprintf "%.2f MB" (factor *. Int64.to_float n /. 1048576.)
+  else if n > 1024L then
+    sprintf "%.2f kB" (factor *. Int64.to_float n /. 1024.)
+  else
+    sprintf "%Ld B" (Int64.(of_float (factor *. to_float n)))
+
+let format_speed ~since ~now delta =
+  format_size (1. /. (now -. since)) delta ^ "/second"
+
 module Progress_report =
 struct
 
@@ -37,24 +48,13 @@ struct
         mutable avg_speed : int;
       }
 
-  let format_size factor n =
-    if n > 1048576L then
-      sprintf "%.2fs MB" (factor *. Int64.to_float n /. 1048576.)
-    else if n > 1024L then
-      sprintf "%.2fs kB" (factor *. Int64.to_float n /. 1024.)
-    else
-      sprintf "%Ld B" (Int64.(of_float (factor *. to_float n)))
-
-  let format_count t = format_size 1.0 t.curr
-
-  let format_speed since now delta =
-    format_size (1. /. (now -. since)) delta ^ "/second"
-
   let format_eta t =
     match t.max with
       | Some m when t.avg_speed > 0 ->
           sprintf "ETA: %ds" Int64.(to_int (div m (of_int t.avg_speed)))
       | _ -> ""
+
+  let format_count t = format_size 1.0 t.curr
 
   let output t =
     let now = Unix.gettimeofday () in
