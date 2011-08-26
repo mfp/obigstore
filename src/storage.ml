@@ -951,15 +951,16 @@ let get_slice_aux
               (* new key, increment count and copy the key to prev_key *)
                 cols_kept := 0;
                 cols_in_this_key := 0;
-                incr keys_so_far;
                 let acc' =
                   match key_data with
                     _ :: _ ->
+                      incr keys_so_far;
                       ((Bytea.contents prev_key, key_data) :: key_data_list, [])
                   | [] ->
-                      if not !first_pass && keep_columnless_keys then
+                      if not !first_pass && keep_columnless_keys then begin
+                        incr keys_so_far;
                         ((Bytea.contents prev_key, key_data) :: key_data_list, [])
-                      else acc
+                      end else acc
                 in
                   Bytea.clear prev_key;
                   Bytea.add_substring prev_key key_buf 0 key_len;
@@ -969,8 +970,12 @@ let get_slice_aux
           in
             first_pass := false;
             incr cols_in_this_key;
+            (* early termination w/o iterating over further keys if we
+             * already have enough  *)
+            if !keys_so_far >= max_keys then
+              Finish_fold acc'
             (* see if we already have enough columns for this key*)
-            if !cols_kept >= max_columns then begin
+            else if !cols_kept >= max_columns then begin
               (* seeking is very expensive, so we only do it when it looks
                * like the key has got a lot of columns *)
               if !cols_in_this_key - max_columns < 50 then (* FIXME: determine constant *)
@@ -993,15 +998,8 @@ let get_slice_aux
 
               let key_data = col_data :: key_data in
               let acc = (key_data_list, key_data) in
-                (* early termination w/o iterating over further keys if we
-                 * already have enough  *)
-                (* we cannot use >= because further columns for the same key
-                 * could follow *)
-                if !keys_so_far > max_keys then
-                  Finish_fold acc
-                (* alternatively, if we're in the last key, and have enough
-                 * columns, finish *)
-                else if !keys_so_far = max_keys && !cols_kept >= max_columns then
+                (* if we're in the last key, and have enough columns, finish *)
+                if !keys_so_far >= max_keys - 1 && !cols_kept >= max_columns then
                   Finish_fold acc
                 else
                   Continue_with acc
@@ -1012,11 +1010,13 @@ let get_slice_aux
           lwt l1, d1 =
             fold_over_data tx table fold_datum ([], [])
               ~reverse ~first_key:first ~up_to_key:up_to
-          in match d1 with
-              [] when not !first_pass && keep_columnless_keys ->
-                return ((Bytea.contents prev_key, d1) :: l1)
-            | [] -> return l1
-            | cols -> return ((Bytea.contents prev_key, cols) :: l1) in
+          in
+            if !keys_so_far >= max_keys then return l1
+            else match d1 with
+                [] when not !first_pass && keep_columnless_keys ->
+                  return ((Bytea.contents prev_key, d1) :: l1)
+              | [] -> return l1
+              | cols -> return ((Bytea.contents prev_key, cols) :: l1) in
 
         let rev_key_data_list2 =
           M.fold
