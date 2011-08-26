@@ -775,19 +775,19 @@ let count_keys tx table range =
        else (n + 1))
     tx table ~max_keys:max_int range >|= Int64.of_int
 
-let merge_rev cmp l1 l2 =
-  let rec loop_merge_rev cmp acc l1 l2 =
+let rev_merge_rev cmp l1 l2 =
+  let rec do_rev_merge_rev cmp acc l1 l2 =
     match l1, l2 with
         [], [] -> acc
-      | [], x :: tl | x :: tl, [] -> loop_merge_rev cmp (x :: acc) [] tl
+      | [], x :: tl | x :: tl, [] -> do_rev_merge_rev cmp (x :: acc) [] tl
       | x1 :: tl1, x2 :: tl2 ->
           match cmp x1 x2 with
-              n when n > 0 -> loop_merge_rev cmp (x1 :: acc) tl1 l2
-            | n when n < 0 -> loop_merge_rev cmp (x2 :: acc) l1 tl2
-            | _ -> loop_merge_rev cmp (x2 :: acc) tl1 tl2
-  in loop_merge_rev cmp [] l1 l2
+              n when n > 0 -> do_rev_merge_rev cmp (x1 :: acc) tl1 l2
+            | n when n < 0 -> do_rev_merge_rev cmp (x2 :: acc) l1 tl2
+            | _ -> do_rev_merge_rev cmp (x2 :: acc) tl1 tl2
+  in do_rev_merge_rev cmp [] l1 l2
 
-let filter_map_merge cmp map merge ~limit l1 l2 =
+let filter_map_rev_merge cmp map merge ~limit l1 l2 =
 
   let rec loop_fmm cmp f g acc l1 l2 = function
       n when n > 0 -> begin
@@ -921,7 +921,7 @@ let get_slice_aux
                  else
                    (fun c1 c2 -> String.compare c1.name c2.name) in
 
-               let cols = merge_rev cmp_cols rev_cols1 rev_cols2 in
+               let cols = rev_merge_rev cmp_cols rev_cols1 rev_cols2 in
 
                  match postproc_keydata (key, List.rev cols) with
                    None -> return (key_data_list, keys_so_far)
@@ -1064,10 +1064,10 @@ let get_slice_aux
             (* both are S-to-G *)
             (fun cols1 cols2 -> List.merge cmp_cols cols1 cols2)
           else (* both are G-to-S *)
-            (fun cols1 cols2 -> merge_rev cmp_cols cols1 cols2) in
+            (fun cols1 cols2 -> rev_merge_rev cmp_cols cols1 cols2) in
 
         let rev_key_data_list =
-          filter_map_merge
+          filter_map_rev_merge
             cmp_keys
             postproc_keydata
             (fun (k, rev_cols1) (_, rev_cols2) ->
