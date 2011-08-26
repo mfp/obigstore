@@ -811,6 +811,13 @@ let filter_map_rev_merge cmp map merge ~limit l1 l2 =
 
   in loop_fmm cmp map merge [] l1 l2 limit
 
+let rev_filter_map f l =
+  let rec do_rev_filter_map f acc = function
+      [] -> acc
+    | x :: tl -> match f x with
+          Some y -> do_rev_filter_map f (y :: acc) tl
+        | None -> do_rev_filter_map f acc tl
+  in do_rev_filter_map f [] l
 
 let get_slice_aux
       postproc_keydata get_keydata_key keep_columnless_keys
@@ -923,7 +930,7 @@ let get_slice_aux
 
                let cols = rev_merge_rev cmp_cols rev_cols1 rev_cols2 in
 
-                 match postproc_keydata (key, List.rev cols) with
+                 match postproc_keydata ~guaranteed_cols_ok:false (key, List.rev cols) with
                    None -> return (key_data_list, keys_so_far)
                  | Some x -> return (x :: key_data_list, keys_so_far + 1))
           ([], 0) l in
@@ -1034,71 +1041,94 @@ let get_slice_aux
             (let first, up_to =
                if reverse then (up_to, first) else (first, up_to)
              in M.submap ?first ?up_to (M.find_default M.empty table tx.added))
-            [] in
+            []
 
-        (* if the key range was reverse,
-         * rev_key_data_list1 : (key * column list) list
-         * holds the keys in normal order (smaller to greater),
-         * otherwise in reverse order (greater to smaller).
-         * rev_key_data_list2 is always in reverse order.
-         * *)
+        in
+          match rev_key_data_list2 with
+              [] -> (* fast path for common case with empty in-tx data *)
+                let last_key = match rev_key_data_list1 with
+                    (k, _) :: _ -> Some k
+                  | [] -> None in
+                let postproc keydata =
+                  postproc_keydata ~guaranteed_cols_ok:true keydata
+                in return (last_key, rev_filter_map postproc rev_key_data_list1)
 
-        let key_data_list1 = List.rev rev_key_data_list1 in
-        let key_data_list2 =
-          if not reverse then
-            List.rev rev_key_data_list2
-          else rev_key_data_list2 in
+            | rev_key_data_list2 ->
+                (* if the key range was reverse,
+                 * rev_key_data_list1 : (key * column list) list
+                 * holds the keys in normal order (smaller to greater),
+                 * otherwise in reverse order (greater to smaller).
+                 * rev_key_data_list2 is always in reverse order.
+                 * *)
 
-        (* now both are in the desired order *)
+                let key_data_list1 = List.rev rev_key_data_list1 in
+                let key_data_list2 =
+                  if not reverse then
+                    List.rev rev_key_data_list2
+                  else rev_key_data_list2 in
 
-        let cmp_keys =
-          if reverse then
-            (fun (k1, _) (k2, _) -> - String.compare k1 k2)
-          else
-            (fun (k1, _) (k2, _) -> String.compare k1 k2) in
+                (* now both are in the desired order *)
 
-        let cmp_cols c1 c2 = String.compare c1.name c2.name in
+                let cmp_keys =
+                  if reverse then
+                    (fun (k1, _) (k2, _) -> - String.compare k1 k2)
+                  else
+                    (fun (k1, _) (k2, _) -> String.compare k1 k2) in
 
-        let merge =
-          if reverse then
-            (* both are S-to-G *)
-            (fun cols1 cols2 -> List.merge cmp_cols cols1 cols2)
-          else (* both are G-to-S *)
-            (fun cols1 cols2 -> rev_merge_rev cmp_cols cols1 cols2) in
+                let cmp_cols c1 c2 = String.compare c1.name c2.name in
 
-        let rev_key_data_list =
-          filter_map_rev_merge
-            cmp_keys
-            postproc_keydata
-            (fun (k, rev_cols1) (_, rev_cols2) ->
-               let cols = merge rev_cols1 rev_cols2 in
-                 (k, List.rev cols))
-            ~limit:max_keys key_data_list1 key_data_list2 in
+                let merge =
+                  if reverse then
+                    (* both are S-to-G *)
+                    (fun cols1 cols2 -> List.merge cmp_cols cols1 cols2)
+                  else (* both are G-to-S *)
+                    (fun cols1 cols2 -> rev_merge_rev cmp_cols cols1 cols2) in
 
-        let last_key = match rev_key_data_list with
-            x :: _ -> Some (get_keydata_key x)
-          | [] -> None
-        in return (last_key, List.rev rev_key_data_list)
+                let rev_key_data_list =
+                  filter_map_rev_merge
+                    cmp_keys
+                    (postproc_keydata ~guaranteed_cols_ok:false)
+                    (fun (k, rev_cols1) (_, rev_cols2) ->
+                       let cols = merge rev_cols1 rev_cols2 in
+                         (k, List.rev cols))
+                    ~limit:max_keys key_data_list1 key_data_list2 in
+
+                let last_key = match rev_key_data_list with
+                    x :: _ -> Some (get_keydata_key x)
+                  | [] -> None
+                in return (last_key, List.rev rev_key_data_list)
+
+let record_column_reads load_stats key last_column columns =
+  let col_bytes =
+    List.fold_left
+      (fun s col ->
+         s + String.length col.data + String.length col.name)
+      0
+      columns
+  in
+    Load_stats.record_bytes_rd load_stats
+      (String.length key + String.length last_column + col_bytes);
+    Load_stats.record_cols_rd load_stats (List.length columns)
 
 let get_slice tx table
       ?(max_keys = max_int) ?(max_columns = max_int)
       ?(decode_timestamps = false) key_range column_range =
-  let postproc_keydata (key, rev_cols) =
+  let postproc_keydata ~guaranteed_cols_ok (key, rev_cols) =
     match rev_cols with
-      | _ :: _ as l when max_columns > 0 ->
-          let columns = List.take max_columns (List.rev l) in
-          let last_column = (List.last columns).name in
-          let col_bytes =
-            List.fold_left
-              (fun s col ->
-                 s + String.length col.data + String.length col.name)
-              0
-              columns
-          in
-            Load_stats.record_bytes_rd tx.ks.ks_db.load_stats
-              (String.length key + String.length last_column + col_bytes);
-            Load_stats.record_cols_rd tx.ks.ks_db.load_stats (List.length columns);
-            Some ({ key; last_column; columns; })
+      | last_candidate :: _ as l when max_columns > 0 ->
+          if guaranteed_cols_ok then begin
+            (* we have at most max_columns in l *)
+            let last_column = last_candidate.name in
+            let columns = List.rev l in
+              record_column_reads tx.ks.ks_db.load_stats key last_column columns;
+              Some ({ key; last_column; columns; })
+          end else begin
+            (* we might have more, so need to List.take *)
+            let columns = List.take max_columns (List.rev l) in
+            let last_column = (List.last columns).name in
+              record_column_reads tx.ks.ks_db.load_stats key last_column columns;
+              Some ({ key; last_column; columns; })
+          end
       | _ -> None in
 
   let get_keydata_key { key; _ } = key
@@ -1112,7 +1142,7 @@ let get_slice_values tx table
       ?(max_keys = max_int) key_range columns =
   let bytes_read = ref 0 in
   let cols_read = ref 0 in
-  let postproc_keydata (key, cols) =
+  let postproc_keydata ~guaranteed_cols_ok (key, cols) =
     let l =
       List.map
         (fun column ->
