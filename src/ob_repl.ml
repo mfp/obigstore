@@ -45,6 +45,7 @@ let params =
     ]
 
 let tx_level = ref 0
+let debug_requests = ref false
 
 module Timing =
 struct
@@ -154,7 +155,8 @@ struct
   let help_message = function
       `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" (cmd ^ ";") h
     | `Exactly (cmd, _, _, (args, h))
-    | `At_least (cmd, _, _, (args, h)) ->
+    | `At_least (cmd, _, _, (args, h))
+    | `One_of (cmd, _, _, (args, h)) ->
         sprintf ".%-24s  %s" (sprintf "%s %s;" cmd args) h
 
   let show_directive_help d =
@@ -175,6 +177,12 @@ struct
               show_directive_help x
             else
               f args
+        | `One_of (_, f, l, _) as x ->
+            if List.length args <> 1 ||
+               not (List.mem (List.hd args) l) then
+              show_directive_help x
+            else
+              f (List.hd args)
     with Not_found -> puts "Unknown directive"
 
   let ign_args ~name ~help f =
@@ -185,6 +193,9 @@ struct
 
   let at_least n ~name ~help f =
     Hashtbl.replace directive_tbl name (`At_least (name, f, n, help))
+
+  let one_of l ~name ~help f =
+    Hashtbl.replace directive_tbl name (`One_of (name, f, l, help))
 
   let show_help = function
       [] ->
@@ -204,18 +215,33 @@ struct
              ~name:"help"
              ~help:("CMD", "Show this message or help about CMD") show_help
 
+  let bool_to_s = function true -> "on" | _ -> "off"
+
   let () =
     ign_args ~name:"timing" ~help:"Toggle timing of commands"
       (fun () ->
          Timing.toggle ();
-         puts "Timing is %s" (if Timing.enabled () then "on" else "off"))
+         puts "Timing is %s" (bool_to_s (Timing.enabled ())))
+
+  let () =
+    one_of ["request"] ~name:"debug"
+      ~help:("WHAT", "Toggle debugging of WHAT (WHAT = request)")
+      (function
+         | "request" ->
+             debug_requests := not !debug_requests;
+             puts "Request debugging is %s" (bool_to_s !debug_requests)
+         | _ -> ())
+
 end
 
-let execute ks db loop =
+let execute ks db loop r =
+  let open Request in
   let ret f v = return (fun () -> f v) in
   let ret_nothing () = return (fun () -> ()) in
 
-  let open Request in function
+  if !debug_requests then Format.printf "Request:@\n%a@." Request.pp r;
+
+  match r with
 
   | Register_keyspace _ | Get_keyspace _
   | Load _| Dump _ | Get_column _ | Get_column_values _ | Get_columns _
