@@ -838,7 +838,7 @@ let rev_filter_map f l =
   in do_rev_filter_map f [] l
 
 let get_slice_aux
-      postproc_keydata get_keydata_key keep_columnless_keys
+      postproc_keydata get_keydata_key ~keep_columnless_keys
       tx table
       ~max_keys
       ~max_columns
@@ -1152,7 +1152,8 @@ let get_slice tx table
 
   in
     Load_stats.record_reads tx.ks.ks_db.load_stats 1;
-    get_slice_aux postproc_keydata get_keydata_key false tx table
+    get_slice_aux
+      postproc_keydata get_keydata_key ~keep_columnless_keys:false tx table
       ~max_keys ~max_columns ~decode_timestamps key_range column_range
 
 let get_slice_values tx table
@@ -1175,7 +1176,8 @@ let get_slice_values tx table
   let get_keydata_key (key, _) = key in
 
   lwt ret =
-    get_slice_aux postproc_keydata get_keydata_key true tx table
+    get_slice_aux
+      postproc_keydata get_keydata_key ~keep_columnless_keys:true tx table
        ~max_keys ~max_columns:(List.length columns)
        ~decode_timestamps:false key_range (Columns columns)
   in
