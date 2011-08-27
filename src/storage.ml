@@ -938,7 +938,7 @@ let get_slice_aux
                    [] in
 
                (* rev_cols2 is G-to-S, want S-to-G if ~reverse *)
-               let rev_cols2 = if reverse then List.rev rev_cols2 else rev_cols2 in
+               let rev_cols2 = if reverse then rev rev_cols2 else rev_cols2 in
 
                let cmp_cols =
                  if reverse then
@@ -946,16 +946,16 @@ let get_slice_aux
                  else
                    (fun c1 c2 -> String.compare c1.name c2.name) in
 
-               let cols = rev_merge_rev cmp_cols rev_cols1 rev_cols2 in
+               let cols = rev (rev_merge_rev cmp_cols rev_cols1 rev_cols2) in
 
-                 match postproc_keydata ~guaranteed_cols_ok:false (key, List.rev cols) with
+                 match postproc_keydata ~guaranteed_cols_ok:false (key, cols) with
                    None -> return (key_data_list, keys_so_far)
                  | Some x -> return (x :: key_data_list, keys_so_far + 1))
           ([], 0) l in
       let last_key = match key_data_list with
           x :: _ -> Some (get_keydata_key x)
         | [] -> None
-      in return (last_key, List.rev key_data_list)
+      in return (last_key, rev key_data_list)
 
     | Key_range { first; up_to; reverse; } ->
         let first_pass = ref true in
@@ -1055,7 +1055,7 @@ let get_slice_aux
                       else l)
                    key_data_in_mem
                    []
-               in (key, if reverse then List.rev cols else cols) :: l)
+               in (key, if reverse then rev cols else cols) :: l)
             (let first, up_to =
                if reverse then (up_to, first) else (first, up_to)
              in M.submap ?first ?up_to (M.find_default M.empty table tx.added))
@@ -1079,10 +1079,9 @@ let get_slice_aux
                  * rev_key_data_list2 is always in reverse order.
                  * *)
 
-                let key_data_list1 = List.rev rev_key_data_list1 in
+                let key_data_list1 = rev rev_key_data_list1 in
                 let key_data_list2 =
-                  if not reverse then
-                    List.rev rev_key_data_list2
+                  if not reverse then rev rev_key_data_list2
                   else rev_key_data_list2 in
 
                 (* now both are in the desired order *)
@@ -1114,7 +1113,7 @@ let get_slice_aux
                 let last_key = match rev_key_data_list with
                     x :: _ -> Some (get_keydata_key x)
                   | [] -> None
-                in return (last_key, List.rev rev_key_data_list)
+                in return (last_key, rev rev_key_data_list)
 
 let record_column_reads load_stats key last_column columns =
   let col_bytes =
@@ -1137,12 +1136,12 @@ let get_slice tx table
           if guaranteed_cols_ok then begin
             (* we have at most max_columns in l *)
             let last_column = last_candidate.name in
-            let columns = List.rev l in
+            let columns = rev l in
               record_column_reads tx.ks.ks_db.load_stats key last_column columns;
               Some ({ key; last_column; columns; })
           end else begin
             (* we might have more, so need to List.take *)
-            let columns = List.take max_columns (List.rev l) in
+            let columns = List.take max_columns (rev l) in
             let last_column = (List.last columns).name in
               record_column_reads tx.ks.ks_db.load_stats key last_column columns;
               Some ({ key; last_column; columns; })
