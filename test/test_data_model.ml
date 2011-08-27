@@ -610,7 +610,14 @@ struct
                "c", ["k2", "kk2"; "w", "ww"]
              ] >>
            expect1 tx) >>
-      D.read_committed_transaction ks expect1
+      D.read_committed_transaction ks expect1 >>
+      D.read_committed_transaction ks
+        (fun tx ->
+           put_slice ks "tbl" [ "a", ["k", "new"] ] >>
+           D.get_slice tx "tbl"
+             (rev_key_range ~first:"b" ~up_to:"a" ())
+             DM.All_columns >|=
+           aeq_slice (Some "a", [ "a", "k", [ "v", "vv"; "k", "new" ] ]))
 
   let test_get_slice_max_keys db =
     lwt ks = D.register_keyspace db "test_get_slice_max_keys" in

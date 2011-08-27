@@ -775,6 +775,11 @@ let count_keys tx table range =
        else (n + 1))
     tx table ~max_keys:max_int range >|= Int64.of_int
 
+let rec rev_append l = function
+    a::b::c::d::tl -> rev_append (d :: c :: b :: a :: l) tl
+  | x :: tl -> rev_append (x :: l) tl
+  | [] -> l
+
 let rev_merge_rev cmp l1 l2 =
   let rec do_rev_merge_rev cmp acc l1 l2 =
     match l1, l2 with
@@ -786,6 +791,19 @@ let rev_merge_rev cmp l1 l2 =
             | n when n < 0 -> do_rev_merge_rev cmp (x2 :: acc) l1 tl2
             | _ -> do_rev_merge_rev cmp (x2 :: acc) tl1 tl2
   in do_rev_merge_rev cmp [] l1 l2
+
+let rev l = rev_append [] l
+
+let rev_merge cmp l1 l2 =
+  let rec do_merge cmp acc l1 l2 =
+    match l1, l2 with
+        [], x | x, [] -> rev_append acc x
+      | x1 :: tl1, x2 :: tl2 ->
+          match cmp x1 x2 with
+              n when n < 0 -> do_merge cmp (x1 :: acc) tl1 l2
+            | n when n > 0 -> do_merge cmp (x2 :: acc) l1 tl2
+            | _ -> do_merge cmp (x2 :: acc) tl1 tl2
+  in do_merge cmp [] l1 l2
 
 let filter_map_rev_merge cmp map merge ~limit l1 l2 =
 
@@ -1080,9 +1098,9 @@ let get_slice_aux
                 let merge =
                   if reverse then
                     (* both are S-to-G *)
-                    (fun cols1 cols2 -> List.merge cmp_cols cols1 cols2)
+                    (fun cols1 cols2 -> rev (rev_merge cmp_cols cols1 cols2))
                   else (* both are G-to-S *)
-                    (fun cols1 cols2 -> rev_merge_rev cmp_cols cols1 cols2) in
+                    (fun cols1 cols2 -> rev (rev_merge_rev cmp_cols cols1 cols2)) in
 
                 let rev_key_data_list =
                   filter_map_rev_merge
@@ -1090,7 +1108,7 @@ let get_slice_aux
                     (postproc_keydata ~guaranteed_cols_ok:false)
                     (fun (k, rev_cols1) (_, rev_cols2) ->
                        let cols = merge rev_cols1 rev_cols2 in
-                         (k, List.rev cols))
+                         (k, cols))
                     ~limit:max_keys key_data_list1 key_data_list2 in
 
                 let last_key = match rev_key_data_list with
