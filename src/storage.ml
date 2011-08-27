@@ -837,6 +837,44 @@ let rev_filter_map f l =
         | None -> do_rev_filter_map f acc tl
   in do_rev_filter_map f [] l
 
+let simple_column_range_selector = function
+  | Columns l ->
+      if List.length l < 5 then (* TODO: determine threshold *)
+        (fun ~buf ~len ->
+           List.exists
+             (fun s ->
+                String_util.cmp_substrings s 0 (String.length s) buf 0 len = 0)
+             l)
+      else begin
+        let s = S.of_list l in
+          (fun ~buf ~len ->
+             let c =
+               if len = String.length buf then buf
+               else String.sub buf 0 len
+             in S.mem c s)
+      end
+  | Column_range { first; up_to; reverse; } ->
+      let first, up_to = if reverse then (up_to, first) else (first, up_to) in
+      let cmp_first = match first with
+          None -> (fun ~buf ~len -> true)
+        | Some x ->
+            (fun ~buf ~len ->
+               String_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
+      let cmp_up_to = match up_to with
+          None -> (fun ~buf ~len -> true)
+        | Some x ->
+            (fun ~buf ~len ->
+               String_util.cmp_substrings buf 0 len x 0 (String.length x) < 0)
+      in (fun ~buf ~len -> cmp_first ~buf ~len && cmp_up_to ~buf ~len)
+
+let column_range_selector = function
+    All_columns -> (fun ~buf ~len -> true)
+  | Column_range_union [] -> (fun ~buf ~len -> false)
+  | Column_range_union [x] -> simple_column_range_selector x
+  | Column_range_union l ->
+        let fs = List.map simple_column_range_selector l in
+          (fun ~buf ~len -> List.exists (fun f -> f ~buf ~len) fs)
+
 let get_slice_aux
       postproc_keydata get_keydata_key ~keep_columnless_keys
       tx table
@@ -844,36 +882,7 @@ let get_slice_aux
       ~max_columns
       ~decode_timestamps
       key_range column_range =
-  let column_selected = match column_range with
-      All_columns -> (fun ~buf ~len -> true)
-    | Columns l ->
-        if List.length l < 5 then (* TODO: determine threshold *)
-          (fun ~buf ~len ->
-             List.exists
-               (fun s ->
-                  String_util.cmp_substrings s 0 (String.length s) buf 0 len = 0)
-               l)
-        else begin
-          let s = S.of_list l in
-            (fun ~buf ~len ->
-               let c =
-                 if len = String.length buf then buf
-                 else String.sub buf 0 len
-               in S.mem c s)
-        end
-    | Column_range { first; up_to; reverse; } ->
-        let first, up_to = if reverse then (up_to, first) else (first, up_to) in
-        let cmp_first = match first with
-            None -> (fun ~buf ~len -> true)
-          | Some x ->
-              (fun ~buf ~len ->
-                 String_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
-        let cmp_up_to = match up_to with
-            None -> (fun ~buf ~len -> true)
-          | Some x ->
-              (fun ~buf ~len ->
-                 String_util.cmp_substrings buf 0 len x 0 (String.length x) < 0)
-        in (fun ~buf ~len -> cmp_first ~buf ~len && cmp_up_to ~buf ~len) in
+  let column_selected = column_range_selector column_range in
 
   let is_column_deleted = is_column_deleted tx table
 
@@ -884,7 +893,7 @@ let get_slice_aux
           (fun k -> not (S.mem k (M.find_default S.empty table tx.deleted_keys)))
           (List.sort String.compare l) in
       let reverse = match column_range with
-          Column_range { reverse } -> reverse
+          Column_range_union [Column_range { reverse; _ }] -> reverse
         | _ -> false in
       lwt key_data_list, _ =
         Lwt_list.fold_left_s
@@ -1179,7 +1188,8 @@ let get_slice_values tx table
     get_slice_aux
       postproc_keydata get_keydata_key ~keep_columnless_keys:true tx table
        ~max_keys ~max_columns:(List.length columns)
-       ~decode_timestamps:false key_range (Columns columns)
+       ~decode_timestamps:false key_range
+       (Column_range_union [Columns columns])
   in
     Load_stats.record_reads tx.ks.ks_db.load_stats 1;
     Load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
@@ -1204,7 +1214,8 @@ let get_column_values tx table key columns =
 
 let get_column tx table key column_name =
   match_lwt
-    get_columns tx table key ~decode_timestamps:true (Columns [column_name])
+    get_columns tx table key ~decode_timestamps:true
+      (Column_range_union [Columns [column_name]])
   with
       Some (_, c :: _) -> return (Some (c.data, c.timestamp))
     | _ -> return None

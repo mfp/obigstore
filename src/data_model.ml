@@ -63,10 +63,13 @@ type key_range =
     Key_range of range
   | Keys of string list
 
+type simple_column_range =
+    Columns of string list
+  | Column_range of range
+
 type column_range =
     All_columns
-  | Columns of string list
-  | Column_range of range
+  | Column_range_union of simple_column_range list
 
 type backup_format = int
 

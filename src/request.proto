@@ -26,10 +26,14 @@ type key_range =
   | Keys [string]
   options "ocaml.type_equals" = "Data_model.key_range"
 
+type simple_column_range =
+    Columns [string]
+  | Column_range range
+  options "ocaml.type_equals" = "Data_model.simple_column_range"
+
 type column_range =
     All_columns
-  | Columns [string]
-  | Column_range range
+  | Column_range_union [simple_column_range]
   options "ocaml.type_equals" = "Data_model.column_range"
 
 type timestamp = No_timestamp | Timestamp long

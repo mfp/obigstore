@@ -25,6 +25,19 @@ module R = Request
 
 let all_keys =
   Key_range.Key_range { Range.first = None; up_to = None; reverse = false }
+
+let col_range_of_multi_range = function
+    [] -> Column_range.All_columns
+  | l ->
+      let rev_union =
+        (List.fold_left
+           (fun l x -> match l, x with
+              | Simple_column_range.Columns cs :: tl, `Elm e ->
+                  Simple_column_range.Columns (cs @ [e]) :: tl
+              | l, `Range r -> Simple_column_range.Column_range r :: l
+              | l, `Elm e -> Simple_column_range.Columns [e] :: l)
+        [] l)
+      in Column_range.Column_range_union (List.rev rev_union)
 %}
 
 %token <string> ID
@@ -58,7 +71,7 @@ phrase : /* empty */  { Nothing }
   | delete    { $1 }
   | directive { $1 }
 
-size : 
+size :
     SIZE ID   { with_ks
                   (fun keyspace ->
                      R.Table_size_on_disk
@@ -70,7 +83,7 @@ size :
                        { R.Key_range_size_on_disk.keyspace;
                          table = $2; range = $3 }) }
 
-range_no_max : 
+range_no_max :
     LBRACKET opt_id RANGE opt_id RBRACKET
               { { Range.first = $2; up_to = $4; reverse = false; } }
 
@@ -80,25 +93,21 @@ count :
                   (fun keyspace ->
                      let key_range = match $3 with
                          None -> all_keys
-                       | Some (Range r, _) -> Key_range.Key_range r 
+                       | Some (Range r, _) -> Key_range.Key_range r
                        | Some (List l, _) -> Key_range.Keys l
                      in R.Count_keys { R.Count_keys.keyspace; table = $2;
                                           key_range; }) }
 
 get :
-    GET ID range opt_range
+    GET ID range opt_multi_range
        { with_ks
            (fun keyspace ->
-              let max_columns = match $4 with
-                  Some (_, x) -> x
-                | None -> None in
+              let column_range, max_columns = match $4 with
+                  None -> Column_range.All_columns, None
+                | Some x -> x in
               let key_range = match fst $3 with
                   Range r -> Key_range.Key_range r
-                | List l -> Key_range.Keys l in
-              let column_range = match $4 with
-                  None -> Column_range.All_columns
-                | Some (Range r, _) -> Column_range.Column_range r
-                | Some (List l, _) -> Column_range.Columns l
+                | List l -> Key_range.Keys l
               in
                 R.Get_slice
                   { R.Get_slice.keyspace; table = $2;
@@ -122,10 +131,10 @@ get :
 
 put :
     PUT ID LBRACKET ID RBRACKET LBRACKET bindings RBRACKET
-        { 
+        {
           with_ks
             (fun keyspace ->
-               let columns = 
+               let columns =
                  List.map
                    (fun (name, data) ->
                       { Column.name; data; timestamp = Timestamp.No_timestamp })
@@ -160,10 +169,30 @@ directive_params :
   | directive_params ID { $1 @ [ $2 ] }
 
 opt_range :
-  | range        { Some $1 }
-  | /* empty */  { None }
+  | range               { Some $1 }
+  | /* empty */         { None }
 
-range : 
+opt_multi_range :
+  | /* empty */   { None }
+  | LBRACKET opt_cond RBRACKET
+                  { Some (Column_range.All_columns, $2) }
+  | LBRACKET multi_range opt_cond RBRACKET
+                  { Some (col_range_of_multi_range $2, $3) }
+
+multi_range :
+    multi_range_elm
+                 { [$1] }
+  | multi_range COMMA multi_range_elm
+                 { $1 @ [ $3] }
+
+multi_range_elm :
+    ID           { `Elm $1 }
+  | opt_id RANGE opt_id
+                 { `Range { Range.first = $1; up_to = $3; reverse = false; } }
+  | opt_id REVRANGE opt_id
+                 { `Range { Range.first = $1; up_to = $3; reverse = true; } }
+
+range :
   | LBRACKET opt_id RANGE opt_id opt_cond RBRACKET
                  { (Range { Range.first = $2; up_to = $4; reverse = false; },
                          $5) }
