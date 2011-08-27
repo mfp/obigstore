@@ -145,6 +145,10 @@ struct
      GET table[key][c1,c2];     Get columns c1 and c2 from key in table\n\
      GET table[k1:k2/10];       Get all columns for up to 10 keys between k1 and k2\n\
      GET table[k2~k1/10];       Similar to above in reverse order\n\
+     GET table[k1:k2/10][c1,c2,c5:c9/4];
+                           Get up to 4 columns taken from c1, c2, and the
+                           range from c5 to c9, for up to 10 keys
+                           between k1 and k2\n\
      \n\
      PUT table[key][c1=\"v1\", c2=\"v2\"];
                            Put columns c1 and c2 into given key in table\n\
@@ -155,13 +159,15 @@ struct
   let help_message = function
       `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" (cmd ^ ";") h
     | `Exactly (cmd, _, _, (args, h))
-    | `At_least (cmd, _, _, (args, h))
-    | `One_of (cmd, _, _, (args, h)) ->
+    | `At_least (cmd, _, _, (args, h)) ->
         sprintf ".%-24s  %s" (sprintf "%s %s;" cmd args) h
+    | `One_of (cmd, _, l, (args, h)) ->
+        sprintf ".%-24s  %s\n%25s  Valid values for %s: %s"
+          (sprintf "%s %s;" cmd args) h "" args (String.concat ", " l)
 
   let show_directive_help d =
     puts "usage:";
-    puts "%s" (help_message d)
+    print_endline (help_message d)
 
   let eval_directive cmd args =
     try
@@ -225,7 +231,7 @@ struct
 
   let () =
     one_of ["request"] ~name:"debug"
-      ~help:("WHAT", "Toggle debugging of WHAT (WHAT = request)")
+      ~help:("WHAT", "Toggle debugging of WHAT.")
       (function
          | "request" ->
              debug_requests := not !debug_requests;
@@ -430,5 +436,7 @@ let () =
             outer_loop ()
     in
       curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
+      puts "ob_repl";
+      puts "Enter \".help;\" for instructions.";
       outer_loop ()
   end
