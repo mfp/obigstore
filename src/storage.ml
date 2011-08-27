@@ -875,16 +875,66 @@ let column_range_selector = function
         let fs = List.map simple_column_range_selector l in
           (fun ~buf ~len -> List.exists (fun f -> f ~buf ~len) fs)
 
+let column_range_selector_for_predicate = function
+    None -> (fun ~buf ~len -> false)
+  | Some pred ->
+      let col_set =
+        List.fold_left
+          (fun s preds ->
+             List.fold_left
+               (fun s pred -> match pred with
+                    Column_val (col, _, _) -> S.add col s
+                  | At_least _ -> s)
+               s preds)
+          S.empty
+          pred
+      in simple_column_range_selector (Columns (S.to_list col_set))
+
+let scmp = String_util.compare
+
+let row_predicate_func = function
+    None -> (fun _ -> true)
+  | Some pred ->
+      let eval_col_val_pred = function
+          EQ x -> (fun v -> scmp v x = 0)
+        | LT x -> (fun v -> scmp v x < 0)
+        | GT x -> (fun v -> scmp v x > 0)
+        | LE x -> (fun v -> scmp v x <= 0)
+        | GE x -> (fun v -> scmp v x >= 0)
+        | Between (x, true, y, true) -> (fun v -> scmp v x >= 0 && scmp v y <= 0)
+        | Between (x, false, y, true) -> (fun v -> scmp v x > 0 && scmp v y <= 0)
+        | Between (x, true, y, false) -> (fun v -> scmp v x >= 0 && scmp v y < 0)
+        | Between (x, false, y, false) -> (fun v -> scmp v x > 0 && scmp v y < 0)
+        | Any -> (fun _ -> true) in
+      let eval_simple = function
+          At_least n -> (fun cols -> List.length cols >= n)
+        | Column_val (name, mandatory, rel) ->
+            let f = eval_col_val_pred rel in
+              (fun cols ->
+                 try f (List.find (fun c -> c.name = name) cols).data
+                 with Not_found -> not mandatory) in
+      let eval_or preds =
+        let fs = List.map eval_simple preds in
+          (fun cols -> List.exists (fun f -> f cols) fs) in
+      let eval_and preds =
+        let fs = List.map eval_or preds in
+          (fun cols -> List.for_all (fun f -> f cols) fs)
+      in eval_and pred
+
 let get_slice_aux
       postproc_keydata get_keydata_key ~keep_columnless_keys
       tx table
       ~max_keys
       ~max_columns
       ~decode_timestamps
-      key_range column_range =
+      key_range ?predicate column_range =
   let column_selected = column_range_selector column_range in
 
-  let is_column_deleted = is_column_deleted tx table
+  let is_column_deleted = is_column_deleted tx table in
+
+  let column_needed_for_predicate = column_range_selector_for_predicate predicate in
+
+  let eval_predicate = row_predicate_func predicate
 
   in match key_range with
     Keys l ->
@@ -902,7 +952,7 @@ let get_slice_aux
              else
                let columns_selected = ref 0 in
 
-               let fold_datum rev_cols it
+               let fold_datum (rev_cols, rev_predicate_cols) it
                      ~key_buf ~key_len ~column_buf ~column_len
                      ~timestamp_buf =
                  (* must skip deleted columns *)
@@ -910,41 +960,66 @@ let get_slice_aux
                       ~key_buf:key ~key_len:(String.length key)
                       ~column_buf ~column_len then
                    Continue
-                 (* also skip non-selected columns *)
-                 else if not (column_selected column_buf column_len) then
-                   Continue
-                 (* otherwise, if the column is not deleted and is selected *)
+                 (* also skip columns not selected + not needed for predicate *)
                  else begin
-                   incr columns_selected;
-                   let data = IT.get_value it in
-                   let col = String.sub column_buf 0 column_len in
-                   let timestamp = match decode_timestamps with
-                       false -> No_timestamp
-                     | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
-                   let rev_cols = { name = col; data; timestamp; } :: rev_cols in
-                     if !columns_selected >= max_columns then
-                       Finish_fold rev_cols
-                     else Continue_with rev_cols
+                   let selected = column_selected column_buf column_len in
+                   let needed_for_pred =
+                     column_needed_for_predicate column_buf column_len
+                   in
+                     if not selected && not needed_for_pred then
+                       Continue
+                     (* otherwise, if the column is not deleted and is selected *)
+                     else begin
+                       let data = IT.get_value it in
+                       let col = String.sub column_buf 0 column_len in
+                       let timestamp = match decode_timestamps with
+                           false -> No_timestamp
+                         | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
+                       let col = { name = col; data; timestamp; } in
+                         let rev_cols =
+                           if selected then begin
+                             incr columns_selected;
+                             col :: rev_cols
+                           end else rev_cols in
+                         let rev_predicate_cols =
+                           if not needed_for_pred then rev_predicate_cols
+                           else col :: rev_predicate_cols
+                         in
+                           (* FIXME: only early exit if got all the columns
+                            * needed to evaluate the predicate? *)
+                           if !columns_selected >= max_columns then
+                             Finish_fold (rev_cols, rev_predicate_cols)
+                           else Continue_with (rev_cols, rev_predicate_cols)
+                     end
                  end in
 
-               lwt rev_cols1 =
+               lwt rev_cols1, rev_pred_cols1 =
                  let first_key, up_to_key =
                    if reverse then
                      (Some (key ^ "\000"), Some key)
                    else
                      (Some key, Some (key ^ "\000"))
-                 in fold_over_data tx table fold_datum []
+                 in fold_over_data tx table fold_datum ([], [])
                       ~reverse ~first_key ~up_to_key in
 
-               let rev_cols2 =
+               let rev_cols2, rev_pred_cols2 =
                  M.fold
-                   (fun col data l ->
-                      if column_selected col (String.length col) then
-                        { name = col; data; timestamp = No_timestamp } :: l
-                      else l)
+                   (fun col data ((cols, pred_cols) as acc) ->
+                      let len = String.length col in
+                      let selected = column_selected col len in
+                      let needed_for_pred = column_needed_for_predicate col len in
+                        if not selected && not needed_for_pred then
+                          acc
+                        else begin
+                          let col =  { name = col; data; timestamp = No_timestamp } in
+                          let cols = if selected then col :: cols else cols in
+                          let pred_cols =
+                            if needed_for_pred then col :: pred_cols else pred_cols in
+                            (cols, pred_cols)
+                        end)
                    (tx.added |>
                     M.find_default M.empty table |> M.find_default M.empty key)
-                   [] in
+                   ([], []) in
 
                (* rev_cols2 is G-to-S, want S-to-G if ~reverse *)
                let rev_cols2 = if reverse then rev rev_cols2 else rev_cols2 in
@@ -955,11 +1030,23 @@ let get_slice_aux
                  else
                    (fun c1 c2 -> String.compare c1.name c2.name) in
 
-               let cols = rev (rev_merge_rev cmp_cols rev_cols1 rev_cols2) in
+               (* merge the columns needed to evaluate the predicate from the
+                * two sources *)
+               let pred_cols =
+                 rev_merge_rev cmp_cols
+                   rev_pred_cols1
+                   (if reverse then rev rev_pred_cols2 else rev_pred_cols2)
+               in
+                 (* now eval predicate *)
+                 if eval_predicate pred_cols then begin
+                   let cols = rev (rev_merge_rev cmp_cols rev_cols1 rev_cols2) in
 
-                 match postproc_keydata ~guaranteed_cols_ok:false (key, cols) with
-                   None -> return (key_data_list, keys_so_far)
-                 | Some x -> return (x :: key_data_list, keys_so_far + 1))
+                     match postproc_keydata ~guaranteed_cols_ok:false (key, cols) with
+                       None -> return (key_data_list, keys_so_far)
+                     | Some x -> return (x :: key_data_list, keys_so_far + 1)
+                 end else begin
+                   return (key_data_list, keys_so_far)
+                 end)
           ([], 0) l in
       let last_key = match key_data_list with
           x :: _ -> Some (get_keydata_key x)
@@ -1138,7 +1225,7 @@ let record_column_reads load_stats key last_column columns =
 
 let get_slice tx table
       ?(max_keys = max_int) ?(max_columns = max_int)
-      ?(decode_timestamps = false) key_range column_range =
+      ?(decode_timestamps = false) key_range ?predicate column_range =
   let postproc_keydata ~guaranteed_cols_ok (key, rev_cols) =
     match rev_cols with
       | last_candidate :: _ as l when max_columns > 0 ->
@@ -1163,7 +1250,7 @@ let get_slice tx table
     Load_stats.record_reads tx.ks.ks_db.load_stats 1;
     get_slice_aux
       postproc_keydata get_keydata_key ~keep_columnless_keys:false tx table
-      ~max_keys ~max_columns ~decode_timestamps key_range column_range
+      ~max_keys ~max_columns ~decode_timestamps key_range ?predicate column_range
 
 let get_slice_values tx table
       ?(max_keys = max_int) key_range columns =
@@ -1397,11 +1484,11 @@ let count_keys ks table key_range =
   with_transaction ks (fun tx -> count_keys tx table key_range)
 
 let get_slice ks table ?max_keys ?max_columns ?decode_timestamps
-      key_range column_range =
+      key_range ?predicate column_range =
   with_transaction ks
     (fun tx ->
        get_slice tx table ?max_keys ?max_columns ?decode_timestamps
-         key_range column_range)
+         key_range ?predicate column_range)
 
 let get_slice_values ks table ?max_keys key_range columns =
   with_transaction ks

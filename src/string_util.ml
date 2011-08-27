@@ -43,3 +43,6 @@ let cmp_substrings s1 o1 l1 s2 o2 l2 =
               0 -> loop_cmp s1 (p1 + 1) l1 s2 (p2 + 1) l2 (n - 1)
             | n -> n
   in loop_cmp s1 o1 l1 s2 o2 l2 (if l1 < l2 then l1 else l2)
+
+let compare s1 s2 =
+  cmp_substrings s1 0 (String.length s1) s2 0 (String.length s2)

@@ -307,7 +307,7 @@ struct
       P.read_key_count
 
   let get_slice ks table ?max_keys ?max_columns ?(decode_timestamps=false)
-    key_range column_range =
+    key_range ?predicate column_range =
     async_request_ks ks
       (Get_slice { Get_slice.keyspace = ks.ks_id; table;
                    max_keys; max_columns; decode_timestamps;

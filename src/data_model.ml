@@ -71,6 +71,21 @@ type column_range =
     All_columns
   | Column_range_union of simple_column_range list
 
+(** Predicate on the value of a colum *)
+type column_val_rel =
+    EQ of string | LT of string | GT of string
+  | GE of string | LE of string
+  | Between of string * bool * string * bool (** each bool indicating whether inclusive *)
+  | Any (** don't care about the value *)
+
+type simple_row_predicate =
+  | Column_val of string * bool * column_val_rel (** [name, must_be_present, predicate] *)
+  | At_least of int (** at least this many columns selected *)
+
+type row_predicate_or = simple_row_predicate list (* any of them *)
+
+type row_predicate = row_predicate_or list (* all of them *)
+
 type backup_format = int
 
 (* {2 Data model } *)
@@ -123,9 +138,10 @@ sig
   val count_keys : keyspace -> table -> key_range -> Int64.t Lwt.t
 
   (** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
-    *  key_range column_range] returns a data slice corresponding to the keys
-    * included in the [key_range] which contain at least one of the columns
-    * specified in the [column_range].
+    *  key_range ?predicate column_range] returns a data slice corresponding
+    *  to the keys included in the [key_range] which contain at least one of
+    *  the columns specified in the [column_range] and satisfy the
+    *  [predicate].
     *
     * If the key range is [Keys l] and the column range is a [Column_range]
     * the columns will be returned:
@@ -144,7 +160,7 @@ sig
   val get_slice :
     keyspace -> table ->
     ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
-    key_range -> column_range -> slice Lwt.t
+    key_range -> ?predicate:row_predicate -> column_range -> slice Lwt.t
 
   (** [get_slice_values tx table key_range ["col1"; "col2"]]
     * returns [Some last_key, l] if at least a key was selected, where [l] is
