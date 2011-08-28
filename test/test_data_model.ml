@@ -934,11 +934,14 @@ struct
            get_slice tx "tbl" (key_range ()) DM.All_columns >|=
            aeq_slice (Some "a", ["a", "x", ["x", "y"]]))
 
-  let test_get_slice_cont_range_predicates db =
-    lwt ks = D.register_keyspace db "test_get_slice_cont_range_predicates" in
+  let test_get_slice_predicates db =
+    lwt ks = D.register_keyspace db "test_get_slice_predicates" in
     let tbl = "tbl" in
     let all l = DM.Satisfy_all l in
     let any l = DM.Satisfy_any l in
+    let lwt_may f = function
+        None -> return ()
+      | Some x -> f x in
     lwt expect =
       D.read_committed_transaction ks
         (fun tx ->
@@ -946,45 +949,51 @@ struct
                               "b", ["b", "5"; "c", "3"; "x", "b"];
                               "c", ["c", "5"; "a", "2"; "x", "c"];
                               "d", ["b", "4"; "x", "d"] ] >>
-           let expect tx =
-             get_slice tx tbl (key_range ())
+           let expect tx range rev_range =
+             get_slice tx tbl range
                ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")]])
                (columns ["a"; "b"]) >|=
                aeq_slice (Some "c", [ "a",  "b", ["a", "5"; "b", "4"];
                                       "c",  "a", ["a", "2"] ]) >>
-             get_slice tx tbl (rev_key_range ())
-               ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")]])
-               (columns ["a"; "b"]) >|=
-               aeq_slice (Some "a", [ "c",  "a", ["a", "2"];
-                                      "a",  "a", ["b", "4"; "a", "5"] ]) >>
-             get_slice tx tbl (rev_key_range ())
+             lwt_may
+               (fun rev_range ->
+                  get_slice tx tbl rev_range
+                    ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")]])
+                    (columns ["a"; "b"]) >|=
+                    aeq_slice (Some "a", [ "c",  "a", ["a", "2"];
+                                           "a",  "a", ["b", "4"; "a", "5"] ]))
+               rev_range >>
+             get_slice tx tbl range
                ~predicate:(all [any [DM.Column_val ("c", DM.EQ "5")]])
                (columns ["x"]) >|=
                aeq_slice (Some "c", [ "c",  "x", ["x", "c"]]) >>
-             get_slice tx tbl (key_range ())
+             get_slice tx tbl range
                ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
                (columns ["x"]) >|=
                aeq_slice (Some "c", [ "b", "x", ["x", "b"];
                                       "c",  "x", ["x", "c"]]) >>
-             get_slice tx tbl (key_range ())
+             get_slice tx tbl range
                ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")];
                                 any [DM.Column_val ("c", DM.Any)]])
                (columns ["x"]) >|=
                aeq_slice (Some "c", [ "c",  "x", ["x", "c"]]) >>
-             get_slice tx tbl (key_range ())
+             get_slice tx tbl range
                ~max_columns:1
                ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
                DM.All_columns >|=
                aeq_slice (Some "c", [ "b", "b", ["b", "5"];
                                       "c", "a", ["a", "2"] ]) >>
-             get_slice tx tbl (key_range ())
+             get_slice tx tbl range
                ~max_keys:1
                ~max_columns:1
                ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
                DM.All_columns >|=
                aeq_slice (Some "b", [ "b", "b", ["b", "5"] ])
-           in expect tx >>
-              return expect)
+           in
+           let expect tx =
+             expect tx (key_range ()) (Some (rev_key_range ())) >>
+             expect tx (DM.Keys ["a"; "b"; "x"; "c"; "d"]) None
+           in return expect)
     in D.read_committed_transaction ks expect
 
   let test_get_slice_values db =
@@ -1140,7 +1149,7 @@ struct
       "get_slice with column range union", test_get_slice_column_range_union;
       "get_slice correct iteration with tricky columns", test_get_slice_tricky_columns;
       "get_slice with diff keyspaces", test_get_slice_with_keyspaces;
-      "get_slice continuous range predicates", test_get_slice_cont_range_predicates;
+      "get_slice range predicates", test_get_slice_predicates;
       "get_slice_values", test_get_slice_values;
       "get_column_values", test_get_column_values;
       "put_columns", test_put_columns;
