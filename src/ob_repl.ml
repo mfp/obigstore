@@ -149,6 +149,11 @@ struct
                            Get up to 4 columns taken from c1, c2, and the
                            range from c5 to c9, for up to 10 keys
                            between k1 and k2\n\
+     GET table[k1:k2/10][a,b] / x = \"foo\" || \"bar1\" < y <= \"bar9\";
+                           Get columns a and b for up to 10 keys between k1
+                           and k2, whose x column has value 'foo' and
+                           whose y column is comprised between 'bar1' and
+                           'bar9'.\n\
      \n\
      PUT table[key][c1=\"v1\", c2=\"v2\"];
                            Put columns c1 and c2 into given key in table\n\
