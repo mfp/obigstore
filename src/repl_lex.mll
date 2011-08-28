@@ -44,12 +44,18 @@
 
 rule token = parse
     [' ' '\t']       { token lexbuf }
-  | "~"           { REVRANGE }
+  | "&&"           { AND }
+  | "||"           { OR }
+  | "~"            { REVRANGE }
   | ':'            { RANGE }
   | '/'            { COND }
   | '['            { LBRACKET }
   | ']'            { RBRACKET }
   | ','            { COMMA }
+  | '<'            { LT }
+  | "<="           { LE }
+  | ">"            { GT }
+  | ">="           { GE }
   | '='            { EQ }
   | '.' (['A'-'Z' 'a'-'z']+ as lxm)
                    { DIRECTIVE (String.lowercase lxm) }

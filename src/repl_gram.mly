@@ -22,6 +22,7 @@
 open Repl_common
 open Request
 module R = Request
+module DM = Data_model
 
 let all_keys =
   Key_range.Key_range { Range.first = None; up_to = None; reverse = false }
@@ -45,7 +46,7 @@ let col_range_of_multi_range = function
 %token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK STATS
-%token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF
+%token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
 %start input
 %type <Repl_common.req> input
@@ -99,7 +100,7 @@ count :
                                           key_range; }) }
 
 get :
-    GET ID range opt_multi_range
+    GET ID range opt_multi_range opt_row_predicate
        { with_ks
            (fun keyspace ->
               let column_range, max_columns = match $4 with
@@ -114,7 +115,7 @@ get :
                     max_keys = snd $3;
                     decode_timestamps = true;
                     max_columns; key_range;
-                    predicate = None;
+                    predicate = $5;
                     column_range; }) }
   | GET KEYS ID opt_range
       {
@@ -207,6 +208,31 @@ range :
   | LBRACKET id_list opt_cond RBRACKET
                  { (List $2, $3) }
 
+opt_row_predicate :
+    /* empty */        { None }
+  | COND row_predicate { Some (DM.Satisfy_any $2) }
+
+row_predicate :
+    and_predicate      { [ DM.Satisfy_all $1 ] }
+  | row_predicate OR and_predicate
+                       { $1 @ [ DM.Satisfy_all $3 ] }
+
+and_predicate :
+    simple_predicate                   { [ $1 ] }
+  | and_predicate AND simple_predicate { $1 @ [ $3 ] }
+
+
+simple_predicate :
+      ID                { DM.Column_val ($1, DM.Any) }
+  |   ID LT ID          { DM.Column_val ($1, DM.LT $3) }
+  |   ID LE ID          { DM.Column_val ($1, DM.LE $3) }
+  |   ID EQ ID          { DM.Column_val ($1, DM.EQ $3) }
+  |   ID GE ID          { DM.Column_val ($1, DM.GE $3) }
+  |   ID GT ID          { DM.Column_val ($1, DM.GT $3) }
+  |   ID LT ID LT ID    { DM.Column_val ($3, DM.Between ($1, false, $5, false)) }
+  |   ID LE ID LT ID    { DM.Column_val ($3, DM.Between ($1, true, $5, false)) }
+  |   ID LT ID LE ID    { DM.Column_val ($3, DM.Between ($1, false, $5, true)) }
+  |   ID LE ID LE ID    { DM.Column_val ($3, DM.Between ($1, true, $5, true)) }
 
 opt_cond :
     /* empty */  { None }

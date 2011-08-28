@@ -288,9 +288,11 @@ let execute ks db loop r =
         ret (print_list (sprintf "%S")) keys
   | Count_keys { Count_keys.table; key_range; } ->
       D.count_keys ks table key_range >>= ret (printf "%Ld\n%!")
-  | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range; } ->
+  | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range;
+                predicate; } ->
       lwt slice =
-        D.get_slice ks table ?max_keys ?max_columns key_range column_range in
+        D.get_slice ks table ?max_keys ?max_columns key_range
+          ?predicate column_range in
       let nkeys = List.length (snd slice) in
       let ncols =
         List.fold_left (fun s kd -> s + List.length kd.columns) 0 (snd slice)
