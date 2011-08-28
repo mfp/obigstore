@@ -882,8 +882,7 @@ let columns_needed_for_predicate = function
         (fun s (Satisfy_any preds) ->
            List.fold_left
              (fun s pred -> match pred with
-                  Column_val (col, _) -> S.add col s
-                | At_least _ -> s)
+                  Column_val (col, _) -> S.add col s)
              s preds)
         S.empty preds
 
@@ -910,7 +909,6 @@ let row_predicate_func = function
         | Between (x, false, y, false) -> (fun v -> scmp v x > 0 && scmp v y < 0)
         | Any -> (fun _ -> true) in
       let eval_simple = function
-          At_least n -> (fun cols -> List.length cols >= n)
         | Column_val (name, rel) ->
             let f = eval_col_val_pred rel in
               (fun cols ->

@@ -54,7 +54,6 @@ type column_val_rel =
 
 type simple_row_predicate =
     Column_val string column_val_rel
-  | At_least int
   options "ocaml.type_equals" = "Data_model.simple_row_predicate"
 
 type row_predicate_or = Satisfy_any [simple_row_predicate]

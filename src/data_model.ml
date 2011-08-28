@@ -80,7 +80,6 @@ type column_val_rel =
 
 type simple_row_predicate =
   | Column_val of string * column_val_rel (** [name, predicate] *)
-  | At_least of int (** at least this many columns selected *)
 
 type row_predicate_or = Satisfy_any of simple_row_predicate list (* any of them *)
 
