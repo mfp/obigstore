@@ -79,7 +79,7 @@ type column_val_rel =
   | Any (** don't care about the value *)
 
 type simple_row_predicate =
-  | Column_val of string * bool * column_val_rel (** [name, must_be_present, predicate] *)
+  | Column_val of string * column_val_rel (** [name, predicate] *)
   | At_least of int (** at least this many columns selected *)
 
 type row_predicate_or = simple_row_predicate list (* any of them *)
