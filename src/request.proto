@@ -56,10 +56,10 @@ type simple_row_predicate =
     Column_val string column_val_rel
   options "ocaml.type_equals" = "Data_model.simple_row_predicate"
 
-type row_predicate_or = Satisfy_any [simple_row_predicate]
-  options "ocaml.type_equals" = "Data_model.row_predicate_or"
+type row_predicate_and = Satisfy_all [simple_row_predicate]
+  options "ocaml.type_equals" = "Data_model.row_predicate_and"
 
-type row_predicate = Satisfy_all [row_predicate_or]
+type row_predicate = Satisfy_any [row_predicate_and]
   options "ocaml.type_equals" = "Data_model.row_predicate"
 
 type req = { keyspace : keyspace }

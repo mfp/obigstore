@@ -500,7 +500,7 @@ struct
             D.get_slice tx table ?max_keys ?max_columns ?decode_timestamps
               key_range col_range in
           (* check we get same results with dummy predicate (always true) *)
-          let predicate = DM.Satisfy_all [] in
+          let predicate = DM.Satisfy_any [DM.Satisfy_all []] in
           lwt x' =
             D.get_slice tx table ?max_keys ?max_columns ?decode_timestamps
               ~predicate
@@ -951,42 +951,42 @@ struct
                               "d", ["b", "4"; "x", "d"] ] >>
            let expect tx range rev_range =
              get_slice tx tbl range
-               ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")]])
+               ~predicate:(any [all [DM.Column_val ("a", DM.GE "2")]])
                (columns ["a"; "b"]) >|=
                aeq_slice (Some "c", [ "a",  "b", ["a", "5"; "b", "4"];
                                       "c",  "a", ["a", "2"] ]) >>
              lwt_may
                (fun rev_range ->
                   get_slice tx tbl rev_range
-                    ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")]])
+                    ~predicate:(any [all [DM.Column_val ("a", DM.GE "2")]])
                     (columns ["a"; "b"]) >|=
                     aeq_slice (Some "a", [ "c",  "a", ["a", "2"];
                                            "a",  "a", ["b", "4"; "a", "5"] ]))
                rev_range >>
              get_slice tx tbl range
-               ~predicate:(all [any [DM.Column_val ("c", DM.EQ "5")]])
+               ~predicate:(any [all [DM.Column_val ("c", DM.EQ "5")]])
                (columns ["x"]) >|=
                aeq_slice (Some "c", [ "c",  "x", ["x", "c"]]) >>
              get_slice tx tbl range
-               ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
+               ~predicate:(any [all [DM.Column_val ("c", DM.GT "2")]])
                (columns ["x"]) >|=
                aeq_slice (Some "c", [ "b", "x", ["x", "b"];
                                       "c",  "x", ["x", "c"]]) >>
              get_slice tx tbl range
-               ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")];
-                                any [DM.Column_val ("c", DM.Any)]])
+               ~predicate:(any [all [DM.Column_val ("a", DM.GE "2");
+                                     DM.Column_val ("c", DM.Any)]])
                (columns ["x"]) >|=
                aeq_slice (Some "c", [ "c",  "x", ["x", "c"]]) >>
              get_slice tx tbl range
                ~max_columns:1
-               ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
+               ~predicate:(any [all [DM.Column_val ("c", DM.GT "2")]])
                DM.All_columns >|=
                aeq_slice (Some "c", [ "b", "b", ["b", "5"];
                                       "c", "a", ["a", "2"] ]) >>
              get_slice tx tbl range
                ~max_keys:1
                ~max_columns:1
-               ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
+               ~predicate:(any [all [DM.Column_val ("c", DM.GT "2")]])
                DM.All_columns >|=
                aeq_slice (Some "b", [ "b", "b", ["b", "5"] ])
            in

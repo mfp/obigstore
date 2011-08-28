@@ -877,9 +877,9 @@ let column_range_selector = function
 
 let columns_needed_for_predicate = function
     None -> S.empty
-  | Some (Satisfy_all preds) ->
+  | Some (Satisfy_any preds) ->
       List.fold_left
-        (fun s (Satisfy_any preds) ->
+        (fun s (Satisfy_all preds) ->
            List.fold_left
              (fun s pred -> match pred with
                   Column_val (col, _) -> S.add col s)
@@ -914,13 +914,13 @@ let row_predicate_func = function
               (fun cols ->
                  try f (List.find (fun c -> c.name = name) cols).data
                  with Not_found -> false) in
-      let eval_or (Satisfy_any preds) =
-        let fs = List.map eval_simple preds in
-          (fun cols -> List.exists (fun f -> f cols) fs) in
-      let eval_and (Satisfy_all preds) =
-        let fs = List.map eval_or preds in
-          (fun cols -> List.for_all (fun f -> f cols) fs)
-      in eval_and pred
+      let eval_and eval (Satisfy_all preds) =
+        let fs = List.map eval preds in
+          (fun cols -> List.for_all (fun f -> f cols) fs) in
+      let eval_or eval (Satisfy_any preds) =
+        let fs = List.map eval preds in
+          (fun cols -> List.exists (fun f -> f cols) fs)
+      in eval_or (eval_and eval_simple) pred
 
 let get_slice_aux_discrete
       postproc_keydata get_keydata_key ~keep_columnless_keys

@@ -81,9 +81,9 @@ type column_val_rel =
 type simple_row_predicate =
   | Column_val of string * column_val_rel (** [name, predicate] *)
 
-type row_predicate_or = Satisfy_any of simple_row_predicate list (* any of them *)
+type row_predicate_and = Satisfy_all of simple_row_predicate list (* all of them *)
 
-type row_predicate = Satisfy_all of row_predicate_or list (* all of them *)
+type row_predicate = Satisfy_any of row_predicate_and list (* any of them *)
 
 type backup_format = int
 
