@@ -45,6 +45,24 @@ type column =
 
 message column_ = column
 
+type column_val_rel =
+    Any
+  | EQ string | LT string | GT string
+  | GE string | LE string
+  | Between string bool string bool
+  options "ocaml.type_equals" = "Data_model.column_val_rel"
+
+type simple_row_predicate =
+    Column_val string column_val_rel
+  | At_least int
+  options "ocaml.type_equals" = "Data_model.simple_row_predicate"
+
+type row_predicate_or = Satisfy_any [simple_row_predicate]
+  options "ocaml.type_equals" = "Data_model.row_predicate_or"
+
+type row_predicate = Satisfy_all [row_predicate_or]
+  options "ocaml.type_equals" = "Data_model.row_predicate"
+
 type req = { keyspace : keyspace }
 
 type backup_cursor = string
@@ -95,6 +113,7 @@ message request =
   | Get_slice { keyspace : keyspace; table : table;
                 max_keys : max_keys; max_columns : max_columns;
                 decode_timestamps : bool; key_range : key_range;
+                predicate : opt<row_predicate>;
                 column_range : column_range }
   | Get_slice_values { keyspace : keyspace; table : table;
                        max_keys : max_keys; key_range : key_range;

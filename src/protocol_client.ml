@@ -311,7 +311,7 @@ struct
     async_request_ks ks
       (Get_slice { Get_slice.keyspace = ks.ks_id; table;
                    max_keys; max_columns; decode_timestamps;
-                   key_range; column_range })
+                   key_range; predicate; column_range })
       P.read_slice
 
   let get_slice_values ks table ?max_keys key_range columns =

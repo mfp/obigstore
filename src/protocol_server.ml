@@ -278,11 +278,11 @@ struct
           (fun tx -> D.count_keys tx table key_range >>=
                      P.return_key_count ?buf c.och ~request_id)
     | Get_slice { Get_slice.keyspace; table; max_keys; max_columns;
-                  decode_timestamps; key_range; column_range; } ->
+                  decode_timestamps; key_range; predicate; column_range; } ->
         with_tx c keyspace ~request_id
           (fun tx ->
              D.get_slice tx table ?max_keys ?max_columns ~decode_timestamps
-               key_range column_range >>=
+               key_range ?predicate column_range >>=
              P.return_slice ?buf c.och ~request_id)
     | Get_slice_values { Get_slice_values.keyspace; table; max_keys;
                          key_range; columns; } ->

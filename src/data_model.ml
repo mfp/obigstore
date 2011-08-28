@@ -73,10 +73,10 @@ type column_range =
 
 (** Predicate on the value of a colum *)
 type column_val_rel =
-    EQ of string | LT of string | GT of string
+  | Any (** don't care about the value *)
+  | EQ of string | LT of string | GT of string
   | GE of string | LE of string
   | Between of string * bool * string * bool (** each bool indicating whether inclusive *)
-  | Any (** don't care about the value *)
 
 type simple_row_predicate =
   | Column_val of string * column_val_rel (** [name, predicate] *)

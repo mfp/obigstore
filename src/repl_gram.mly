@@ -113,7 +113,9 @@ get :
                   { R.Get_slice.keyspace; table = $2;
                     max_keys = snd $3;
                     decode_timestamps = true;
-                    max_columns; key_range; column_range; }) }
+                    max_columns; key_range;
+                    predicate = None;
+                    column_range; }) }
   | GET KEYS ID opt_range
       {
         with_ks

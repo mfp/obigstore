@@ -1231,7 +1231,8 @@ let get_slice_aux_continuous_with_predicate
       ~max_keys
       ~max_columns
       ~decode_timestamps
-      { first; up_to; reverse; } predicate column_range =
+      { first; up_to; reverse; } ~predicate column_range =
+  let predicate = Some predicate in
   let column_selected = column_range_selector column_range in
   let is_column_deleted = is_column_deleted tx table in
   let column_needed_for_predicate = column_range_selector_for_predicate predicate in
@@ -1464,17 +1465,22 @@ let get_slice_aux
       tx table
       ~max_keys ~max_columns ~decode_timestamps
       key_range ?predicate column_range =
-  match key_range with
-      Keys l -> get_slice_aux_discrete
-                  postproc_keydata get_keydata_key ~keep_columnless_keys tx table
-                  ~max_keys ~max_columns ~decode_timestamps
-                  l ?predicate column_range
+  match predicate, key_range with
+      _, Keys l -> get_slice_aux_discrete
+                     postproc_keydata get_keydata_key ~keep_columnless_keys tx table
+                     ~max_keys ~max_columns ~decode_timestamps
+                     l ?predicate column_range
 
-    | Key_range range ->
+    | None, Key_range range ->
         get_slice_aux_continuous_no_predicate
           postproc_keydata get_keydata_key ~keep_columnless_keys tx table
           ~max_keys ~max_columns ~decode_timestamps
           range column_range
+    | Some predicate, Key_range range ->
+        get_slice_aux_continuous_with_predicate
+          postproc_keydata get_keydata_key ~keep_columnless_keys tx table
+          ~max_keys ~max_columns ~decode_timestamps
+          range ~predicate column_range
 
 let record_column_reads load_stats key last_column columns =
   let col_bytes =
