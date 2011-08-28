@@ -23,5 +23,11 @@ setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 
 .SUBDIRS: src test
 
+foreach(exec, obigstore ob_dump ob_load ob_repl)
+    $(exec): src/$(exec)$(EXE)
+        ln-or-cp $< $@
+
+.DEFAULT: obigstore ob_dump ob_load ob_repl
+
 clean:
 	rm -f $(filter-proper-targets $(ls R, .))
