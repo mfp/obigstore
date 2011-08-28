@@ -500,7 +500,7 @@ struct
             D.get_slice tx table ?max_keys ?max_columns ?decode_timestamps
               key_range col_range in
           (* check we get same results with dummy predicate (always true) *)
-          let predicate = [[DM.At_least min_int]] in
+          let predicate = DM.Satisfy_all [DM.Satisfy_any [DM.At_least min_int]] in
           lwt x' =
             D.get_slice tx table ?max_keys ?max_columns ?decode_timestamps
               ~predicate

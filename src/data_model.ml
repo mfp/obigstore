@@ -82,9 +82,9 @@ type simple_row_predicate =
   | Column_val of string * column_val_rel (** [name, predicate] *)
   | At_least of int (** at least this many columns selected *)
 
-type row_predicate_or = simple_row_predicate list (* any of them *)
+type row_predicate_or = Satisfy_any of simple_row_predicate list (* any of them *)
 
-type row_predicate = row_predicate_or list (* all of them *)
+type row_predicate = Satisfy_all of row_predicate_or list (* all of them *)
 
 type backup_format = int
 
