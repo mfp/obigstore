@@ -970,7 +970,19 @@ struct
                ~predicate:(all [any [DM.Column_val ("a", DM.GE "2")];
                                 any [DM.Column_val ("c", DM.Any)]])
                (columns ["x"]) >|=
-               aeq_slice (Some "c", [ "c",  "x", ["x", "c"]])
+               aeq_slice (Some "c", [ "c",  "x", ["x", "c"]]) >>
+             get_slice tx tbl (key_range ())
+               ~max_columns:1
+               ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
+               DM.All_columns >|=
+               aeq_slice (Some "c", [ "b", "b", ["b", "5"];
+                                      "c", "a", ["a", "2"] ]) >>
+             get_slice tx tbl (key_range ())
+               ~max_keys:1
+               ~max_columns:1
+               ~predicate:(all [any [DM.Column_val ("c", DM.GT "2")]])
+               DM.All_columns >|=
+               aeq_slice (Some "b", [ "b", "b", ["b", "5"] ])
            in expect tx >>
               return expect)
     in D.read_committed_transaction ks expect

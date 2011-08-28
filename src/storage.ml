@@ -971,7 +971,10 @@ let get_slice_aux_discrete
                      | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
                    let col = { name; data; timestamp; } in
                      let rev_cols =
-                       if selected then begin
+                       (* we must check against if we have enough cols,
+                        * because we could be collecting pred cols only
+                        * by now *)
+                       if selected && !columns_selected < max_columns then begin
                          incr columns_selected;
                          col :: rev_cols
                        end else rev_cols in
@@ -1300,7 +1303,7 @@ let get_slice_aux_continuous_with_predicate
       if !keys_so_far >= max_keys then
         Finish_fold acc'
       (* see if we already have enough columns for this key*)
-      else if !cols_kept >= max_columns then begin
+      else if !cols_kept >= max_columns && S.is_empty missing_pred_cols then begin
         (* seeking is very expensive, so we only do it when it looks
          * like the key has got a lot of columns *)
         if !cols_in_this_key - max_columns < 50 then (* FIXME: determine constant *)
@@ -1324,7 +1327,9 @@ let get_slice_aux_continuous_with_predicate
             let col_data = { name; data; timestamp; } in
 
             let key_data =
-              if not selected then key_data
+              (* we must check against if we have enough cols, because we
+               * could be collecting pred cols only by now *)
+              if not selected || !cols_kept >= max_columns then key_data
               else begin
                 incr cols_kept;
                 col_data :: key_data
