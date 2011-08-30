@@ -17,6 +17,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+open Printf
 open Lwt
 open Data_model
 
@@ -42,6 +43,108 @@ module LOCKS =
               let equal (s1, _) (s2, _) = String.compare s1 s2 = 0
             end)
 
+module WRITEBATCH : sig
+  type t
+  type tx
+  val make : L.db -> flush_period:float -> t
+  val close : t -> unit Lwt.t
+  val set_period : t -> float -> unit
+  val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
+
+  val delete_substring : tx -> string -> int -> int -> unit
+  val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
+end =
+struct
+  type t =
+      { db : L.db;
+        mutable wb : L.writebatch;
+        mutable dirty : bool;
+        mutable flush_period : float;
+        mutable closed : bool;
+        mutex : Lwt_mutex.t;
+        mutable sync_wait : unit Lwt.t * unit Lwt.u;
+        (* TODO: allow shared mutex locking for [perform], only
+         * the actual sync needs to be exclusive *)
+        mutable wait_last_sync : unit Lwt.t * unit Lwt.u;
+        (* used to wait for last sync before close *)
+      }
+
+  type tx = { t : t; mutable valid : bool; }
+
+  let make db ~flush_period =
+    let t =
+      { db; wb = L.Batch.make (); dirty = false; closed = false;
+        mutex = Lwt_mutex.create (); sync_wait = Lwt.wait ();
+        flush_period; wait_last_sync = Lwt.wait ();
+      }
+    in
+      ignore begin try_lwt
+        let rec writebatch_loop () =
+          Lwt_unix.sleep t.flush_period >>
+          if t.closed && not t.dirty then begin
+            Lwt.wakeup (snd t.wait_last_sync) ();
+            return ()
+          end else if not t.dirty then
+            writebatch_loop ()
+          else begin
+            Lwt_mutex.with_lock t.mutex
+              (fun () ->
+                 lwt () = Lwt_preemptive.detach (L.Batch.write ~sync:true t.db) t.wb in
+                 let u = snd t.sync_wait in
+                 let u' = snd t.wait_last_sync in
+                   t.dirty <- false;
+                   t.wb <- L.Batch.make ();
+                   t.sync_wait <- Lwt.wait ();
+                   t.wait_last_sync <- Lwt.wait ();
+                   Lwt.wakeup u ();
+                   Lwt.wakeup u' ();
+                   return ())
+          end >>
+          if t.closed then begin
+            Lwt.wakeup (snd t.wait_last_sync) ();
+            return ()
+          end else writebatch_loop ()
+        in writebatch_loop ()
+      with e ->
+        eprintf "WRITEBATCH error: %s\n%!" (Printexc.to_string e);
+        return ()
+      end;
+      t
+
+  let close t =
+    t.closed <- true;
+    if t.dirty then fst t.wait_last_sync else return ()
+
+  let set_period t dt = t.flush_period <- (max 0.001 dt)
+
+  let perform t f =
+    if t.closed then
+      raise_lwt (Failure "WRITEBATCH.perform: closed writebatch")
+    else
+      Lwt_mutex.with_lock t.mutex
+        (fun () ->
+           let waiter = fst t.sync_wait in
+           let tx = { t; valid = true } in
+             try_lwt
+               f tx >>
+               return waiter
+             finally
+               tx.valid <- false;
+               return ())
+
+  let delete_substring tx s off len =
+    if not tx.valid then
+      failwith "WRITEBATCH.delete_substring on expired transaction";
+    tx.t.dirty <- true;
+    L.Batch.delete_substring tx.t.wb s off len
+
+  let put_substring tx k o1 l1 v o2 l2 =
+    if not tx.valid then
+      failwith "WRITEBATCH.put_substring on expired transaction";
+    tx.t.dirty <- true;
+    L.Batch.put_substring tx.t.wb k o1 l1 v o2 l2
+end
+
 type db =
     {
       basedir : string;
@@ -49,6 +152,7 @@ type db =
       keyspaces : (string, keyspace) Hashtbl.t;
       mutable use_thread_pool : bool;
       load_stats : Load_stats.t;
+      writebatch : WRITEBATCH.t;
     }
 
 and keyspace =
@@ -102,8 +206,15 @@ let read_keyspaces db =
       Datum_encoding.keyspace_table_prefix;
     h
 
-let open_db basedir =
+let close_db t =
+  lwt () = WRITEBATCH.close t.writebatch in
+    L.close t.db;
+    return ()
+
+let open_db ?(group_commit_period = 0.002) basedir =
   let db = L.open_db ~comparator:Datum_encoding.custom_comparator basedir in
+  let group_commit_period = max group_commit_period 0.001 in
+  let writebatch =  WRITEBATCH.make db ~flush_period:group_commit_period in
     (* ensure we have a end_of_db record *)
     if not (L.mem db Datum_encoding.end_of_db_key) then
       L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
@@ -111,14 +222,14 @@ let open_db basedir =
       { basedir; db; keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Load_stats.make [1; 60; 300; 900];
+        writebatch;
       } in
     let keyspaces = read_keyspaces db in
+      Gc.finalise (fun db -> ignore (close_db db)) db;
       Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
       db
 
 let use_thread_pool db v = db.use_thread_pool <- v
-
-let close_db t = L.close t.db
 
 let detach_ks_op ks f x =
   if ks.ks_db.use_thread_pool then Lwt_preemptive.detach f x
@@ -306,17 +417,23 @@ type transaction =
 
 let tx_key = Lwt.new_key ()
 
-let register_new_table_and_add_to_writebatch ks wb table_name =
+let register_new_table_and_add_to_writebatch_aux put_substring ks wb table_name =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
   let table = last + 1 in
   let k = Datum_encoding.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
   let v = string_of_int table in
-    L.Batch.put_substring wb
+    put_substring wb
       k 0 (String.length k) v 0 (String.length v);
     Hashtbl.add ks.ks_tables table_name table;
     Hashtbl.add ks.ks_rev_tables table table_name;
     table
+
+let register_new_table_and_add_to_writebatch =
+  register_new_table_and_add_to_writebatch_aux L.Batch.put_substring
+
+let register_new_table_and_add_to_writebatch' =
+  register_new_table_and_add_to_writebatch_aux WRITEBATCH.put_substring
 
 let rec transaction_aux make_access_and_iters ks f =
   match Lwt.get tx_key with
@@ -361,69 +478,83 @@ and commit_outermost_transaction ks tx =
      M.is_empty tx.deleted && M.is_empty tx.added
   then return ()
 
-  else
-  (* normal procedure: write to writebatch, then sync it *)
+  else begin
+    (* normal procedure *)
 
-  let b = Lazy.force tx.backup_writebatch in
-  let datum_key = Bytea.create 13 in
-  let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
-  let bytes_written = ref 0 in
-  let cols_written = ref 0 in
-    (* TODO: should iterate in Lwt monad so we can yield every once in a
-     * while*)
-    M.iter
-      (fun table_name m ->
-         match find_maybe ks.ks_tables table_name with
-             Some table ->
-               M.iter
-                 (fun key s ->
-                    S.iter
-                      (fun column ->
-                         Datum_encoding.encode_datum_key datum_key ks.ks_id
-                           ~table ~key ~column ~timestamp;
-                         let len = Bytea.length datum_key in
-                           incr cols_written;
-                           bytes_written := !bytes_written + len;
-                           L.Batch.delete_substring b
-                             (Bytea.unsafe_string datum_key) 0
-                             len)
-                      s)
-                 m
-           | None -> (* unknown table *) ())
-      tx.deleted;
-    M.iter
-      (fun table_name m ->
-         let table = match find_maybe ks.ks_tables table_name with
-             Some t -> t
-           | None ->
-               (* must add table to keyspace table list *)
-               register_new_table_and_add_to_writebatch ks b table_name
-         in M.iter
-           (fun key m ->
-              M.iter
-                (fun column v ->
-                   (* FIXME: should save timestamp provided in
-                    * put_columns and use it here if it wasn't
-                    * Auto_timestamp *)
-                   Datum_encoding.encode_datum_key datum_key ks.ks_id
-                     ~table ~key ~column ~timestamp;
-                   let klen = Bytea.length datum_key in
-                   let vlen = String.length v in
-                     incr cols_written;
-                     bytes_written := !bytes_written + klen + vlen;
-                     L.Batch.put_substring b
-                       (Bytea.unsafe_string datum_key) 0 klen
-                       v 0 vlen)
-                m)
-           m)
-      tx.added;
-    lwt () =
-      detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b in
+    (* sync backup writebatch if needed *)
+    begin if not (Lazy.lazy_is_val tx.backup_writebatch) then
+      return ()
+    else
+      let b = Lazy.force tx.backup_writebatch in
+        Load_stats.record_writes tx.ks.ks_db.load_stats 1;
+        detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b
+    end >>
+
+    (* write normal data and wait for group commit sync *)
+    let datum_key = Bytea.create 13 in
+    let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+    let bytes_written = ref 0 in
+    let cols_written = ref 0 in
+
+    lwt wait_sync =
+      WRITEBATCH.perform tx.ks.ks_db.writebatch begin fun b ->
+        (* TODO: should iterate in Lwt monad so we can yield every once in a
+         * while *)
+        M.iter
+          (fun table_name m ->
+             match find_maybe ks.ks_tables table_name with
+                 Some table ->
+                   M.iter
+                     (fun key s ->
+                        S.iter
+                          (fun column ->
+                             Datum_encoding.encode_datum_key datum_key ks.ks_id
+                               ~table ~key ~column ~timestamp;
+                             let len = Bytea.length datum_key in
+                               incr cols_written;
+                               bytes_written := !bytes_written + len;
+                               WRITEBATCH.delete_substring b
+                                 (Bytea.unsafe_string datum_key) 0
+                                 len)
+                          s)
+                     m
+               | None -> (* unknown table *) ())
+          tx.deleted;
+        M.iter
+          (fun table_name m ->
+             let table = match find_maybe ks.ks_tables table_name with
+                 Some t -> t
+               | None ->
+                   (* must add table to keyspace table list *)
+                   register_new_table_and_add_to_writebatch' ks b table_name
+             in M.iter
+               (fun key m ->
+                  M.iter
+                    (fun column v ->
+                       (* FIXME: should save timestamp provided in
+                        * put_columns and use it here if it wasn't
+                        * Auto_timestamp *)
+                       Datum_encoding.encode_datum_key datum_key ks.ks_id
+                         ~table ~key ~column ~timestamp;
+                       let klen = Bytea.length datum_key in
+                       let vlen = String.length v in
+                         incr cols_written;
+                         bytes_written := !bytes_written + klen + vlen;
+                         WRITEBATCH.put_substring b
+                           (Bytea.unsafe_string datum_key) 0 klen
+                           v 0 vlen)
+                    m)
+               m)
+          tx.added;
+        return ()
+      end in
     let stats = tx.ks.ks_db.load_stats in
+    lwt () = wait_sync in
       Load_stats.record_writes stats 1;
       Load_stats.record_bytes_wr stats !bytes_written;
       Load_stats.record_cols_wr stats !cols_written;
       return ()
+  end
 
 let read_committed_transaction f =
   transaction_aux

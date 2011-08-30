@@ -147,15 +147,17 @@ struct
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
+    let keys = List.init nkeys string_of_int in
+    let max_parallelism = 1000 in
+    let region = Lwt_util.make_region max_parallelism in
     lwt dt =
       time
         (fun () ->
-           D.read_committed_transaction ks
-             (fun tx ->
-                let keys = List.init nkeys string_of_int in
-                  Lwt_list.iter_p
-                    (fun key -> D.put_columns tx table key [mk_col "value" key])
-                    keys))
+           Lwt_list.iter_p
+             (fun key ->
+                Lwt_util.run_in_region region 1
+                  (fun () -> D.put_columns ks table key [mk_col "value" key]))
+             keys)
     in
       print_newline ();
       printf "Seq write: %d keys in %8.5fs (%d/s)\n%!"
@@ -269,7 +271,7 @@ module BM_Storage =
          let tmp_dir = match !db_dir with
              None -> Test_00util.make_temp_dir ()
            | Some d -> d in
-         let db = D.open_db tmp_dir in
+         let db = D.open_db ~group_commit_period:0.010 tmp_dir in
            return db
      end)
 

@@ -28,7 +28,10 @@ module TEST =
        let with_db f =
          let dir = make_temp_dir () in
          let db = Storage.open_db dir in
-           try
-             Lwt_unix.run (f db)
-           with e -> Storage.close_db db; raise e
+           Lwt_unix.run begin
+             try_lwt
+               f db
+             finally
+               Storage.close_db db
+           end
      end)

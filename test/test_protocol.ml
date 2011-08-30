@@ -41,8 +41,7 @@ struct
           f client
         finally
           CLIENT.close client;
-          Storage.close_db db;
-          return ()
+          Storage.close_db db
       end
 end
 

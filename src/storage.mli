@@ -20,11 +20,14 @@
 include Data_model.S
 include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
 
-(** Open or create a database in the given directory. *)
-val open_db : string -> db
+(** Open or create a database in the given directory.
+  * @param group_commit_period period for group commit in seconds
+  *        (default 0.002, minimal value: 0.001) *)
+val open_db : ?group_commit_period:float -> string -> db
 
-(** Close the DB. All further actions on it will raise an error. *)
-val close_db : db -> unit
+(** Flush transactions waiting for group commit and close the DB.  All further
+  * actions on it will raise an error. *)
+val close_db : db -> unit Lwt.t
 
 (** [use_thread_pool db x] indicates whether blocking operations should be
   * performed in a separate thread so as to avoid blocking. By default, all
