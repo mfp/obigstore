@@ -143,20 +143,47 @@ struct
         (truncate (float !n_columns /. dt));
       return ()
 
+  let iter_p_in_region ~size f l =
+    let pending = ref 0 in
+    let waiter = ref (Lwt.task ()) in
+    let rec do_iter_in_region f = function
+        [] -> return ()
+      | x :: tl ->
+          begin if !pending >= size then
+            fst !waiter
+          else
+            return ()
+          end >>
+          let t =
+            begin
+              incr pending;
+              lwt () = f x in
+                decr pending;
+                if !pending < size / 2 then begin
+                  let u = snd !waiter in
+                    waiter := Lwt.task ();
+                    Lwt.wakeup u ();
+                    return ()
+                end else begin
+                  return ()
+                end
+            end
+          and r = do_iter_in_region f tl in
+            lwt () = t in
+              r
+    in do_iter_in_region f l
+
   let bm_sequential_write db =
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
     let keys = List.init nkeys string_of_int in
-    let max_parallelism = 1000 in
-    let region = Lwt_util.make_region max_parallelism in
+    let max_parallelism = 2000 in
     lwt dt =
       time
         (fun () ->
-           Lwt_list.iter_p
-             (fun key ->
-                Lwt_util.run_in_region region 1
-                  (fun () -> D.put_columns ks table key [mk_col "value" key]))
+           iter_p_in_region ~size:max_parallelism
+             (fun key -> D.put_columns ks table key [mk_col "value" key])
              keys)
     in
       print_newline ();
