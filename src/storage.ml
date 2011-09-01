@@ -403,7 +403,7 @@ type transaction =
       mutable added_keys : S.t M.t; (* table -> key set *)
       mutable added : string M.t M.t M.t; (* table -> key -> column -> value *)
       mutable deleted : S.t M.t M.t; (* table -> key -> column set *)
-      access : L.read_access;
+      access : L.read_access Lazy.t;
       repeatable_read : bool;
       iter_pool : L.iterator Lwt_pool.t option;
       ks : keyspace;
@@ -559,7 +559,7 @@ and commit_outermost_transaction ks tx =
 let read_committed_transaction f =
   transaction_aux
     (fun db -> function
-         None -> (L.read_access db.db, None, false)
+         None -> (lazy (L.read_access db.db), None, false)
        | Some tx -> (tx.access, tx.iter_pool, false))
     f
 
@@ -569,9 +569,9 @@ let repeatable_read_transaction f =
          Some { access; repeatable_read = true; iter_pool = Some pool; _} ->
            (access, Some pool, true)
        | _ ->
-           let access = L.Snapshot.read_access (L.Snapshot.make db.db) in
+           let access = lazy (L.Snapshot.read_access (L.Snapshot.make db.db)) in
            let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
-                        (fun () -> return (RA.iterator access))
+                        (fun () -> return (RA.iterator (Lazy.force access)))
            in (access, Some pool, true))
     f
 
@@ -624,7 +624,7 @@ let is_column_deleted tx table =
  * there's some column with the given key in the table named [table]. *)
 let exists_key tx table_name =
   let datum_key = Bytea.create 13 in
-  let it = RA.iterator tx.access in
+  let it = RA.iterator (Lazy.force tx.access) in
   let buf = ref "" in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
@@ -813,7 +813,7 @@ let fold_over_data_aux
 let fold_over_data tx table f ?first_column acc ~reverse ~first_key ~up_to_key =
   match tx.iter_pool with
       None ->
-        let it = RA.iterator tx.access in
+        let it = RA.iterator (Lazy.force tx.access) in
           try_lwt
             fold_over_data_aux it tx table f acc ?first_column
             ~reverse ~first_key ~up_to_key
