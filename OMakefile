@@ -21,6 +21,15 @@ LD_PATHS[] =
 
 setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 
+public.CamlStubLibrary(dst, objects, stubs) =
+    private.stub_objects = $(addsuffix .o, $(stubs))
+    $(dst).cma $(dst).a $(dst).cmxa: \
+	$(stub_objects) $(addsuffixes .cmo .cmx, $(objects))
+        ocamlmklib -verbose -oc caml$(dst) -o $(dst) \
+	    $(stub_objects) \
+	    $(OCamlLinkSort $(addsuffixes .cmo, $(objects))) \
+	    $(OCamlLinkSort $(addsuffixes .cmx, $(objects)))
+
 .SUBDIRS: src test
 
 foreach(exec, obigstore ob_dump ob_load ob_repl)

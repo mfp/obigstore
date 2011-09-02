@@ -10,7 +10,8 @@ OCAMLINCLUDES += ../src ../src/libs/ocaml-leveldb/src
 OCAML_LIBS[] +=
     ../src/libs/ocaml-leveldb/src/leveldb
     ../src/libs/extprot/runtime/extprot
-    ../src/obigstore
+    ../src/obigstore_core
+    ../src/obigstore_server
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
 OCamlProgram(benchmark, test_00util benchmark)
