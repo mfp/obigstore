@@ -1,10 +1,8 @@
 
 OBJECTS[] =
-  backup
   bytea
   crc32c
   data_model
-  datum_encoding
   protocol
   protocol_client
   protocol_server

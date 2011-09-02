@@ -19,6 +19,8 @@
 
 module L = LevelDB
 module IT = L.Iterator
+
+open Obigstore_core
 open Data_model
 
 type cursor =

@@ -1,6 +1,8 @@
 OCAMLINCLUDES += ..
 
 OBJECTS[] =
+  datum_encoding
+  backup
   server
   storage
 
