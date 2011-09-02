@@ -18,6 +18,7 @@
  *)
 
 open Lwt
+open Obigstore_core
 open Data_model
 open Protocol
 open Request

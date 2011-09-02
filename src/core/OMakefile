@@ -4,8 +4,6 @@ OBJECTS[] =
   crc32c
   data_model
   protocol
-  protocol_client
-  protocol_server
   protocol_payload
   request
   string_util

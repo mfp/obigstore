@@ -20,6 +20,7 @@
 open Lwt
 open Printf
 open Obigstore_core
+open Obigstore_client
 open Obigstore_server
 
 module D = Storage

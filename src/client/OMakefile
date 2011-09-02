@@ -3,6 +3,7 @@ OCAML_LIBS[] += ../obigstore_core
 
 OBJECTS[] =
   ob_util
+  protocol_client
   repl_common
   repl_gram
   repl_lex
