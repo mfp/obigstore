@@ -37,6 +37,7 @@ let usage_message = "Usage: obigstore [options] [database dir]"
 
 let _ = Sys.set_signal Sys.sigpipe Sys.Signal_ignore
 let _ = Sys.set_signal Sys.sigint (Sys.Signal_handle (fun _ -> exit 0))
+let _ = Sys.set_signal Sys.sighup (Sys.Signal_handle (fun _ -> Gc.compact ()))
 
 let () =
   Arg.parse
