@@ -25,12 +25,15 @@ module S = Server.Make(Storage)(Protocol_payload.Version_0_0_0)
 let port = ref 12050
 let db_dir = ref None
 let debug = ref false
+let gcommit_period = ref 0.010
 
 let params =
   Arg.align
     [
       "-port", Arg.Set_int port, "PORT Port to listen at (default: 12050)";
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
+      "-group-commit-period", Arg.Set_float gcommit_period,
+        "DT Group commit period (default: 0.010s)";
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -53,5 +56,5 @@ let () =
         None -> Arg.usage params usage_message;
                 exit 1
       | Some dir ->
-          let db = Storage.open_db dir in
+          let db = Storage.open_db ~group_commit_period:!gcommit_period dir in
             Lwt_unix.run (S.run_server ~debug:!debug db addr !port)
