@@ -12,10 +12,9 @@ public.LnLibAndPack(dir, name) =
     public.Targets(x) =
       return($(addsuffixes .cma .cmxa .cmx .cmi .a .o, $(x)))
 
-    foreach(file, $(Targets $(name)))
-	$(file): $(dir)/$(file)
-	    echo $(file)
-	    ln -s $^ $@
+    foreach(f, $(Targets $(name)))
+	$(f): $(dir)/$(f)
+	    ln-or-cp $(file $^) $(file $@)
 
 LnLibAndPack(core, obigstore_core)
 LnLibAndPack(client, obigstore_client)
