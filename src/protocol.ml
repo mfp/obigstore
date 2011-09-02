@@ -93,7 +93,7 @@ let read_header ich =
                 crc)
     end
 
-let write_msg ?(flush=true) och req_id msg =
+let write_msg ?(flush=false) och req_id msg =
   (* FIXME: ensure req_id's size is 8 *)
   Lwt_io.atomic
     (fun och ->
