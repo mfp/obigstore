@@ -40,20 +40,21 @@ section
         OCAML_LIBS[] += obigstore_server
 	OCamlProgram(obigstore, run_server)
 
-    toplevel: libs/ocaml-leveldb/src/leveldb.cma \
-	      libs/extprot/runtime/extprot.cma \
-	      obigstore_core.cma \
-	      obigstore_server.cma
+    TOPLEVEL_LIBS[] =
+	libs/ocaml-leveldb/src/leveldb
+	libs/extprot/runtime/extprot
+	obigstore_core
+	obigstore_client
+	obigstore_server
+
+    toplevel: $(addsuffix .cma, $(TOPLEVEL_LIBS))
 	    ocamlfind ocamlmktop \
 		$(mapprefix -package, $(OCAMLPACKS)) \
-		-cc g++ -verbose -o toplevel \
+		-cc g++ -o toplevel \
 		-cclib -L. \
 		-cclib -Lcore \
 		-cclib -Llibs/ocaml-leveldb/src \
-		libs/ocaml-leveldb/src/leveldb.cma \
-		libs/extprot/runtime/extprot.cma \
-		obigstore_core.cma \
-		obigstore_server.cma \
+		$(addsuffix .cma, $(TOPLEVEL_LIBS)) \
 		-linkpkg -thread
 
 .DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE) ob_repl$(EXE)
