@@ -19,6 +19,7 @@
 
 open Printf
 open Lwt
+open Obigstore_core
 open Data_model
 
 module List = struct include BatList include List end

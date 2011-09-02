@@ -19,6 +19,8 @@
 
 open Printf
 open Lwt
+open Obigstore_core
+open Obigstore_server
 
 module S = Server.Make(Storage)(Protocol_payload.Version_0_0_0)
 

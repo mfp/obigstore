@@ -19,6 +19,8 @@
 
 open Lwt
 open Printf
+open Obigstore_core
+open Obigstore_server
 
 module D = Storage
 module DM = Data_model

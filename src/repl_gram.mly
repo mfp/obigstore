@@ -19,6 +19,7 @@
 
 %{
 
+open Obigstore_core
 open Repl_common
 open Request
 module R = Request

@@ -22,6 +22,9 @@ open Lwt
 open Test_00util
 open OUnit
 
+open Obigstore_core
+open Obigstore_server
+
 module D = Storage
 module DM = Data_model
 

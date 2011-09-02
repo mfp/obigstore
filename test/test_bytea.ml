@@ -20,6 +20,7 @@
 open Printf
 open Test_00util
 open OUnit
+open Obigstore_core
 
 let aeq expected b =
   assert_equal ~printer:to_hex expected (Bytea.contents b)

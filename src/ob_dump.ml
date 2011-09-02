@@ -19,6 +19,8 @@
 
 open Lwt
 open Printf
+open Obigstore_core
+open Obigstore_client
 open Ob_util
 
 module D = Protocol_client.Make(Protocol_payload.Version_0_0_0)

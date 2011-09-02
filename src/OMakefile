@@ -38,9 +38,26 @@ request.ml: request.proto ./libs/extprot/extprotc
 
 obigstore_stubs.o: obigstore_stubs.cc
 
-CamlStubLibrary(obigstore_core, $(CORE_OBJECTS), obigstore_stubs)
-OCamlLibrary(obigstore_client, $(CLIENT_OBJECTS))
-OCamlLibrary(obigstore_server, $(SERVER_OBJECTS))
+section
+    OCAMLFLAGS += -for-pack Obigstore_core
+    CamlSources($(CORE_OBJECTS)):
+
+section
+    OCAMLFLAGS += -for-pack Obigstore_client
+    CamlSources($(CLIENT_OBJECTS)):
+
+section
+    OCAMLFLAGS += -for-pack Obigstore_server
+    CamlSources($(SERVER_OBJECTS)):
+
+OCamlPackage(obigstore_core, $(CORE_OBJECTS))
+CamlStubLibrary(obigstore_core, obigstore_core, obigstore_stubs)
+
+OCamlPackage(obigstore_client, $(CLIENT_OBJECTS))
+OCamlLibrary(obigstore_client, obigstore_client)
+
+OCamlPackage(obigstore_server, $(SERVER_OBJECTS))
+OCamlLibrary(obigstore_server, obigstore_server)
 
 section
     OCAMLPACKS[] += unix extlib threads oUnit
@@ -62,7 +79,8 @@ section
 
     toplevel: libs/ocaml-leveldb/src/leveldb.cma \
 	      libs/extprot/runtime/extprot.cma \
-	      obigstore.cma
+	      obigstore_core.cma \
+	      obigstore_server.cma
 	    ocamlfind ocamlmktop \
 		$(mapprefix -package, $(OCAMLPACKS)) \
 		-cc g++ -verbose -o toplevel \
@@ -70,7 +88,8 @@ section
 		-cclib -Llibs/ocaml-leveldb/src \
 		libs/ocaml-leveldb/src/leveldb.cma \
 		libs/extprot/runtime/extprot.cma \
-		obigstore.cma \
+		obigstore_core.cma \
+		obigstore_server.cma \
 		-linkpkg -thread
 
 .DEFAULT: obigstore$(EXE) ob_dump$(EXE) ob_load$(EXE) ob_repl$(EXE)

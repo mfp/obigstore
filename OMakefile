@@ -30,6 +30,10 @@ public.CamlStubLibrary(dst, objects, stubs) =
 	    $(OCamlLinkSort $(addsuffixes .cmo, $(objects))) \
 	    $(OCamlLinkSort $(addsuffixes .cmx, $(objects)))
 
+CamlSources(mods) =
+        foreach(mod, $(mods))
+                $(addsuffixes .cmo .cmi .cmx .sig $(EXT_OBJ), $(mod)):
+
 .SUBDIRS: src test
 
 foreach(exec, obigstore ob_dump ob_load ob_repl)

@@ -20,6 +20,7 @@
 open Printf
 open Test_00util
 open OUnit
+open Obigstore_core
 
 let test_vectors =
   [

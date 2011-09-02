@@ -19,6 +19,9 @@
 
 open Lwt
 open Test_00util
+open Obigstore_core
+open Obigstore_client
+open Obigstore_server
 
 module CLIENT = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 

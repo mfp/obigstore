@@ -19,6 +19,8 @@
 
 open Lwt
 open Printf
+open Obigstore_core
+open Obigstore_client
 open Request
 open Repl_common
 open Data_model

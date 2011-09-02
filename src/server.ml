@@ -19,6 +19,7 @@
 
 open Lwt
 open Printf
+open Obigstore_core
 
 module Make(D : Data_model.S)(P : Protocol.PAYLOAD) =
 struct

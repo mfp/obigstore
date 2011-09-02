@@ -18,6 +18,7 @@
  *)
 
 open Test_00util
+open Obigstore_server
 
 module TEST =
   Test_data_model.Run_test
