@@ -18,3 +18,7 @@ OMake*.omc
 *.sig
 *.log
 gmon.out
+/ob_dump
+/ob_load
+/ob_repl
+/obigstore
