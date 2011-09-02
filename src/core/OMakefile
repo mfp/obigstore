@@ -1,0 +1,28 @@
+
+OBJECTS[] =
+  backup
+  bytea
+  crc32c
+  data_model
+  datum_encoding
+  protocol
+  protocol_client
+  protocol_server
+  protocol_payload
+  request
+  string_util
+  weak_ref
+  load_stats
+
+request.ml: request.proto ../libs/extprot/extprotc
+	../libs/extprot/extprotc $<
+
+obigstore_stubs.o: obigstore_stubs.cc
+
+section
+    OCAMLFLAGS += -for-pack Obigstore_core
+    CamlSources($(OBJECTS)):
+
+OCamlPackage(obigstore_core, $(OBJECTS))
+CamlStubLibrary(obigstore_core, obigstore_core, obigstore_stubs)
+

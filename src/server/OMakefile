@@ -1,0 +1,13 @@
+OCAMLINCLUDES += ..
+
+OBJECTS[] =
+  server
+  storage
+
+section
+    OCAMLFLAGS += -for-pack Obigstore_server
+    CamlSources($(OBJECTS)):
+
+OCamlPackage(obigstore_server, $(OBJECTS))
+OCamlLibrary(obigstore_server, obigstore_server)
+

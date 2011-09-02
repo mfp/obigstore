@@ -18,6 +18,7 @@ OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax lwt.preemptive
 LD_PATHS[] =
 	$(ROOT)/src/libs/ocaml-leveldb/src
 	$(ROOT)/src
+	$(ROOT)/src/core
 
 setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 
