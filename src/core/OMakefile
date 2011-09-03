@@ -13,6 +13,8 @@ OBJECTS[] =
 request.ml: request.proto ../libs/extprot/extprotc
 	../libs/extprot/extprotc $<
 
+OCamlGeneratedFiles(request.ml)
+
 obigstore_stubs.o: obigstore_stubs.cc
 
 section
