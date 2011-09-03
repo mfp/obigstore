@@ -1638,28 +1638,45 @@ let record_column_reads load_stats key last_column columns =
     Load_stats.record_cols_rd load_stats (List.length columns)
 
 let get_slice tx table
-      ?(max_keys = max_int) ?(max_columns = max_int)
+      ?(max_keys = max_int) ?max_columns
       ?(decode_timestamps = false) key_range ?predicate column_range =
+  let max_columns_ = Option.default max_int max_columns in
   let postproc_keydata ~guaranteed_cols_ok (key, rev_cols) =
     match rev_cols with
-      | last_candidate :: _ as l when max_columns > 0 ->
+      | last_candidate :: _ as l when max_columns_ > 0 ->
           if guaranteed_cols_ok then begin
-            (* we have at most max_columns in l *)
+            (* we have at most max_columns_ in l *)
             let last_column = last_candidate.name in
             let columns = rev l in
               record_column_reads tx.ks.ks_db.load_stats key last_column columns;
               Some ({ key; last_column; columns; })
           end else begin
             (* we might have more, so need to List.take *)
-            let columns = List.take max_columns (rev l) in
+            let columns = List.take max_columns_ (rev l) in
             let last_column = (List.last columns).name in
               record_column_reads tx.ks.ks_db.load_stats key last_column columns;
               Some ({ key; last_column; columns; })
           end
       | _ -> None in
 
-  let get_keydata_key { key; _ } = key
+  let get_keydata_key { key; _ } = key in
 
+  (* if we're being given a list (union) of columns, we restrict the max
+   * number of columns to the cardinality of the column set *)
+  let is_columns = function Columns _ -> true | Column_range _ -> false in
+  let max_columns = match max_columns with
+      Some m -> m
+    | None -> match column_range with
+        | Column_range_union l when List.for_all is_columns l ->
+            let columns =
+              List.fold_left
+                (fun s x -> match x with
+                     Columns l -> List.fold_left (fun s c -> S.add c s) s l
+                   | Column_range _ -> s)
+                S.empty
+                l
+            in S.cardinal columns
+        | Column_range_union _ | All_columns -> max_int
   in
     Load_stats.record_reads tx.ks.ks_db.load_stats 1;
     get_slice_aux
@@ -1715,7 +1732,7 @@ let get_column_values tx table key columns =
 
 let get_column tx table key column_name =
   match_lwt
-    get_columns tx table key ~decode_timestamps:true
+    get_columns tx table key ~decode_timestamps:true ~max_columns:1
       (Column_range_union [Columns [column_name]])
   with
       Some (_, c :: _) -> return (Some (c.data, c.timestamp))
