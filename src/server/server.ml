@@ -21,9 +21,15 @@ open Lwt
 open Printf
 open Obigstore_core
 
-module Make(D : Data_model.S)(P : Protocol.PAYLOAD) =
+module Make
+  (D : sig
+     include Data_model.S
+     include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+     val use_thread_pool : db -> bool -> unit
+   end)
+  (P : Protocol.PAYLOAD) =
 struct
-  module S = Protocol_server.Make(Storage)(Protocol_payload.Version_0_0_0)
+  module S = Protocol_server.Make(D)(Protocol_payload.Version_0_0_0)
 
   type conn =
       {
