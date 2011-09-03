@@ -44,10 +44,14 @@ module LOCKS =
               let equal (s1, _) (s2, _) = String.compare s1 s2 = 0
             end)
 
+let make_iter_pool db =
+  Lwt_pool.create 100 (* FIXME: which limit? *)
+    (fun () -> return (L.iterator db))
+
 module WRITEBATCH : sig
   type t
   type tx
-  val make : L.db -> flush_period:float -> t
+  val make : L.db -> L.iterator Lwt_pool.t ref -> flush_period:float -> t
   val close : t -> unit Lwt.t
   val set_period : t -> float -> unit
   val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
@@ -68,15 +72,18 @@ struct
          * the actual sync needs to be exclusive *)
         mutable wait_last_sync : unit Lwt.t * unit Lwt.u;
         (* used to wait for last sync before close *)
+        mutable iter_pool : L.iterator Lwt_pool.t ref;
+        (* will be overwritten after an update *)
       }
 
   type tx = { t : t; mutable valid : bool; }
 
-  let make db ~flush_period =
+  let make db iter_pool ~flush_period =
     let t =
       { db; wb = L.Batch.make (); dirty = false; closed = false;
         mutex = Lwt_mutex.create (); sync_wait = Lwt.wait ();
         flush_period; wait_last_sync = Lwt.wait ();
+        iter_pool;
       }
     in
       ignore begin try_lwt
@@ -93,6 +100,7 @@ struct
                  lwt () = Lwt_preemptive.detach (L.Batch.write ~sync:true t.db) t.wb in
                  let u = snd t.sync_wait in
                  let u' = snd t.wait_last_sync in
+                   iter_pool := make_iter_pool t.db;
                    t.dirty <- false;
                    t.wb <- L.Batch.make ();
                    t.sync_wait <- Lwt.wait ();
@@ -154,6 +162,10 @@ type db =
       mutable use_thread_pool : bool;
       load_stats : Load_stats.t;
       writebatch : WRITEBATCH.t;
+      mutable db_iter_pool : L.iterator Lwt_pool.t ref;
+      (* We use an iterator pool to reuse iterators for read committed
+       * transactions whenever possible. After an update, the db_iter_pool is
+       * replaced by a new one (so that only new iterators are used). *)
     }
 
 and keyspace =
@@ -215,7 +227,10 @@ let close_db t =
 let open_db ?(group_commit_period = 0.002) basedir =
   let db = L.open_db ~comparator:Datum_encoding.custom_comparator basedir in
   let group_commit_period = max group_commit_period 0.001 in
-  let writebatch =  WRITEBATCH.make db ~flush_period:group_commit_period in
+  let db_iter_pool = ref (make_iter_pool db) in
+  let writebatch =
+    WRITEBATCH.make db db_iter_pool ~flush_period:group_commit_period
+  in
     (* ensure we have a end_of_db record *)
     if not (L.mem db Datum_encoding.end_of_db_key) then
       L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
@@ -223,12 +238,14 @@ let open_db ?(group_commit_period = 0.002) basedir =
       { basedir; db; keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Load_stats.make [1; 60; 300; 900];
-        writebatch;
+        writebatch; db_iter_pool;
       } in
     let keyspaces = read_keyspaces db in
       Gc.finalise (fun db -> ignore (close_db db)) db;
       Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
       db
+
+let reset_iter_pool t = t.db_iter_pool := make_iter_pool t.db
 
 let use_thread_pool db v = db.use_thread_pool <- v
 
@@ -404,9 +421,8 @@ type transaction =
       mutable added_keys : S.t M.t; (* table -> key set *)
       mutable added : string M.t M.t M.t; (* table -> key -> column -> value *)
       mutable deleted : S.t M.t M.t; (* table -> key -> column set *)
-      access : L.read_access Lazy.t;
       repeatable_read : bool;
-      iter_pool : L.iterator Lwt_pool.t option;
+      iter_pool : L.iterator Lwt_pool.t ref;
       ks : keyspace;
       mutable backup_writebatch : L.writebatch Lazy.t;
       (* approximate size of data written in current backup_writebatch *)
@@ -436,15 +452,15 @@ let register_new_table_and_add_to_writebatch =
 let register_new_table_and_add_to_writebatch' =
   register_new_table_and_add_to_writebatch_aux WRITEBATCH.put_substring
 
-let rec transaction_aux make_access_and_iters ks f =
+let rec transaction_aux make_iter_pool ks f =
   match Lwt.get tx_key with
     | None -> begin
-        let access, iter_pool, repeatable_read =
-          make_access_and_iters ks.ks_db None in
+        let iter_pool, repeatable_read =
+          make_iter_pool ks.ks_db None in
         let rec tx =
           { added_keys = M.empty; deleted_keys = M.empty;
             added = M.empty; deleted = M.empty;
-            access; repeatable_read; iter_pool; ks;
+            repeatable_read; iter_pool; ks;
             backup_writebatch = lazy (L.Batch.make ());
             backup_writebatch_size = 0;
             outermost_tx = tx; locks = M.empty;
@@ -460,9 +476,8 @@ let rec transaction_aux make_access_and_iters ks f =
           return ()
       end
     | Some parent_tx ->
-        let access, iter_pool, repeatable_read =
-          make_access_and_iters ks.ks_db (Some parent_tx) in
-        let tx = { parent_tx with access; iter_pool; repeatable_read; } in
+        let iter_pool, repeatable_read = make_iter_pool ks.ks_db (Some parent_tx) in
+        let tx = { parent_tx with iter_pool; repeatable_read; } in
         lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
           parent_tx.deleted_keys <- tx.deleted_keys;
           parent_tx.added <- tx.added;
@@ -488,7 +503,9 @@ and commit_outermost_transaction ks tx =
     else
       let b = Lazy.force tx.backup_writebatch in
         Load_stats.record_writes tx.ks.ks_db.load_stats 1;
-        detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b
+        lwt () = detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b in
+          reset_iter_pool ks.ks_db;
+          return ()
     end >>
 
     (* write normal data and wait for group commit sync *)
@@ -560,20 +577,20 @@ and commit_outermost_transaction ks tx =
 let read_committed_transaction f =
   transaction_aux
     (fun db -> function
-         None -> (lazy (L.read_access db.db), None, false)
-       | Some tx -> (tx.access, tx.iter_pool, false))
+         None -> (db.db_iter_pool, false)
+       | Some tx -> (tx.iter_pool, false))
     f
 
 let repeatable_read_transaction f =
   transaction_aux
     (fun db -> function
-         Some { access; repeatable_read = true; iter_pool = Some pool; _} ->
-           (access, Some pool, true)
+         Some { repeatable_read = true; iter_pool; _} ->
+           (iter_pool, true)
        | _ ->
            let access = lazy (L.Snapshot.read_access (L.Snapshot.make db.db)) in
            let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
                         (fun () -> return (RA.iterator (Lazy.force access)))
-           in (access, Some pool, true))
+           in (ref pool, true))
     f
 
 let lock ks name =
@@ -623,19 +640,17 @@ let is_column_deleted tx table =
 
 (* In [let f = exists_key tx table in ... f key], [f key] returns true iff
  * there's some column with the given key in the table named [table]. *)
-let exists_key tx table_name =
+let with_exists_key tx table_name f =
   let datum_key = Bytea.create 13 in
-  let it = RA.iterator (Lazy.force tx.access) in
   let buf = ref "" in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
   let is_column_deleted = is_column_deleted tx table_name in
-  let table_r = ref (-1)
+  let table_r = ref (-1) in
 
-  in begin fun key ->
-    match find_maybe tx.ks.ks_tables table_name with
+  let exists_f it = begin fun key -> match find_maybe tx.ks.ks_tables table_name with
         Some table ->
           Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
             ~table ~key ~column:"" ~timestamp:Int64.min_int;
@@ -663,7 +678,9 @@ let exists_key tx table_name =
       | None ->
           (* we couldn't translate the table_name to a table_id *)
           false
-  end
+    end
+  in
+    Lwt_pool.use !(tx.iter_pool) (fun it -> f (exists_f it))
 
 type 'a fold_result =
     Continue
@@ -812,35 +829,26 @@ let fold_over_data_aux
     ()
 
 let fold_over_data tx table f ?first_column acc ~reverse ~first_key ~up_to_key =
-  match tx.iter_pool with
-      None ->
-        let it = RA.iterator (Lazy.force tx.access) in
-          try_lwt
-            fold_over_data_aux it tx table f acc ?first_column
-            ~reverse ~first_key ~up_to_key
-          finally
-            IT.close it;
-            return ()
-    | Some pool ->
-        Lwt_pool.use pool
-          (fun it -> fold_over_data_aux it tx table f acc ?first_column
-                       ~reverse ~first_key ~up_to_key)
+  Lwt_pool.use !(tx.iter_pool)
+    (fun it -> fold_over_data_aux it tx table f acc ?first_column
+                 ~reverse ~first_key ~up_to_key)
 
 let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
     Keys l ->
-      detach_ks_op tx.ks
-        (fun () ->
-           let exists_key = exists_key tx table in
-           let s = S.of_list l in
-           let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
-           let s =
-             S.filter
-               (fun k ->
-                  S.mem k (M.find_default S.empty table tx.added_keys) ||
-                  exists_key k)
-               s
-           in map_f s)
-        ()
+      with_exists_key tx table
+        (fun exists_key ->
+           detach_ks_op tx.ks
+             (fun () ->
+                let s = S.of_list l in
+                let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
+                let s =
+                  S.filter
+                    (fun k ->
+                       S.mem k (M.find_default S.empty table tx.added_keys) ||
+                       exists_key k)
+                    s
+                in map_f s)
+             ())
 
   | Key_range { first; up_to; reverse; } ->
       (* we recover all the keys added in the transaction *)
@@ -1905,7 +1913,9 @@ let load tx data =
         else begin
           tx.backup_writebatch <- lazy (L.Batch.make ());
           tx.backup_writebatch_size <- 0;
-          detach_ks_op tx.ks (L.Batch.write ~sync:true tx.ks.ks_db.db) wb
+          detach_ks_op tx.ks (L.Batch.write ~sync:true tx.ks.ks_db.db) wb >>
+          let () = reset_iter_pool tx.ks.ks_db in
+            return ()
         end
       end >>
       return true
