@@ -59,4 +59,4 @@ let () =
                 exit 1
       | Some dir ->
           let db = Storage.open_db ~group_commit_period:!gcommit_period dir in
-            Lwt_unix.run (S.run_server ~debug:!debug db addr !port)
+            Lwt_unix.run (S.run_plain_server ~debug:!debug db addr !port)

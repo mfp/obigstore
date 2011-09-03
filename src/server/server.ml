@@ -42,7 +42,7 @@ struct
       Unix.ADDR_UNIX s -> sprintf "unix socket %S" s
     | Unix.ADDR_INET (a, p) -> sprintf "%s:%d" (Unix.string_of_inet_addr a) p
 
-  let rec run_server ?(debug=false) db address port =
+  let rec run_plain_server ?(debug=false) db address port =
     let rec accept_loop sock =
       begin try_lwt
         lwt (fd, addr) = Lwt_unix.accept sock in
