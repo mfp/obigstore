@@ -38,7 +38,7 @@ section
 
     section
         OCAML_LIBS[] += obigstore_server
-	OCamlProgram(obigstore, run_server)
+	OCamlProgram(obigstore, obigstore)
 
     TOPLEVEL_LIBS[] =
 	libs/ocaml-leveldb/src/leveldb
