@@ -237,8 +237,8 @@ struct
           (fun ks ->
              try_lwt
                D.repeatable_read_transaction ks
-                 (fun tx ->
-                    Lwt.with_value tx_key (Some tx)
+                 (fun ks ->
+                    Lwt.with_value tx_key (Some ())
                       (fun () ->
                          try_lwt
                            P.return_ok ?buf c.och ~request_id ()>>
@@ -271,89 +271,78 @@ struct
                P.deadlock ?buf c.och ~request_id () >>
                raise_lwt Abort_exn)
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
-        with_tx c keyspace ~request_id
-          (fun tx -> D.get_keys tx table ?max_keys key_range >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.get_keys ks table ?max_keys key_range >>=
                      P.return_keys ?buf c.och ~request_id)
     | Count_keys { Count_keys.keyspace; table; key_range; } ->
-        with_tx c keyspace ~request_id
-          (fun tx -> D.count_keys tx table key_range >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.count_keys ks table key_range >>=
                      P.return_key_count ?buf c.och ~request_id)
     | Get_slice { Get_slice.keyspace; table; max_keys; max_columns;
                   decode_timestamps; key_range; predicate; column_range; } ->
-        with_tx c keyspace ~request_id
-          (fun tx ->
-             D.get_slice tx table ?max_keys ?max_columns ~decode_timestamps
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             D.get_slice ks table ?max_keys ?max_columns ~decode_timestamps
                key_range ?predicate column_range >>=
              P.return_slice ?buf c.och ~request_id)
     | Get_slice_values { Get_slice_values.keyspace; table; max_keys;
                          key_range; columns; } ->
-        with_tx c keyspace ~request_id
-          (fun tx ->
-             D.get_slice_values tx table ?max_keys key_range columns >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             D.get_slice_values ks table ?max_keys key_range columns >>=
              P.return_slice_values ?buf c.och ~request_id)
     | Get_columns { Get_columns.keyspace; table; max_columns;
                     decode_timestamps; key; column_range; } ->
-        with_tx c keyspace ~request_id
-          (fun tx ->
-             D.get_columns tx table ?max_columns ~decode_timestamps
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             D.get_columns ks table ?max_columns ~decode_timestamps
                key column_range >>=
              P.return_columns ?buf c.och ~request_id)
     | Get_column_values { Get_column_values.keyspace; table; key; columns; } ->
-        with_tx c keyspace ~request_id
-          (fun tx ->
-             D.get_column_values tx table key columns >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             D.get_column_values ks table key columns >>=
              P.return_column_values ?buf c.och ~request_id)
     | Get_column { Get_column.keyspace; table; key; column; } ->
-        with_tx c keyspace ~request_id
-          (fun tx -> D.get_column tx table key column >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.get_column ks table key column >>=
                      P.return_column ?buf c.och ~request_id)
     | Put_columns { Put_columns.keyspace; table; key; columns } ->
         (* P.return_ok ?buf c.och ~request_id () >> *)
         (* service c *)
-        with_tx c keyspace ~request_id
-          (fun tx -> D.put_columns tx table key columns >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.put_columns ks table key columns >>=
                      P.return_ok ?buf c.och ~request_id)
     | Delete_columns { Delete_columns.keyspace; table; key; columns; } ->
-        with_tx c keyspace ~request_id
-          (fun tx -> D.delete_columns tx table key columns >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.delete_columns ks table key columns >>=
                      P.return_ok ?buf c.och ~request_id)
     | Delete_key { Delete_key.keyspace; table; key; } ->
-        with_tx c keyspace ~request_id
-          (fun tx -> D.delete_key tx table key >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.delete_key ks table key >>=
                      P.return_ok ?buf c.och ~request_id)
     | Dump { Dump.keyspace; only_tables; cursor; format; } ->
         let offset = match cursor with
             None -> None
           | Some c -> D.cursor_of_string c in
-        with_tx c keyspace ~request_id
-          (fun tx ->
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
              lwt x =
-               D.dump tx ?format ?only_tables ?offset () >|= function
+               D.dump ks ?format ?only_tables ?offset () >|= function
                    None -> None
                  | Some (data, None) -> Some (data, None)
                  | Some (data, Some cursor) ->
                      Some (data, Some (D.string_of_cursor cursor))
              in P.return_backup_dump ?buf c.och ~request_id x)
     | Load { Load.keyspace; data; } ->
-        with_tx c keyspace ~request_id
-          (fun tx ->
-             D.load tx data >>=
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             D.load ks data >>=
              P.return_backup_load_result ?buf c.och ~request_id)
     | Stats { Stats.keyspace; } ->
         with_keyspace c keyspace ~request_id
           (fun ks -> D.load_stats ks >>=
                      P.return_load_stats ?buf c.och ~request_id)
-
-  and with_tx c keyspace_idx ~request_id f =
-    match Lwt.get tx_key with
-        None ->
-          let ks = try Some (H.find c.keyspaces keyspace_idx)
-                   with Not_found -> None
-          in begin match ks with
-              None -> P.unknown_keyspace c.och ~request_id ()
-            | Some ks -> D.repeatable_read_transaction ks f
-          end
-      | Some tx -> f tx
 
   and with_keyspace c ks_idx ~request_id f =
     let ks = try Some (H.find c.keyspaces ks_idx) with Not_found -> None in
