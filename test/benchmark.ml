@@ -30,6 +30,7 @@ module List = struct include BatList include List end
 module Make
   (D : Data_model.S)
   (C : sig
+     val is_remote : bool
      val make_tmp_db : unit -> D.db Lwt.t
    end) =
 struct
@@ -199,16 +200,17 @@ struct
     let table = "nums" in
     let nkeys = 100000 in
       let keys = List.init nkeys (fun _ -> string_of_int (Random.int nkeys)) in
-      let dt transaction =
-        time
-          (fun () ->
-             transaction ks
-               (fun tx ->
-                  Lwt_list.iter_s
-                    (fun k ->
-                       lwt _ = D.get_column tx table k "value" in
-                         return ())
-                    keys)) in
+
+      let do_read k =
+        lwt _ = D.get_column ks table k "value" in
+          return () in
+      let read keys =
+        if C.is_remote then
+          iter_p_in_region ~size:50 do_read keys
+        else
+          Lwt_list.iter_s do_read keys in
+      let dt transaction = time (fun () -> transaction ks (fun _ -> read keys)) in
+
       lwt dt_repeatable = dt D.repeatable_read_transaction in
       lwt dt_read_committed = dt D.read_committed_transaction in
       lwt dt_no_tx = dt (fun ks f -> f ks) in
@@ -306,6 +308,8 @@ module BM_Storage =
            | Some d -> d in
          let db = D.open_db ~group_commit_period:0.010 tmp_dir in
            return db
+
+       let is_remote = false
      end)
 
 let () =
@@ -328,6 +332,8 @@ let () =
         let make_tmp_db () =
           lwt ich, och = Lwt_io.open_connection addr in
             return (CLIENT.make ich och)
+
+        let is_remote = true
       end in
     let module BM = Make(CLIENT)(C) in
       Lwt_unix.run
