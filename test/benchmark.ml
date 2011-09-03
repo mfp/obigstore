@@ -198,24 +198,27 @@ struct
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
-    let max_parallelism = 50 in
-    let region = Lwt_util.make_region max_parallelism in
       let keys = List.init nkeys (fun _ -> string_of_int (Random.int nkeys)) in
-      lwt dt =
+      let dt transaction =
         time
           (fun () ->
-             D.read_committed_transaction ks
+             transaction ks
                (fun tx ->
-                  Lwt_list.map_p
+                  Lwt_list.iter_s
                     (fun k ->
-                       Lwt_util.run_in_region region 1
-                         (fun () -> D.get_column tx table k "value"))
-                    keys >>
-                  return ()))
-      in
+                       lwt _ = D.get_column tx table k "value" in
+                         return ())
+                    keys)) in
+      lwt dt_repeatable = dt D.repeatable_read_transaction in
+      lwt dt_read_committed = dt D.read_committed_transaction in
+      lwt dt_no_tx = dt (fun ks f -> f ks) in
         print_newline ();
-        printf "Rand read: %d columns in %8.5fs (%d/s)\n%!"
-           nkeys dt (truncate (float nkeys /. dt));
+        printf "Rand read (repeatable): %d columns in %8.5fs (%d/s)\n%!"
+           nkeys dt_repeatable (truncate (float nkeys /. dt_repeatable));
+        printf "Rand read (read_committed): %d columns in %8.5fs (%d/s)\n%!"
+           nkeys dt_read_committed (truncate (float nkeys /. dt_read_committed));
+        printf "Rand read (no TX): %d columns in %8.5fs (%d/s)\n%!"
+           nkeys dt_no_tx (truncate (float nkeys /. dt_no_tx));
         return ()
 
   let run_if x f = if x then f () else return ()
