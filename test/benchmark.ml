@@ -149,33 +149,29 @@ struct
 
   let iter_p_in_region ~size f l =
     let pending = ref 0 in
-    let waiter = ref (Lwt.task ()) in
-    let rec do_iter_in_region f = function
-        [] -> return ()
+    let q = Queue.create () in
+    let rec iter_in_region f t = function
+        [] -> t
       | x :: tl ->
-          begin if !pending >= size then
-            fst !waiter
-          else
+          begin if !pending > size then begin
+            let w = Lwt.task () in
+              Queue.push (snd w) q;
+              fst w
+          end else
             return ()
           end >>
-          let t =
+          let t' =
             begin
               incr pending;
               lwt () = f x in
                 decr pending;
-                if !pending < size / 2 then begin
-                  let u = snd !waiter in
-                    waiter := Lwt.task ();
-                    Lwt.wakeup u ();
-                    return ()
-                end else begin
+                try
+                  Lwt.wakeup (Queue.pop q) ();
                   return ()
-                end
+                with Queue.Empty -> return ()
             end
-          and r = do_iter_in_region f tl in
-            lwt () = t in
-              r
-    in do_iter_in_region f l
+          in iter_in_region f (t >> t') tl
+    in iter_in_region f (return ()) l
 
   let bm_sequential_write db =
     lwt ks = D.register_keyspace db "seq" in
