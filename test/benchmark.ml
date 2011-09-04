@@ -181,13 +181,15 @@ struct
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
-    let keys = List.init nkeys string_of_int in
-    let max_parallelism = 2000 in
+    let keys =
+      List.init 100
+        (fun i -> List.init (nkeys / 100) (fun j -> string_of_int (i * 100 + j))) in
     lwt dt =
       time
         (fun () ->
-           iter_p_in_region ~size:max_parallelism
-             (fun key -> D.put_columns ks table key [mk_col "value" key])
+           iter_p_in_region ~size:200
+             (iter_p_in_region ~size:200
+                (fun key -> D.put_columns ks table key [mk_col "value" key]))
              keys)
     in
       print_newline ();
@@ -199,29 +201,48 @@ struct
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
-      let keys = List.init nkeys (fun _ -> string_of_int (Random.int nkeys)) in
+    let keys =
+      List.init (nkeys / 100)
+        (fun _ ->
+           List.init 100
+             (fun _ -> string_of_int (Random.int nkeys))) in
 
-      let do_read k =
-        lwt _ = D.get_column ks table k "value" in
-          return () in
-      let read keys =
-        if C.is_remote then
-          iter_p_in_region ~size:50 do_read keys
-        else
-          Lwt_list.iter_s do_read keys in
-      let dt transaction = time (fun () -> transaction ks (fun _ -> read keys)) in
+    let do_read k =
+      lwt _ = D.get_column ks table k "value" in
+        return () in
+    let read keys =
+      if C.is_remote then
+        iter_p_in_region ~size:50
+          (iter_p_in_region ~size:50 do_read) keys
+      else
+        Lwt_list.iter_s (Lwt_list.iter_s do_read) keys in
+    let dt transaction = time (fun () -> transaction ks (fun _ -> read keys)) in
 
-      lwt dt_repeatable = dt D.repeatable_read_transaction in
-      lwt dt_read_committed = dt D.read_committed_transaction in
-      lwt dt_no_tx = dt (fun ks f -> f ks) in
-        print_newline ();
-        printf "Rand read (repeatable): %d columns in %8.5fs (%d/s)\n%!"
-           nkeys dt_repeatable (truncate (float nkeys /. dt_repeatable));
-        printf "Rand read (read_committed): %d columns in %8.5fs (%d/s)\n%!"
-           nkeys dt_read_committed (truncate (float nkeys /. dt_read_committed));
-        printf "Rand read (no TX): %d columns in %8.5fs (%d/s)\n%!"
-           nkeys dt_no_tx (truncate (float nkeys /. dt_no_tx));
-        return ()
+    lwt dt_repeatable = dt D.repeatable_read_transaction in
+    lwt dt_read_committed = dt D.read_committed_transaction in
+    lwt dt_no_tx = dt (fun ks f -> f ks) in
+    lwt dt_slices =
+      let do_read keys =
+        lwt _ = D.get_slice ks table (DM.Keys keys)
+                  (DM.Column_range_union [DM.Columns ["value"]])
+        in
+          return ()
+      in
+        time
+          (fun () ->
+             if C.is_remote then iter_p_in_region ~size:50 do_read keys
+             else Lwt_list.iter_s do_read keys)
+    in
+      print_newline ();
+      printf "Rand read (repeatable): %d columns in %8.5fs (%d/s)\n"
+         nkeys dt_repeatable (truncate (float nkeys /. dt_repeatable));
+      printf "Rand read (read_committed): %d columns in %8.5fs (%d/s)\n"
+         nkeys dt_read_committed (truncate (float nkeys /. dt_read_committed));
+      printf "Rand read (no TX): %d columns in %8.5fs (%d/s)\n"
+         nkeys dt_no_tx (truncate (float nkeys /. dt_no_tx));
+      printf "Rand read (no TX) using 100-key slices: %d columns in %8.5fs (%d/s)\n%!"
+         nkeys dt_slices (truncate (float nkeys /. dt_slices));
+      return ()
 
   let run_if x f = if x then f () else return ()
 
