@@ -224,8 +224,14 @@ let close_db t =
     L.close t.db;
     return ()
 
-let open_db ?(group_commit_period = 0.002) basedir =
-  let db = L.open_db ~comparator:Datum_encoding.custom_comparator basedir in
+let open_db
+      ?(write_buffer_size = 4 * 1024 * 1024)
+      ?(block_size = 4096)
+      ?(max_open_files = 1000)
+      ?(group_commit_period = 0.002) basedir =
+  let db = L.open_db
+             ~write_buffer_size ~block_size ~max_open_files
+             ~comparator:Datum_encoding.custom_comparator basedir in
   let group_commit_period = max group_commit_period 0.001 in
   let db_iter_pool = ref (make_iter_pool db) in
   let writebatch =

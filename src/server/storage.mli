@@ -23,9 +23,36 @@ include Data_model.S
 include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
 
 (** Open or create a database in the given directory.
+  *
   * @param group_commit_period period for group commit in seconds
-  *        (default 0.002, minimal value: 0.001) *)
-val open_db : ?group_commit_period:float -> string -> db
+  *        (default 0.002, minimal value: 0.001)
+  *
+  * @param write_buffer_size
+  * "Amount of data to build up in memory (backed by an unsorted log
+  * on disk) before converting to a sorted on-disk file.
+  * Larger values increase performance, especially during bulk loads.
+  * Up to two write buffers may be held in memory at the same time,
+  * so you may wish to adjust this parameter to control memory usage.
+  * Also, a larger write buffer will result in a longer recovery time
+  * the next time the database is opened. (default: 4MB)"
+  *
+  * @param block_size
+  * "Approximate size of user data packed per block.  Note that the
+  * block size specified here corresponds to uncompressed data.  The
+  * actual size of the unit read from disk may be smaller if
+  * compression is enabled.  This parameter can be changed dynamically.
+  * (default: 4KB)"
+  *
+  * @param max_open_files
+  * "Number of open files that can be used by the DB.  You may need to
+  * increase this if your database has a large working set (budget
+  * one open file per 2MB of working set). (default: 1000)"
+  *)
+val open_db :
+  ?write_buffer_size:int ->
+  ?block_size:int ->
+  ?max_open_files:int ->
+  ?group_commit_period:float -> string -> db
 
 (** Flush transactions waiting for group commit and close the DB.  All further
   * actions on it will raise an error. *)

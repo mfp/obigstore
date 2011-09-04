@@ -28,6 +28,9 @@ let port = ref 12050
 let db_dir = ref None
 let debug = ref false
 let gcommit_period = ref 0.010
+let write_buffer_size = ref (4 * 1024 * 1024)
+let block_size = ref 4096
+let max_open_files = ref 1000
 
 let params =
   Arg.align
@@ -36,6 +39,9 @@ let params =
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
       "-group-commit-period", Arg.Set_float gcommit_period,
         "DT Group commit period (default: 0.010s)";
+      "-write-buffer-size", Arg.Set_int write_buffer_size, "N Write buffer size (default: 4MB)";
+      "-block_size", Arg.Set_int block_size, "N Block size (default: 4KB)";
+      "-max-open-files", Arg.Set_int max_open_files, "N Max open files (default: 1000)";
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -58,5 +64,9 @@ let () =
         None -> Arg.usage params usage_message;
                 exit 1
       | Some dir ->
-          let db = Storage.open_db ~group_commit_period:!gcommit_period dir in
-            Lwt_unix.run (S.run_plain_server ~debug:!debug db addr !port)
+          let db = Storage.open_db
+                     ~group_commit_period:!gcommit_period dir
+                     ~write_buffer_size:!write_buffer_size
+                     ~block_size:!block_size
+                     ~max_open_files:!max_open_files
+          in Lwt_unix.run (S.run_plain_server ~debug:!debug db addr !port)
