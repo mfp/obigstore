@@ -1,0 +1,13 @@
+
+OCAMLINCLUDES += ..
+
+OBJECTS[] =
+    key_encoding
+
+section
+    OCAMLFLAGS += -for-pack Obigstore_util
+    CamlSources($(OBJECTS)):
+
+OCamlPackage(obigstore_util, $(OBJECTS))
+OCamlLibrary(obigstore_util, obigstore_util)
+

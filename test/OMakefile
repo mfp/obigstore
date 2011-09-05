@@ -14,6 +14,7 @@ OCAML_LIBS[] +=
     ../src/obigstore_core
     ../src/obigstore_client
     ../src/obigstore_server
+    ../src/obigstore_util
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
 OCamlProgram(benchmark, test_00util benchmark)
