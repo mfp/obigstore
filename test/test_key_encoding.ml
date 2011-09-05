@@ -72,6 +72,17 @@ let test_stringz () =
       assert_failure "Expected Unsatisfied_constraint error"
     with K.Error (K.Unsatisfied_constraint _, "Key_encoding.stringz.encode") -> ()
 
+let test_self_delimited_string () =
+  let codec = K.self_delimited_string in
+  let l =
+    [
+      ""; "\000"; "a"; "\000\001"; "\001"; "\000\000";
+      "\000\001\000\001\000\000"; "\001\000\001\001\000";
+    ]
+  in
+    List.iter (check_roundtrip codec) l;
+    check_order_preservation codec l
+
 let positive_int64_vector =
     [ 0L; 1L; Int64.max_int; 42L; ]
 
@@ -132,6 +143,7 @@ let test_custom () =
 
 let tests =
   [ "stringz" >:: test_stringz;
+    "self_delimited_string" >:: test_self_delimited_string;
     "positive_int64" >:: test_positive_int64;
     "positive_int64 complement" >:: test_positive_int64_complement;
     "tuple2" >:: test_tuple2;
