@@ -53,8 +53,8 @@ val self_delimited_string : (string, self_delimited) codec
 val stringz : (string, self_delimited) codec
 val stringz_unsafe : (string, self_delimited) codec
 
-val int64 : (Int64.t, self_delimited) codec
-val int64_complement : (Int64.t, self_delimited) codec
+val positive_int64 : (Int64.t, self_delimited) codec
+val positive_int64_complement : (Int64.t, self_delimited) codec
 
 val tuple2 :
   ('a, self_delimited) codec -> ('b, 'p) codec -> ('a * 'b, 'p) codec

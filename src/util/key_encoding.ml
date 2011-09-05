@@ -164,23 +164,33 @@ let stringz_unsafe =
   let encode b s = Bytea.add_string b s; Bytea.add_byte b 0 in
     { stringz with encode; }
 
-let int64 =
+let positive_int64 =
+  let encode b n =
+    if Int64.compare n 0L < 0 then
+      error (Unsatisfied_constraint "negative Int64.t");
+    Bytea.add_int64_be b n in
+
   let decode s off len scratch n =
     check_off_len "int64" s off len;
     if len < 8 then invalid_off_len ~fname:"int64" s off len;
     n := off + 8;
     decode_int64_be s off
   in
-    { encode = Bytea.add_int64_be; decode; pp = Int64.to_string; }
+    { encode; decode; pp = Int64.to_string; }
 
-let int64_complement =
+let positive_int64_complement =
+  let encode b n =
+    if Int64.compare n 0L < 0 then
+      error (Unsatisfied_constraint "negative Int64.t");
+    Bytea.add_int64_complement_be b n in
+
   let decode s off len scratch n =
     check_off_len "int64" s off len;
     if len < 8 then invalid_off_len ~fname:"int64_complement" s off len;
     n := off + 8;
     decode_int64_complement_be s off
   in
-    { encode = Bytea.add_int64_complement_be; decode; pp = Int64.to_string; }
+    { encode; decode; pp = Int64.to_string; }
 
 let tuple2 c1 c2 =
   let encode b (x, y) =
