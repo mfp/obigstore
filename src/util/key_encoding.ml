@@ -20,6 +20,12 @@
 open Printf
 open Obigstore_core
 
+external decode_int64_be :
+  string -> int -> Int64.t = "obigstore_decode_int64_be"
+
+external decode_int64_complement_be :
+  string -> int -> Int64.t = "obigstore_decode_int64_complement_be"
+
 type error =
     Unsatisfied_constraint of string
   | Incomplete_fragment of string
@@ -67,12 +73,16 @@ let pp c x = c.pp x
 
 let error e = raise (Error e)
 
+let invalid_off_len ~fname s off len =
+  raise
+    (Failure
+       (sprintf "Key_encoding.%s decoding: \
+                 invalid offset (%d) or length (%d) in string of length %d"
+          fname off len (String.length s)))
+
 let check_off_len fname s off len =
   if off < 0 || len < 0 || off + len > String.length s then
-    raise
-      (Failure
-         (sprintf "%s: invalid offset (%d) or length (%d) in string of length %d"
-            fname off len (String.length s)))
+    invalid_off_len ~fname s off len
 
 let string =
   let encode = Bytea.add_string in
@@ -154,6 +164,24 @@ let stringz_unsafe =
   let encode b s = Bytea.add_string b s; Bytea.add_byte b 0 in
     { stringz with encode; }
 
+let int64 =
+  let decode s off len scratch n =
+    check_off_len "int64" s off len;
+    if len < 8 then invalid_off_len ~fname:"int64" s off len;
+    n := off + 8;
+    decode_int64_be s off
+  in
+    { encode = Bytea.add_int64_be; decode; pp = Int64.to_string; }
+
+let int64_complement =
+  let decode s off len scratch n =
+    check_off_len "int64" s off len;
+    if len < 8 then invalid_off_len ~fname:"int64_complement" s off len;
+    n := off + 8;
+    decode_int64_complement_be s off
+  in
+    { encode = Bytea.add_int64_complement_be; decode; pp = Int64.to_string; }
+
 let tuple2 c1 c2 =
   let encode b (x, y) =
     c1.encode b x;
@@ -210,3 +238,8 @@ let tuple4 c1 c2 c3 c4 =
     sprintf "(%s, %s, %s, %s)" (c1.pp x) (c2.pp y) (c3.pp z) (c4.pp zz)
 
   in { encode; decode; pp; }
+
+let custom c ~encode ~decode ~pp =
+  let encode b x = c.encode b (encode x) in
+  let decode s off len scratch n = decode (c.decode s off len scratch n) in
+    { encode; decode; pp }
