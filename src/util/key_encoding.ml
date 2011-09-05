@@ -20,12 +20,26 @@
 open Printf
 open Obigstore_core
 
-type error = Unsatisfied_constraint of string
+type error =
+    Unsatisfied_constraint of string
+  | Incomplete_fragment of string
+  | Bad_encoding of string
 
 exception Error of error
 
+let string_of_error = function
+    Unsatisfied_constraint s -> sprintf "Unsatisfied_constraint %S" s
+  | Incomplete_fragment s -> sprintf "Incomplete_fragment %S" s
+  | Bad_encoding s -> sprintf "Bad_encoding %S" s
+
+let () =
+  Printexc.register_printer
+    (function
+       | Error x -> Some (sprintf "Error (%s)" (string_of_error x))
+       | _ -> None)
+
 type ('a, 'prop) encoder = Bytea.t -> 'a -> unit
-type ('a, 'prop) decoder = string -> int -> int -> int ref -> 'a
+type ('a, 'prop) decoder = string -> int -> int -> Bytea.t -> int ref -> 'a
 
 type ('a, 'prop) codec =
     {
@@ -35,7 +49,7 @@ type ('a, 'prop) codec =
     }
 
 type property = [ `Codec ]
-type non_null = [ property | `Non_null ]
+type self_delimited = [ property | `Self_delimited ]
 
 let encode c b x = c.encode b x
 
@@ -45,93 +59,151 @@ let encode_to_string c x =
     Bytea.contents b
 
 let dummy_ref = ref 0
-let decode c s off len = c.decode s off len dummy_ref
+let dummy_scratch = Bytea.create 13
+let decode c s off len = c.decode s off len dummy_scratch dummy_ref
 let decode_string c s = decode c s 0 (String.length s)
 
 let pp c x = c.pp x
 
 let error e = raise (Error e)
 
-let non_null_string =
+let check_off_len fname s off len =
+  if off < 0 || len < 0 || off + len > String.length s then
+    raise
+      (Failure
+         (sprintf "%s: invalid offset (%d) or length (%d) in string of length %d"
+            fname off len (String.length s)))
+
+let string =
+  let encode = Bytea.add_string in
+  let decode s off len scratch n =
+    check_off_len "string" s off len;
+    n := off + len;
+    String.sub s off len in
+  let pp = sprintf "%S" in
+    { encode; decode; pp; }
+
+type delim_string_dec_state = Normal | Got_zero
+
+let self_delimited_string =
+  let encode b s =
+    for i = 0 to String.length s - 1 do
+      match String.unsafe_get s i with
+          c when c <> '\000' -> Bytea.add_char b c
+        | _ (* \000 *) -> Bytea.add_string b "\000\001"
+    done;
+    Bytea.add_string b "\000\000" in
+
+  let decode s off len scratch n =
+    check_off_len "self_delimited_string" s off len;
+    let max = off + len in
+    let finished = ref false in
+    let state = ref Normal in
+    let b = scratch in
+      Bytea.clear b;
+      n := off;
+      while !n < max && not !finished do
+        begin match !state with
+            Normal -> begin match String.unsafe_get s !n with
+                c when c <> '\000' -> Bytea.add_char b c
+              | _ (* \000 *) -> state := Got_zero
+            end
+          | Got_zero -> match String.unsafe_get s !n with
+                '\000' -> finished := true; state := Normal
+              | '\001' -> Bytea.add_char b '\000'; state := Normal;
+              | _ -> error (Bad_encoding "self_delimited_string")
+        end;
+        incr n
+      done;
+      if !state <> Normal then error (Bad_encoding "self_delimited_string");
+      Bytea.contents b in
+
+  let pp = sprintf "%S"
+  in
+    { encode; decode; pp; }
+
+let stringz =
+
   let encode b s =
     try
       ignore (String.index s '\000');
       error (Unsatisfied_constraint "non null")
-    with Not_found -> Bytea.add_string b s in
-  let decode s off len n =
+    with Not_found ->
+      Bytea.add_string b s;
+      Bytea.add_char b '\000' in
+
+  let decode s off len scratch n =
+    check_off_len "stringz" s off len;
     n := off;
-    (* FIXME: check off and len? *)
-    let max = min (String.length s) (off + len) in
+    let max = off + len in
     let finished = ref false in
-      while !n < max && not !finished do
+      while !n <= max && not !finished do
         if s.[!n] <> '\000' then incr n
         else finished := true
       done;
+      if not !finished then error (Incomplete_fragment "stringz");
       let s = String.sub s off (!n - off) in
-        if !n < max then incr n;
+        incr n;
         s in
-  let pp = sprintf "%S" in
+
+  let pp = sprintf "%S"
+  in
     { encode; decode; pp; }
 
-let non_null_string_unsafe =
-  { non_null_string with encode = Bytea.add_string; }
+let stringz_unsafe =
+  let encode b s = Bytea.add_string b s; Bytea.add_byte b 0 in
+    { stringz with encode; }
 
-let stringz_tuple2 c1 c2 =
+let tuple2 c1 c2 =
   let encode b (x, y) =
     c1.encode b x;
-    Bytea.add_byte b 0;
     c2.encode b y in
 
-  let decode s off len n =
-    let x = c1.decode s off len n in
+  let decode s off len scratch n =
+    let x = c1.decode s off len scratch n in
     let dn = !n - off in
-    let y = c2.decode s !n (len - dn) n in
+    let y = c2.decode s !n (len - dn) scratch n in
       (x, y) in
 
   let pp (x, y) = sprintf "(%s, %s)" (c1.pp x) (c2.pp y)
   in
     { encode; decode; pp; }
 
-let stringz_tuple3 c1 c2 c3 =
+let tuple3 c1 c2 c3 =
 
   let encode b (x, y, z) =
     c1.encode b x;
-    Bytea.add_byte b 0;
     c2.encode b y;
-    Bytea.add_byte b 0;
     c3.encode b z in
 
-  let decode s off len n =
-    let x = c1.decode s off len n in
-    let dn = !n - off in
-    let y = c2.decode s !n (len - dn) n in
-    let dn = !n - off in
-    let z = c3.decode s !n (len - dn) n in
+  let decode s off len scratch n =
+    let x = c1.decode s off len scratch n in
+    let len = len - (!n - off) and old_n = !n in
+    let y = c2.decode s !n len scratch n in
+    let len = len - (!n - old_n) in
+    let z = c3.decode s !n len scratch n in
       (x, y, z) in
 
   let pp (x, y, z) = sprintf "(%s, %s, %s)" (c1.pp x) (c2.pp y) (c3.pp z)
   in
     { encode; decode; pp; }
 
-let stringz_tuple4 c1 c2 c3 c4 =
+let tuple4 c1 c2 c3 c4 =
 
   let encode b (x, y, z, zz) =
     c1.encode b x;
-    Bytea.add_byte b 0;
     c2.encode b y;
-    Bytea.add_byte b 0;
     c3.encode b z;
-    Bytea.add_byte b 0;
     c4.encode b zz in
 
-  let decode s off len n =
-    let x = c1.decode s off len n in
-    let dn = !n - off in
-    let y = c2.decode s !n (len - dn) n in
-    let dn = !n - off in
-    let z = c3.decode s !n (len - dn) n in
-    let dn = !n - off in
-    let zz = c4.decode s !n (len - dn) n in
+  let decode s off len scratch n =
+    let x = c1.decode s off len scratch n in
+    let len = len - (!n - off) and old_n = !n in
+    let y = c2.decode s !n len scratch n in
+    let len = len - (!n - old_n) and old_n = !n in
+    let z = c3.decode s !n len scratch n in
+    let len = len - (!n - old_n) in
+    let zz = c4.decode s !n len scratch n in
       (x, y, z, zz) in
 
   let pp (x, y, z, zz) =

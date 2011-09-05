@@ -17,16 +17,29 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+(* Order-preserving key encoding. *)
+
+(* This module provides functions that encode/decode values into/from
+ * byte sequences while preserving the ordering of the original values, i.e.,
+ * given two values [x] and [y] and noting the result of the encoding process
+ * [enc x] and [enc y] respectively, then, without loss of generality:
+ * * [x = y] implies [enc x = enc y]
+ * * [x < y] implies [enc x < enc y]
+ *)
+
 open Obigstore_core
 
-type error = Unsatisfied_constraint of string
+type error =
+    Unsatisfied_constraint of string
+  | Incomplete_fragment of string
+  | Bad_encoding of string
 
 exception Error of error
 
 type ('a, 'prop) codec
 
 type property = [ `Codec ]
-type non_null = [ property | `Non_null ]
+type self_delimited = [ property | `Self_delimited ]
 
 val encode : ('a, _) codec -> Bytea.t -> 'a -> unit
 val encode_to_string : ('a, _) codec -> 'a -> string
@@ -34,18 +47,21 @@ val decode : ('a, _) codec -> string -> int -> int -> 'a
 val decode_string : ('a, _) codec -> string -> 'a
 val pp : ('a, _) codec -> 'a -> string
 
-val non_null_string : (string, non_null) codec
-val non_null_string_unsafe : (string, non_null) codec
+val string : (string, property) codec
+val self_delimited_string : (string, self_delimited) codec
 
-val stringz_tuple2 :
-  ('a, non_null) codec -> ('b, non_null) codec -> ('a * 'b, property) codec
+val stringz : (string, self_delimited) codec
+val stringz_unsafe : (string, self_delimited) codec
 
-val stringz_tuple3 :
-  ('a, non_null) codec -> ('b, non_null) codec ->
-  ('c, non_null) codec ->
-  ('a * 'b * 'c, property) codec
+val tuple2 :
+  ('a, self_delimited) codec -> ('b, 'p) codec -> ('a * 'b, 'p) codec
 
-val stringz_tuple4 :
-  ('a, non_null) codec -> ('b, non_null) codec ->
-  ('c, non_null) codec -> ('d, non_null) codec ->
-  ('a * 'b * 'c * 'd, property) codec
+val tuple3 :
+  ('a, self_delimited) codec -> ('b, self_delimited) codec ->
+  ('c, 'p) codec ->
+  ('a * 'b * 'c, 'p) codec
+
+val tuple4 :
+  ('a, self_delimited) codec -> ('b, self_delimited) codec ->
+  ('c, self_delimited) codec -> ('d, 'p) codec ->
+  ('a * 'b * 'c * 'd, 'p) codec
