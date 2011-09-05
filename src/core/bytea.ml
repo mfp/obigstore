@@ -137,6 +137,15 @@ external obigstore_bytea_blit_int64_le : string -> int -> Int64.t -> unit =
 external obigstore_bytea_blit_int32_le : string -> int -> int -> unit =
   "obigstore_bytea_blit_int_as_i32_le" "noalloc"
 
+external obigstore_bytea_blit_int64_complement_be : string -> int -> Int64.t -> unit =
+  "obigstore_bytea_blit_int64_complement_be" "noalloc"
+
+external obigstore_bytea_blit_int64_be : string -> int -> Int64.t -> unit =
+  "obigstore_bytea_blit_int64_be" "noalloc"
+
+external obigstore_bytea_blit_int32_be : string -> int -> int -> unit =
+  "obigstore_bytea_blit_int_as_i32_be" "noalloc"
+
 let add_int64_complement_le b n =
   let new_position = b.position + 8 in
   if new_position > b.length then resize b 8;
@@ -154,5 +163,24 @@ let add_int32_le b n =
     if new_position > b.length then resize b 4;
     obigstore_bytea_blit_int32_le b.buffer b.position n;
     b.position <- new_position
+
+let add_int64_complement_be b n =
+  let new_position = b.position + 8 in
+  if new_position > b.length then resize b 8;
+  obigstore_bytea_blit_int64_complement_be b.buffer b.position n;
+  b.position <- new_position
+
+let add_int64_be b n =
+  let new_position = b.position + 8 in
+  if new_position > b.length then resize b 8;
+  obigstore_bytea_blit_int64_be b.buffer b.position n;
+  b.position <- new_position
+
+let add_int32_be b n =
+  let new_position = b.position + 4 in
+    if new_position > b.length then resize b 4;
+    obigstore_bytea_blit_int32_be b.buffer b.position n;
+    b.position <- new_position
+
 
 let unsafe_string b = b.buffer

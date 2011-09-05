@@ -178,47 +178,129 @@ obigstore_apply_custom_comparator(value s1, value s2)
  CAMLreturn(Val_int(comparator1.Compare(d1, d2)));
 }
 
-CAMLprim value
-obigstore_bytea_blit_int64_complement_le(value dst, value off, value n)
+static value
+blit_int64_le(value dst, value off, int64_t v)
 {
- int64_t v = Int64_val(n);
- v = v ^ -1;
-
 #ifdef IS_LITTLE_ENDIAN
- // FIXME: non-aligned writes
- int64_t *p = (int64_t *)(&Byte_u(dst, Long_val(off)));
- *p = v;
+ /* optimized by gcc to plain store */
+ memcpy(&Byte_u(dst, Long_val(off)), &v, sizeof(v));
 #else
- char *d = &Byte_u(dst, Long_val(off));
- char *s = (char *)&v;
+ uint8_t *d = &Byte_u(dst, Long_val(off));
+ uint8_t *s = (uint8_t *)&v;
+
+ d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
+ d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
+#endif
+ return(Val_unit);
+}
+
+static value
+blit_int64_be(value dst, value off, int64_t v)
+{
+#ifndef IS_LITTLE_ENDIAN
+ /* optimized by gcc to plain store */
+ memcpy(&Byte_u(dst, Long_val(off)), &v, sizeof(v));
+#else
+ uint8_t *d = &Byte_u(dst, Long_val(off));
+ uint8_t *s = (uint8_t *)&v;
 
  d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
  d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
 #endif
 
  return(Val_unit);
+}
+
+CAMLprim value
+obigstore_bytea_blit_int64_complement_le(value dst, value off, value n)
+{
+ return blit_int64_le(dst, off, Int64_val(n) ^ -1);
 }
 
 CAMLprim value
 obigstore_bytea_blit_int64_le(value dst, value off, value n)
 {
- int64_t v = Int64_val(n);
-
-#ifdef IS_LITTLE_ENDIAN
- // FIXME: non-aligned writes
- int64_t *p = (int64_t *)(&Byte_u(dst, Long_val(off)));
- *p = v;
-#else
- char *d = &Byte_u(dst, Long_val(off));
- char *s = (char *)&v;
-
- d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
- d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
-#endif
-
- return(Val_unit);
+ return blit_int64_le(dst, off, Int64_val(n));
 }
 
+CAMLprim value
+obigstore_bytea_blit_int64_complement_be(value dst, value off, value n)
+{
+ return blit_int64_be(dst, off, Int64_val(n) ^ -1);
+}
+
+CAMLprim value
+obigstore_bytea_blit_int64_be(value dst, value off, value n)
+{
+ return blit_int64_be(dst, off, Int64_val(n));
+}
+
+static int64_t
+decode_int64_le(value s, value off)
+{
+#ifdef IS_LITTLE_ENDIAN
+  int64_t v;
+  memcpy(&v, &Byte_u(s, Long_val(off)), sizeof(v));
+  return v;
+#else
+  uint8_t *s_ = &Byte_u(s, Long_val(off));
+  union {
+      int64_t ll;
+      unsigned char c[8];
+  } x;
+
+  x.c[0] = s_[7]; x.c[1] = s_[6]; x.c[2] = s_[5]; x.c[3] = x[4];
+  x.c[4] = s_[3]; x.c[5] = s_[2]; x.c[6] = s_[1]; x.c[7] = x[0];
+  return x.ll;
+#endif
+}
+
+static int64_t
+decode_int64_be(value s, value off)
+{
+#ifndef IS_LITTLE_ENDIAN
+  int64_t v;
+
+  /* gcc optimizes this idiom to a plain load */
+  memcpy(&v, &Byte_u(s, Long_val(off)), sizeof(v));
+  return v;
+#else
+  uint8_t *s_ = &Byte_u(s, Long_val(off));
+  union {
+      int64_t ll;
+      uint8_t c[8];
+  } x;
+
+  x.c[0] = s_[7]; x.c[1] = s_[6]; x.c[2] = s_[5]; x.c[3] = s_[4];
+  x.c[4] = s_[3]; x.c[5] = s_[2]; x.c[6] = s_[1]; x.c[7] = s_[0];
+
+  return x.ll;
+#endif
+}
+
+CAMLprim value
+obigstore_decode_int64_le(value s, value off)
+{
+ return caml_copy_int64(decode_int64_le(s, off));
+}
+
+CAMLprim value
+obigstore_decode_int64_complement_le(value s, value off)
+{
+ return caml_copy_int64(decode_int64_le(s, off) ^ -1);
+}
+
+CAMLprim value
+obigstore_decode_int64_be(value s, value off)
+{
+ return caml_copy_int64(decode_int64_be(s, off));
+}
+
+CAMLprim value
+obigstore_decode_int64_complement_be(value s, value off)
+{
+ return caml_copy_int64(decode_int64_be(s, off) ^ -1);
+}
 
 CAMLprim value
 obigstore_bytea_blit_int_as_i32_le(value dst, value off, value n)
@@ -226,9 +308,8 @@ obigstore_bytea_blit_int_as_i32_le(value dst, value off, value n)
  int32_t v = Long_val(n);
 
 #ifdef IS_LITTLE_ENDIAN
- // FIXME: non-aligned writes
- int32_t *p = (int32_t *)(&Byte_u(dst, Long_val(off)));
- *p = v;
+ /* optimized by gcc to plain store */
+ memcpy(&Byte_u(dst, Long_val(off)), &v, sizeof(v));
 #else
  uint8_t *d = &Byte_u(dst, Long_val(off));
  uint8_t *s = (uint8_t *)&v;
@@ -240,44 +321,20 @@ obigstore_bytea_blit_int_as_i32_le(value dst, value off, value n)
 }
 
 CAMLprim value
-obigstore_decode_int64_le(value s, value off)
+obigstore_bytea_blit_int_as_i32_be(value dst, value off, value n)
 {
-#ifdef IS_LITTLE_ENDIAN
-  int64_t p = *((int64_t *)(&Byte_u(s, Long_val(off)))) ^ -1;
-  return(caml_copy_int64(p));
+ int32_t v = Long_val(n);
+
+#ifndef IS_LITTLE_ENDIAN
+ memcpy(&Byte_u(dst, Long_val(off)), &v, sizeof(v));
 #else
-  uint8_t *s = &Byte_u(s, Int_val(off));
-  union {
-      int64_t ll;
-      unsigned char c[8];
-  } x;
+ uint8_t *d = &Byte_u(dst, Long_val(off));
+ uint8_t *s = (uint8_t *)&v;
 
-  x.c[0] = s[7]; x.c[1] = s[6]; x.c[2] = s[5]; x.c[3] = x[4];
-  x.c[4] = s[3]; x.c[5] = s[2]; x.c[6] = s[1]; x.c[7] = x[0];
-
-  return(caml_copy_int64(x.ll ^ -1));
+ d[0] = s[3]; d[1] = s[2]; d[2] = s[1]; d[3] = s[0];
 #endif
-}
 
-
-CAMLprim value
-obigstore_decode_int64_complement_le(value s, value off)
-{
-#ifdef IS_LITTLE_ENDIAN
-  int64_t p = *((int64_t *)(&Byte_u(s, Long_val(off)))) ^ -1;
-  return(caml_copy_int64(p));
-#else
-  uint8_t *s = &Byte_u(s, Int_val(off));
-  union {
-      int64_t ll;
-      unsigned char c[8];
-  } x;
-
-  x.c[0] = s[7]; x.c[1] = s[6]; x.c[2] = s[5]; x.c[3] = x[4];
-  x.c[4] = s[3]; x.c[5] = s[2]; x.c[6] = s[1]; x.c[7] = x[0];
-
-  return(caml_copy_int64(x.ll ^ -1));
-#endif
+ return(Val_unit);
 }
 
 static uint32_t
