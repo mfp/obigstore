@@ -356,5 +356,10 @@ struct
     else begin
       Lwt_condition.wait c.wait_for_pending_reqs
     end
+
+  let service c =
+    try_lwt
+      service c
+    with Unix.Unix_error (Unix.ECONNRESET, _, _) -> raise_lwt End_of_file
 end
 
