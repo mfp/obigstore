@@ -41,10 +41,27 @@ type ('a, 'prop) codec
 type property = [ `Codec ]
 type self_delimited = [ property | `Self_delimited ]
 
+(** [encode codec b x] appends to the buffer [b] a byte sequence representing
+  * [x] according to the [codec].
+  * @raise Error(Unsatisfied_constraint _, _) if [x] doesn't satisfy a
+  * constraint imposed by [codec]. *)
 val encode : ('a, _) codec -> Bytea.t -> 'a -> unit
+
+(** Similar to {!encode}, but directly returning a string. *)
 val encode_to_string : ('a, _) codec -> 'a -> string
+
+(** [decode codec s off len] returns the value corresponding to the byte
+  * sequence in [s] starting at [off] and whose length is at most [len].
+  * @raise Invalid_arg if [off], [len] don't represent a valid substring of
+  * [s].
+  * @raise Error((Incomplete_fragment _ | Bad_encoding _), _) if the byte
+  * sequence cannot be decoded correctly. *)
+
 val decode : ('a, _) codec -> string -> int -> int -> 'a
+
+(** Similar to {!decode}. *)
 val decode_string : ('a, _) codec -> string -> 'a
+
 val pp : ('a, _) codec -> 'a -> string
 
 val string : (string, property) codec
@@ -54,6 +71,11 @@ val stringz : (string, self_delimited) codec
 val stringz_unsafe : (string, self_delimited) codec
 
 val positive_int64 : (Int64.t, self_delimited) codec
+
+(** Similar to {!positive_int64}, but with inverted order relative to the
+  * natural order of [Int64.t] values, i.e.,
+  * given [f = encode_to_string positive_int64_complement], if [x < y] then
+  * [f x > f y]. *)
 val positive_int64_complement : (Int64.t, self_delimited) codec
 
 val tuple2 :
