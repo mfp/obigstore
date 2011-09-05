@@ -70,7 +70,7 @@ let test_stringz () =
     try
       check_roundtrip K.stringz "a\000";
       assert_failure "Expected Unsatisfied_constraint error"
-    with K.Error (K.Unsatisfied_constraint _) -> ()
+    with K.Error (K.Unsatisfied_constraint _, "Key_encoding.stringz.encode") -> ()
 
 let positive_int64_vector =
     [ 0L; 1L; Int64.max_int; 42L; ]

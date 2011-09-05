@@ -34,7 +34,7 @@ type error =
   | Incomplete_fragment of string
   | Bad_encoding of string
 
-exception Error of error
+exception Error of error * string
 
 type ('a, 'prop) codec
 

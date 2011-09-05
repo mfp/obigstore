@@ -31,7 +31,7 @@ type error =
   | Incomplete_fragment of string
   | Bad_encoding of string
 
-exception Error of error
+exception Error of error * string
 
 let string_of_error = function
     Unsatisfied_constraint s -> sprintf "Unsatisfied_constraint %S" s
@@ -41,7 +41,8 @@ let string_of_error = function
 let () =
   Printexc.register_printer
     (function
-       | Error x -> Some (sprintf "Error (%s)" (string_of_error x))
+       | Error (x, where) -> Some (sprintf "Error (%s, %S)"
+                                     (string_of_error x) where)
        | _ -> None)
 
 type ('a, 'prop) encoder = Bytea.t -> 'a -> unit
@@ -71,11 +72,11 @@ let decode_string c s = decode c s 0 (String.length s)
 
 let pp c x = c.pp x
 
-let error e = raise (Error e)
+let error where e = raise (Error (e, "Key_encoding." ^ where))
 
 let invalid_off_len ~fname s off len =
   raise
-    (Failure
+    (Invalid_argument
        (sprintf "Key_encoding.%s decoding: \
                  invalid offset (%d) or length (%d) in string of length %d"
           fname off len (String.length s)))
@@ -121,11 +122,14 @@ let self_delimited_string =
           | Got_zero -> match String.unsafe_get s !n with
                 '\000' -> finished := true; state := Normal
               | '\001' -> Bytea.add_char b '\000'; state := Normal;
-              | _ -> error (Bad_encoding "self_delimited_string")
+              | _ -> error "self_delimited_string.decode"
+                       (Bad_encoding "self_delimited_string")
         end;
         incr n
       done;
-      if !state <> Normal then error (Bad_encoding "self_delimited_string");
+      if !state <> Normal then
+        error "self_delimited_string.decode"
+          (Bad_encoding "self_delimited_string");
       Bytea.contents b in
 
   let pp = sprintf "%S"
@@ -137,7 +141,7 @@ let stringz =
   let encode b s =
     try
       ignore (String.index s '\000');
-      error (Unsatisfied_constraint "non null")
+      error "stringz.encode" (Unsatisfied_constraint "non null")
     with Not_found ->
       Bytea.add_string b s;
       Bytea.add_char b '\000' in
@@ -151,7 +155,7 @@ let stringz =
         if s.[!n] <> '\000' then incr n
         else finished := true
       done;
-      if not !finished then error (Incomplete_fragment "stringz");
+      if not !finished then error "stringz.decode" (Incomplete_fragment "stringz");
       let s = String.sub s off (!n - off) in
         incr n;
         s in
@@ -167,7 +171,7 @@ let stringz_unsafe =
 let positive_int64 =
   let encode b n =
     if Int64.compare n 0L < 0 then
-      error (Unsatisfied_constraint "negative Int64.t");
+      error "positive_int64.encode" (Unsatisfied_constraint "negative Int64.t");
     Bytea.add_int64_be b n in
 
   let decode s off len scratch n =
@@ -181,7 +185,8 @@ let positive_int64 =
 let positive_int64_complement =
   let encode b n =
     if Int64.compare n 0L < 0 then
-      error (Unsatisfied_constraint "negative Int64.t");
+      error "positive_int64_complement.encode"
+        (Unsatisfied_constraint "negative Int64.t");
     Bytea.add_int64_complement_be b n in
 
   let decode s off len scratch n =
