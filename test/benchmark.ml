@@ -197,6 +197,23 @@ struct
         nkeys dt (truncate (float nkeys /. dt));
       return ()
 
+  let bm_count db =
+    lwt ks = D.register_keyspace db "seq" in
+    let table = "nums" in
+    let nkeys = ref 0L in
+    lwt dt =
+      time (fun () ->
+              lwt n = D.count_keys ks table
+                        (DM.Key_range { DM.first= None; up_to = None; reverse = false; })
+              in
+                nkeys := n;
+                return ())
+    in
+      print_newline ();
+      printf "Key count: %Ld keys in %8.5fs (%d/s)\n%!"
+        !nkeys dt (truncate (Int64.to_float !nkeys /. dt));
+      return ()
+
   let bm_random_read db =
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
@@ -254,6 +271,7 @@ struct
       run_if bm_put
         (fun () -> run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db) >>
       run_if bm_seq_write (fun () -> bm_sequential_write db) >>
+      run_if bm_rand_read (fun () -> bm_count db) >>
       run_if bm_rand_read (fun () -> bm_random_read db) >>
       run_if bm_seq_read
         (fun () ->
