@@ -177,9 +177,13 @@ struct
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
+    let chunks = 100 in
+    let chunksize = nkeys / chunks in
     let keys =
-      List.init 100
-        (fun i -> List.init (nkeys / 100) (fun j -> string_of_int (i * 100 + j))) in
+      List.init chunks
+        (fun i ->
+           List.init chunksize
+             (fun j -> string_of_int (i * chunksize + j))) in
     lwt dt =
       time
         (fun () ->
