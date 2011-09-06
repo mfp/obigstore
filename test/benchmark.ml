@@ -187,8 +187,8 @@ struct
     lwt dt =
       time
         (fun () ->
-           iter_p_in_region ~size:200
-             (iter_p_in_region ~size:200
+           iter_p_in_region ~size:50
+             (iter_p_in_region ~size:100
                 (fun key -> D.put_columns ks table key [mk_col "value" key]))
              keys)
     in
