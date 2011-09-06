@@ -82,7 +82,7 @@ struct
            end)
         t
 
-  let init ?(max_async_reqs = 1000) ?(debug=false) db ich och =
+  let init ?(max_async_reqs = 5000) ?(debug=false) db ich och =
     let t =
       {
         keyspaces = H.create 13;
