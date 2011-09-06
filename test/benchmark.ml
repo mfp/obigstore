@@ -177,7 +177,7 @@ struct
     lwt ks = D.register_keyspace db "seq" in
     let table = "nums" in
     let nkeys = 100000 in
-    let chunks = 100 in
+    let chunks = 1000 in
     let chunksize = nkeys / chunks in
     let keys =
       List.init chunks
@@ -190,11 +190,21 @@ struct
            iter_p_in_region ~size:50
              (iter_p_in_region ~size:100
                 (fun key -> D.put_columns ks table key [mk_col "value" key]))
+             keys) in
+    lwt dt2 =
+      time
+        (fun () ->
+           iter_p_in_region ~size:50
+             (fun l ->
+                D.put_multi_columns ks "nums2"
+                  (List.map (fun k -> (k, [mk_col "value" k])) l))
              keys)
     in
       print_newline ();
       printf "Seq write: %d keys in %8.5fs (%d/s)\n%!"
         nkeys dt (truncate (float nkeys /. dt));
+      printf "Seq write (multi): %d keys in %8.5fs (%d/s)\n%!"
+        nkeys dt2 (truncate (float nkeys /. dt2));
       return ()
 
   let bm_count db =

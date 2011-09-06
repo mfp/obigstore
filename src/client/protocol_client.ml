@@ -341,7 +341,13 @@ struct
 
   let put_columns ks table key columns =
     async_request_ks ks
-      (Put_columns { Put_columns.keyspace = ks.ks_id; table; key; columns; })
+      (Put_columns { Put_columns.keyspace = ks.ks_id; table;
+                     data = [ (key, columns) ] })
+      P.read_ok
+
+  let put_multi_columns ks table data =
+    async_request_ks ks
+      (Put_columns { Put_columns.keyspace = ks.ks_id; table; data; })
       P.read_ok
 
   let delete_columns ks table key columns =

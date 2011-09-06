@@ -307,12 +307,13 @@ let execute ks db loop r =
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int nkeys));
         Timing.cnt_cols := Int64.(add !Timing.cnt_cols (of_int ncols));
         ret pprint_slice slice
-  | Put_columns { Put_columns.table; key; columns } ->
-      Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys 1L;
-      Timing.cnt_put_cols :=
-        Int64.(add !Timing.cnt_put_cols (of_int (List.length columns)));
-      D.put_columns ks table key columns >>=
-      ret_nothing
+  | Put_columns { Put_columns.table; data } ->
+      let keys = List.length data in
+      let columns = List.fold_left (fun s (_, l) -> List.length l + s) 0 data in
+        Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys (Int64.of_int keys);
+        Timing.cnt_put_cols := Int64.(add !Timing.cnt_put_cols (of_int columns));
+        D.put_multi_columns ks table data >>=
+        ret_nothing
   | Delete_columns { Delete_columns.table; key; columns; } ->
       Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys 1L;
       Timing.cnt_put_cols :=

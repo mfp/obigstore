@@ -124,8 +124,8 @@ message request =
                         key : key; columns : [ column_name ] }
   | Get_column { keyspace : keyspace; table : table; key : key;
                  column : column_name; }
-  | Put_columns { keyspace : keyspace; table : table; key : key;
-                  columns : [ column ] }
+  | Put_columns { keyspace : keyspace; table : table;
+                  data : [ ( key * [ column ]) ] }
   | Delete_columns { keyspace : keyspace; table : table; key : key;
                      columns : [ column_name ] }
   | Delete_key { keyspace : keyspace; table : table; key : key }

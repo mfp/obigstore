@@ -307,11 +307,9 @@ struct
         with_keyspace c keyspace ~request_id
           (fun ks -> D.get_column ks table key column >>=
                      P.return_column ?buf c.och ~request_id)
-    | Put_columns { Put_columns.keyspace; table; key; columns } ->
-        (* P.return_ok ?buf c.och ~request_id () >> *)
-        (* service c *)
+    | Put_columns { Put_columns.keyspace; table; data; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.put_columns ks table key columns >>=
+          (fun ks -> D.put_multi_columns ks table data >>=
                      P.return_ok ?buf c.och ~request_id)
     | Delete_columns { Delete_columns.keyspace; table; key; columns; } ->
         with_keyspace c keyspace ~request_id

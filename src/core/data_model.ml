@@ -200,6 +200,9 @@ sig
     keyspace -> table -> key -> column list ->
     unit Lwt.t
 
+  val put_multi_columns :
+    keyspace -> table -> (key * column list) list -> unit Lwt.t
+
   val delete_columns :
     keyspace -> table -> key -> column_name list -> unit Lwt.t
 

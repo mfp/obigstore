@@ -1829,11 +1829,16 @@ let put_columns tx table key columns =
       M.empty table tx.added;
   return ()
 
-let rec put_columns_no_tx ks table key columns =
+let put_multi_columns tx table data =
+  Lwt_list.iter_s
+    (fun (key, columns) -> put_columns tx table key columns)
+    data
+
+let rec put_multi_columns_no_tx ks table data =
   let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
   let cols_written = ref 0 in
   let bytes_written = ref 0 in
-  let datum_key = put_columns_no_tx_buf in
+  let datum_key = put_multi_columns_no_tx_buf in
   lwt wait_sync =
     WRITEBATCH.perform ks.ks_db.writebatch begin fun b ->
       let table =
@@ -1841,24 +1846,28 @@ let rec put_columns_no_tx ks table key columns =
           Some t -> t
         | None ->
             (* must add table to keyspace table list *)
-            register_new_table_and_add_to_writebatch' ks b table in
-      (* FIXME: should save timestamp provided in
-       * put_columns and use it here if it wasn't
-       * Auto_timestamp *)
-      List.iter
-        (fun c ->
-           Datum_encoding.encode_datum_key datum_key ks.ks_id
-             ~table ~key ~column:c.name ~timestamp;
-           let klen = Bytea.length datum_key in
-           let vlen = String.length c.data in
-             incr cols_written;
-             bytes_written := !bytes_written + klen + vlen;
-             WRITEBATCH.put_substring b
-               (Bytea.unsafe_string datum_key) 0 klen
-               c.data 0 vlen)
-        columns;
-      return ()
-    end in
+            register_new_table_and_add_to_writebatch' ks b table
+      in
+        (* FIXME: should save timestamp provided in
+         * put_columns and use it here if it wasn't
+         * Auto_timestamp *)
+        List.iter
+          (fun (key, columns) ->
+             List.iter
+               (fun c ->
+                  Datum_encoding.encode_datum_key datum_key ks.ks_id
+                    ~table ~key ~column:c.name ~timestamp;
+                  let klen = Bytea.length datum_key in
+                  let vlen = String.length c.data in
+                    incr cols_written;
+                    bytes_written := !bytes_written + klen + vlen;
+                    WRITEBATCH.put_substring b
+                      (Bytea.unsafe_string datum_key) 0 klen
+                      c.data 0 vlen)
+               columns)
+          data;
+        return ()
+      end in
   lwt () = wait_sync in
   let stats = ks.ks_db.load_stats in
     Load_stats.record_writes stats 1;
@@ -1866,7 +1875,7 @@ let rec put_columns_no_tx ks table key columns =
     Load_stats.record_cols_wr stats !cols_written;
     return ()
 
-and put_columns_no_tx_buf = Bytea.create 10
+and put_multi_columns_no_tx_buf = Bytea.create 10
 
 let delete_columns tx table key cols =
   tx.added <-
@@ -2043,10 +2052,13 @@ let get_column_values ks table key columns =
 let get_column ks table key column =
   with_transaction ks (fun tx -> get_column tx table key column)
 
-let put_columns ks table key columns =
+let put_multi_columns ks table data =
   match Lwt.get tx_key with
-    | None -> put_columns_no_tx ks table key columns
-    | Some tx -> put_columns tx table key columns
+    | None -> put_multi_columns_no_tx ks table data
+    | Some tx -> put_multi_columns tx table data
+
+let put_columns ks table key columns =
+  put_multi_columns ks table [key, columns]
 
 let delete_columns ks table key columns =
   with_transaction ks (fun tx -> delete_columns tx table key columns)

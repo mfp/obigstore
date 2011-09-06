@@ -144,7 +144,7 @@ put :
                       { Column.name; data; timestamp = Timestamp.No_timestamp })
                    $7
                in R.Put_columns
-                    { R.Put_columns.keyspace; table = $2; key = $4; columns; }) }
+                    { R.Put_columns.keyspace; table = $2; data = [$4, columns] }) }
 
 bindings :
     binding                  { [ $1 ] }
