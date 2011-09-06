@@ -695,6 +695,40 @@ type 'a fold_result =
   | Skip_key_with of 'a
   | Finish_fold of 'a
 
+(* advance the iterator using the supplied function until we find a new key
+ * within the same table, reach the end of the data area or exceed an
+ * iteration count *)
+let advance_until_next_key ~reverse next it
+      ks_id table_id
+      ~prev_key_buf ~prev_key_len
+      ~table_r ~key_buf ~key_len ~key_buf_r ~key_len_r buf =
+  let finished = ref false in
+  let n = ref 0 in
+  let sign = if reverse then -1 else 1 in
+  (* FIXME: constant should be determined based on relative speed of
+   * IT.next/prev and IT.seek, which depends on DB size (num cells) *)
+  let limit = 25 in
+    while !n < limit && not !finished && !table_r = table_id do
+      next it;
+      if not (IT.valid it) then finished := true
+      else begin
+        let len = IT.fill_key it buf in
+          if not (Datum_encoding.decode_datum_key
+                    ~table_r ~key_buf_r ~key_len_r
+                    ~column_buf_r:None ~column_len_r:None
+                    ~timestamp_buf:None !buf len) ||
+             Datum_encoding.get_datum_key_keyspace_id !buf <> ks_id ||
+             (sign *
+              String_util.cmp_substrings
+                prev_key_buf 0 prev_key_len !key_buf 0 !key_len) < 0
+          then
+            finished := true
+      end;
+      incr n;
+    done;
+    if !n >= limit && not !finished then `Need_seek
+    else `Finished
+
 (* fold over cells whose key is in the range
  * { reverse; first = first_key; up_to = up_to_key }
  * with the semantics defined in Data_model
@@ -709,6 +743,8 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
   let timestamp_buf = Datum_encoding.make_timestamp_buf () in
   let some_timestamp_buf = Some timestamp_buf in
+  let next_key_buf = ref "" and next_key_len = ref 0 in
+  let next_key_buf_r = Some next_key_buf and next_key_len_r = Some next_key_len in
 
   let past_limit = match reverse, up_to_key with
       _, None -> (fun () -> false)
@@ -764,23 +800,47 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
               begin match r with
                   Continue | Continue_with _ when not reverse -> it_next tx.ks it
                 | Continue | Continue_with _ (* reverse *) -> it_prev tx.ks it
-                | Skip_key | Skip_key_with _ when not reverse ->
-                    Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
-                      ~table:!table_id ~key:(next_key ())
-                      ~column:"" ~timestamp:Int64.min_int;
-                    it_seek tx.ks it
-                      (Bytea.unsafe_string datum_key_buf) 0
-                      (Bytea.length datum_key_buf)
-                | Skip_key | Skip_key_with _ (* when reverse *) ->
-                    (* we jump to the first datum for the current key, then go
-                     * one back *)
-                    Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
-                      ~table:!table_id ~key:(String.sub !key_buf 0 !key_len)
-                      ~column:"" ~timestamp:Int64.max_int;
-                    it_seek tx.ks it
-                      (Bytea.unsafe_string datum_key_buf) 0
-                      (Bytea.length datum_key_buf);
-                    if IT.valid it then it_prev tx.ks it
+                | Skip_key | Skip_key_with _ when not reverse -> begin
+                    (* we first move with it_next for a while, since it's much
+                     * faster than it_seek *)
+                    match advance_until_next_key
+                            ~reverse:false
+                            (it_next tx.ks) it tx.ks.ks_id !table_id
+                            ~prev_key_buf:!key_buf ~prev_key_len:!key_len
+                            ~table_r
+                            ~key_buf:next_key_buf ~key_len:next_key_len
+                            ~key_buf_r:next_key_buf_r ~key_len_r:next_key_len_r buf
+                    with
+                        `Finished -> ()
+                      | `Need_seek ->
+                        Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
+                          ~table:!table_id ~key:(next_key ())
+                          ~column:"" ~timestamp:Int64.min_int;
+                        it_seek tx.ks it
+                          (Bytea.unsafe_string datum_key_buf) 0
+                          (Bytea.length datum_key_buf)
+                  end
+                | Skip_key | Skip_key_with _ (* when reverse *) -> begin
+                    match advance_until_next_key
+                            ~reverse:true
+                            (it_prev tx.ks) it tx.ks.ks_id !table_id
+                            ~prev_key_buf:!key_buf ~prev_key_len:!key_len
+                            ~table_r
+                            ~key_buf:next_key_buf ~key_len:next_key_len
+                            ~key_buf_r:next_key_buf_r ~key_len_r:next_key_len_r buf
+                    with
+                        `Finished -> ()
+                      | `Need_seek ->
+                          (* we jump to the first datum for the current key, then go
+                           * one back *)
+                          Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
+                            ~table:!table_id ~key:(String.sub !key_buf 0 !key_len)
+                            ~column:"" ~timestamp:Int64.max_int;
+                          it_seek tx.ks it
+                            (Bytea.unsafe_string datum_key_buf) 0
+                            (Bytea.length datum_key_buf);
+                          if IT.valid it then it_prev tx.ks it
+                  end
                 | Finish_fold _ -> ()
               end;
               match r with
