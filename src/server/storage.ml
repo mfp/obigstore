@@ -917,7 +917,7 @@ let count_keys tx table range =
     (fun _s -> s := _s; S.cardinal _s)
     (fun s -> S.cardinal s)
     (fun n key_buf key_len ->
-       if S.mem (String.sub key_buf 0 key_len) !s then n
+       if not (S.is_empty !s) && S.mem (String.sub key_buf 0 key_len) !s then n
        else (n + 1))
     tx table ~max_keys:max_int range >|= Int64.of_int
 
