@@ -173,43 +173,70 @@ struct
           in iter_in_region f (t >> t') tl
     in iter_in_region f (return ()) l
 
-  let bm_sequential_write db =
-    lwt ks = D.register_keyspace db "seq" in
-    let table = "nums" in
-    let nkeys = 100000 in
-    let chunks = 1000 in
-    let chunksize = nkeys / chunks in
+  let mk_payload payload k =
+    if payload <= 32 then Digest.to_hex (Digest.string k)
+    else
+      let b = Buffer.create 13 in
+        while Buffer.length b < payload do
+          Buffer.add_string b (string_of_int (Random.int 0x3FFFFFF))
+        done;
+        Buffer.sub b 0 payload
+
+  let bm_simple_write_aux mk_key ~iterations ~payload db table =
+    lwt ks = D.register_keyspace db "simple" in
+    let chunksize = iterations / (max 2 (1000 / payload)) in
+    let chunks = iterations / chunksize in
+    let nkeys = chunksize * chunks in
     let keys =
       List.init chunks
         (fun i ->
            List.init chunksize
-             (fun j -> string_of_int (i * chunksize + j))) in
+             (fun j ->
+                let k = mk_key (i * chunksize + j) in
+                  (k, mk_payload payload k))) in
     lwt dt =
       time
         (fun () ->
            iter_p_in_region ~size:50
              (iter_p_in_region ~size:100
-                (fun key -> D.put_columns ks table key [mk_col "value" key]))
+                (fun (k, v) -> D.put_columns ks table k [mk_col "value" v]))
              keys) in
     lwt dt2 =
       time
         (fun () ->
            iter_p_in_region ~size:50
              (fun l ->
-                D.put_multi_columns ks "nums2"
-                  (List.map (fun k -> (k, [mk_col "value" k])) l))
+                D.put_multi_columns ks (table ^ "_multi")
+                  (List.map (fun (k, v) -> (k, [mk_col "value" v])) l))
              keys)
+    in return (dt, dt2, nkeys)
+
+  let bm_sequential_write ~iterations ~payload db =
+    lwt (dt, dt_multi, nkeys) =
+      bm_simple_write_aux string_of_int ~iterations ~payload db "sequential_write"
     in
       print_newline ();
       printf "Seq write: %d keys in %8.5fs (%d/s)\n%!"
         nkeys dt (truncate (float nkeys /. dt));
       printf "Seq write (multi): %d keys in %8.5fs (%d/s)\n%!"
-        nkeys dt2 (truncate (float nkeys /. dt2));
+        nkeys dt_multi (truncate (float nkeys /. dt_multi));
+      return ()
+
+  let bm_random_write ~iterations ~payload db =
+    lwt (dt, dt_multi, nkeys) =
+      bm_simple_write_aux (fun _ -> string_of_int (Random.int iterations))
+        ~iterations ~payload db "random_write"
+    in
+      print_newline ();
+      printf "Rand write: %d keys in %8.5fs (%d/s)\n%!"
+        nkeys dt (truncate (float nkeys /. dt));
+      printf "Rand write (multi): %d keys in %8.5fs (%d/s)\n%!"
+        nkeys dt_multi (truncate (float nkeys /. dt_multi));
       return ()
 
   let bm_count db =
-    lwt ks = D.register_keyspace db "seq" in
-    let table = "nums" in
+    lwt ks = D.register_keyspace db "simple" in
+    let table = "sequential_write" in
     let nkeys = ref 0L in
     lwt dt =
       time (fun () ->
@@ -224,10 +251,10 @@ struct
         !nkeys dt (truncate (Int64.to_float !nkeys /. dt));
       return ()
 
-  let bm_random_read db =
-    lwt ks = D.register_keyspace db "seq" in
-    let table = "nums" in
-    let nkeys = 100000 in
+  let bm_random_read ~max_key db =
+    lwt ks = D.register_keyspace db "simple" in
+    let table = "sequential_write" in
+    let nkeys = max_key in
     let keys =
       List.init (nkeys / 100)
         (fun _ ->
@@ -273,17 +300,26 @@ struct
 
   let run_if x f = if x then f () else return ()
 
-  let run ~rounds ~iterations ~avg_cols ~batch_size
-          ~bm_put ~bm_seq_write
-          ~bm_seq_read ~bm_read_committed ~bm_rand_read =
+  let run
+        ~rounds ~iterations ~avg_cols ~batch_size
+        ~run_put ~run_seq_write
+        ~run_seq_read ~run_read_committed ~run_rand_read
+        ~seq_iterations ~seq_payload =
     lwt db = C.make_tmp_db () in
       Test_00util.keep_tmp := false;
-      run_if bm_put
+      run_if run_put
         (fun () -> run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db) >>
-      run_if bm_seq_write (fun () -> bm_sequential_write db) >>
-      run_if bm_rand_read (fun () -> bm_count db) >>
-      run_if bm_rand_read (fun () -> bm_random_read db) >>
-      run_if bm_seq_read
+      run_if run_seq_write
+        (fun () -> bm_random_write
+                     ~iterations:seq_iterations
+                     ~payload:seq_payload db) >>
+      run_if run_seq_write
+        (fun () -> bm_sequential_write
+                     ~iterations:seq_iterations
+                     ~payload:seq_payload db) >>
+      run_if run_rand_read (fun () -> bm_count db) >>
+      run_if run_rand_read (fun () -> bm_random_read ~max_key:seq_iterations db) >>
+      run_if run_seq_read
         (fun () ->
            Lwt_list.iter_s
              (fun max_columns ->
@@ -295,7 +331,7 @@ struct
                        (fun max_keys ->
                           bm_sequential_read ~max_columns ~read_committed ~max_keys db)
                        [ 1000; 500; 200; 100; 50; 20; 10; 1 ])
-                  (if bm_read_committed then [ true; false ] else [false]))
+                  (if run_read_committed then [ true; false ] else [false]))
              [ 1; 5; 10; 100 ]) >>
       return ()
 
@@ -314,39 +350,59 @@ let iterations = ref 10000
 let batch_size = ref 1000
 let avg_cols = ref 10
 
+let payload = ref 32
+let write_iters = ref 100000
+
+let post_separator s x = s ^ "\n\n " ^ x ^ "\n"
+
 let params =
   Arg.align
     [
-      "-rounds", Arg.Set_int rounds,
-        "N Run N put_columns rounds (default: 10).";
-      "-iterations", Arg.Set_int iterations,
-        "N Insert N keys per round. (default: 10000)";
-      "-columns", Arg.Set_int avg_cols,
-        "N Insert N columns in average per key. (default: 10)";
-      "-batch-size", Arg.Set_int batch_size,
-        "N Insert N keys per batch insert. (default: 1000)";
+      "-dir", Arg.String (fun s -> db_dir := Some s; remote_test := false),
+        "PATH Run locally against LocalDB at PATH.";
+      "-remote", Arg.Set remote_test, " Benchmark against server.";
+      "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
+      "-port", Arg.Set_int port,
+        post_separator
+          "N Connect to server port N (default: 12050)"
+
+          "Mode:";
+
       "-put-only",
         Arg.Unit (fun () -> run_put := true;
                             run_seq_read := false;
                             run_random_read := false;
                             run_seq_write := true;),
-        " Benchmark only put_columns.";
+        " Benchmark only put_columns (complex + simple, rand + seq).";
       "-read-only",
         Arg.Unit (fun () -> run_put := false;
                             run_seq_read := true;
                             run_random_read := true;
                             run_seq_write := false;),
-        " Benchmark only sequential and random read.";
-      "-dir", Arg.String (fun s -> db_dir := Some s; remote_test := false),
-        "PATH Run locally against LocalDB at PATH.";
-      "-remote", Arg.Set remote_test, " Benchmark against server.";
-      "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
-      "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+        post_separator " Benchmark only sequential and random read."
+
+          "Multi-column row insertion:";
+
+      "-complex-write-rounds", Arg.Set_int rounds,
+        "N Run N put_columns rounds (default: 10).";
+      "-complex-write-iters", Arg.Set_int iterations,
+        "N Insert N keys per round. (default: 10000)";
+      "-complex-write-columns", Arg.Set_int avg_cols,
+        "N Insert N columns in average per key. (default: 10)";
+      "-complex-write-batch-size", Arg.Set_int batch_size,
+        post_separator
+          "N Insert N keys per batch insert. (default: 1000)"
+
+          "Single row insertion:";
+
+      "-simple-write-payload", Arg.Set_int payload, "N Payload size (default: 32).";
+      "-simple-write-iters", Arg.Set_int write_iters,
+          "N Number of values to insert (default: 100000)\n"
     ]
 
 module CLIENT = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 
-let usage_message = "Usage: benchmark [options]"
+let usage_message = "Usage: benchmark [options]\n"
 
 module BM_Storage =
   Make(Storage)
@@ -369,11 +425,13 @@ let () =
       (BM_Storage.run
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
          ~batch_size:!batch_size
-         ~bm_put:!run_put
-         ~bm_seq_write:!run_seq_write
-         ~bm_seq_read:!run_seq_read
-         ~bm_rand_read:!run_random_read
-         ~bm_read_committed:true)
+         ~run_put:!run_put
+         ~run_seq_write:!run_seq_write
+         ~run_seq_read:!run_seq_read
+         ~run_rand_read:!run_random_read
+         ~run_read_committed:true
+         ~seq_payload:!payload
+         ~seq_iterations:!write_iters)
   else begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let module C =
@@ -389,9 +447,11 @@ let () =
         (BM.run
            ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
            ~batch_size:!batch_size
-           ~bm_put:!run_put
-           ~bm_seq_read:!run_seq_read
-           ~bm_seq_write:!run_seq_write
-           ~bm_rand_read:!run_random_read
-           ~bm_read_committed:false)
+           ~run_put:!run_put
+           ~run_seq_read:!run_seq_read
+           ~run_seq_write:!run_seq_write
+           ~run_rand_read:!run_random_read
+           ~run_read_committed:false
+           ~seq_payload:!payload
+           ~seq_iterations:!write_iters)
   end
