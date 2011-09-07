@@ -42,6 +42,15 @@ struct
       f () >>
       return (Unix.gettimeofday () -. t0)
 
+  let mk_payload len k =
+    if len <= 32 then Digest.to_hex (Digest.string k)
+    else
+      let b = Buffer.create 13 in
+        while Buffer.length b < len do
+          Buffer.add_string b (string_of_int (Random.int 0x3FFFFFF))
+        done;
+        Buffer.sub b 0 len
+
   let bm_put_columns ?(iters=10000) ?(batch_size=1000) make_row ks ~table =
     lwt insert_time =
       time begin fun () ->
@@ -63,12 +72,14 @@ struct
       end
     in return (insert_time -. overhead)
 
-  let make_row_dummy ?(avg_cols=10) () =
+  let make_row_dummy ?(avg_cols=10) ~payload () =
     let c = if avg_cols > 1 then 1 + Random.int (avg_cols*2) else 1 in
-      (sprintf "%d%d" (Random.int 0x3FFFFFF) (Random.int 0x3FFFFFF),
+    let k = sprintf "%d%d" (Random.int 0x3FFFFFF) (Random.int 0x3FFFFFF) in
+      (k,
        List.init c
          (fun i ->
-            mk_col ~name:(sprintf "col%d" i) (string_of_int (Random.int 0x3FFFFFF))))
+            let data = mk_payload payload (sprintf "%s-%d" k i) in
+              mk_col ~name:(sprintf "col%d" i) data))
 
   let row_data_size (key, cols) =
     String.length key +
@@ -81,7 +92,7 @@ struct
   let pr_separator () =
     print_endline (String.make 80 '-')
 
-  let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db =
+  let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols ~payload db =
     lwt ks = D.register_keyspace db "ks1" in
       printf "column insertion time (%d row batches, %d columns avg)\n"
         batch_size avg_cols;
@@ -89,7 +100,7 @@ struct
       for_lwt i = 0 to rounds - 1 do
         lwt dt =
           bm_put_columns ~iters:iterations ~batch_size
-                          (make_row_dummy ~avg_cols) ks ~table:"dummy" in
+                          (make_row_dummy ~avg_cols ~payload) ks ~table:"dummy" in
         lwt size_on_disk = D.table_size_on_disk ks "dummy" in
           printf "%7d -> %7d    %8.5fs  (%.0f/s)   ~%Ld bytes\n%!"
              (i * iterations) ((i + 1) * iterations) dt (float iterations /. dt)
@@ -100,7 +111,7 @@ struct
         float
           (List.fold_left
              (fun s r -> s + f r)
-             0 (List.init 1000 (fun _ -> make_row_dummy ~avg_cols ()))) /.
+             0 (List.init 1000 (fun _ -> make_row_dummy ~avg_cols ~payload ()))) /.
         1000.  in
       let avg_row_size = compute_avg_size row_data_size in
       let avg_row_size' = compute_avg_size row_data_size_with_colnames in
@@ -172,15 +183,6 @@ struct
             end
           in iter_in_region f (t >> t') tl
     in iter_in_region f (return ()) l
-
-  let mk_payload payload k =
-    if payload <= 32 then Digest.to_hex (Digest.string k)
-    else
-      let b = Buffer.create 13 in
-        while Buffer.length b < payload do
-          Buffer.add_string b (string_of_int (Random.int 0x3FFFFFF))
-        done;
-        Buffer.sub b 0 payload
 
   let bm_simple_write_aux mk_key ~iterations ~payload db table =
     lwt ks = D.register_keyspace db "simple" in
@@ -302,13 +304,16 @@ struct
 
   let run
         ~rounds ~iterations ~avg_cols ~batch_size
+        ~complex_payload
         ~run_put ~run_seq_write
         ~run_seq_read ~run_read_committed ~run_rand_read
         ~seq_iterations ~seq_payload =
     lwt db = C.make_tmp_db () in
       Test_00util.keep_tmp := false;
       run_if run_put
-        (fun () -> run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols db) >>
+        (fun () -> run_put_colums_bm
+                     ~payload:complex_payload
+                     ~rounds ~iterations ~batch_size ~avg_cols db) >>
       run_if run_seq_write
         (fun () -> bm_random_write
                      ~iterations:seq_iterations
@@ -349,6 +354,7 @@ let rounds = ref 10
 let iterations = ref 10000
 let batch_size = ref 1000
 let avg_cols = ref 10
+let complex_payload = ref 16
 
 let payload = ref 32
 let write_iters = ref 100000
@@ -389,6 +395,8 @@ let params =
         "N Insert N keys per round. (default: 10000)";
       "-complex-write-columns", Arg.Set_int avg_cols,
         "N Insert N columns in average per key. (default: 10)";
+      "-complex-write-payload", Arg.Set_int complex_payload,
+        "N Use a N-byte payload per column. (default: 16)";
       "-complex-write-batch-size", Arg.Set_int batch_size,
         post_separator
           "N Insert N keys per batch insert. (default: 1000)"
@@ -424,6 +432,7 @@ let () =
     Lwt_unix.run
       (BM_Storage.run
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
+         ~complex_payload:!complex_payload
          ~batch_size:!batch_size
          ~run_put:!run_put
          ~run_seq_write:!run_seq_write
@@ -446,6 +455,7 @@ let () =
       Lwt_unix.run
         (BM.run
            ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
+           ~complex_payload:!complex_payload
            ~batch_size:!batch_size
            ~run_put:!run_put
            ~run_seq_read:!run_seq_read
