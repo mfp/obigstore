@@ -31,8 +31,8 @@ let test_add_int32_le b =
   Bytea.add_int32_le b 0xabcd;
   aeq (string_of_bytes [ 0xFF; 0xFF; 0xFF; 0xFF; 0xcd; 0xab; 0x00; 0x00; ]) b;
   Bytea.clear b;
-  Bytea.add_int32_le b 0xabcd0102;
-  aeq (string_of_bytes [ 0x02; 0x01; 0xcd; 0xab; ]) b
+  Bytea.add_int32_le b 0x3bcd0102;
+  aeq (string_of_bytes [ 0x02; 0x01; 0xcd; 0x3b; ]) b
 
 let test_add_int64_le b =
   Bytea.add_int64_le b (-1L);
@@ -47,8 +47,8 @@ let test_add_int32_be b =
   Bytea.add_int32_be b 0xabcd;
   aeq (string_of_bytes [ 0xFF; 0xFF; 0xFF; 0xFF; 0x00; 0x00; 0xab; 0xcd; ]) b;
   Bytea.clear b;
-  Bytea.add_int32_be b 0xabcd0102;
-  aeq (string_of_bytes [ 0xab; 0xcd; 0x01; 0x02; ]) b
+  Bytea.add_int32_be b 0x3bcd0102;
+  aeq (string_of_bytes [ 0x3b; 0xcd; 0x01; 0x02; ]) b
 
 let test_add_int64_be b =
   Bytea.add_int64_be b (-1L);
