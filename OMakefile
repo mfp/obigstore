@@ -16,9 +16,10 @@ OCAMLFINDFLAGS += -syntax camlp4o
 OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax lwt.preemptive
 
 LD_PATHS[] =
-	$(ROOT)/src/libs/ocaml-leveldb/src
-	$(ROOT)/src
-	$(ROOT)/src/core
+	$(file src/libs/ocaml-leveldb/leveldb)
+	$(file src/libs/ocaml-leveldb/src)
+	$(file src)
+	$(file src/core)
 
 setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 

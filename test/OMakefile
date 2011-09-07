@@ -1,9 +1,7 @@
 
 OCAMLPACKS[] += unix extlib threads oUnit
 
-OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
-	      -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src \
-	      -cclib -L$(ROOT)/src/core
+OCAMLFLAGS += $(mapprefix -cclib, $(addprefix -L, $(LD_PATHS)))
 OCAML_BYTE_LINK_FLAGS =
 
 OCAMLINCLUDES += ../src ../src/libs/ocaml-leveldb/src

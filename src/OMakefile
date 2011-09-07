@@ -27,9 +27,7 @@ section
 	libs/ocaml-leveldb/src/leveldb
 	libs/extprot/runtime/extprot
 	obigstore_core
-    OCAMLFLAGS += -cclib -L$(ROOT)/src/libs/ocaml-leveldb/leveldb \
-		  -cclib -L$(ROOT)/src/libs/ocaml-leveldb/src \
-		  -cclib -L$(ROOT)/src/core
+    OCAMLFLAGS += $(mapprefix -cclib, $(addprefix -L, $(LD_PATHS)))
 
     section
 	OCAML_LIBS[] += obigstore_client
