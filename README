@@ -38,8 +38,12 @@ Just
 
    $ omake
 
-should do. This will build the server, client programs and libraries, as well
-as run the tests. The executables are:
+should do. This will build the server, client programs and libraries.
+You can run the tests with
+
+   $ omake test
+
+The generated executables are:
 
 * obigstore: the DB server
 * ob_repl: the REPL

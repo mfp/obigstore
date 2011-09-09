@@ -26,4 +26,4 @@ toplevel: $(addsuffix .cma, $(OCAML_LIBS))
 test: test.opt
 	./test.opt -verbose
 
-.DEFAULT: test$(EXE) benchmark$(EXE)
+.DEFAULT: test.opt benchmark$(EXE)
