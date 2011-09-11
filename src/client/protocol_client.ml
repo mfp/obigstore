@@ -315,6 +315,20 @@ struct
                    key_range; predicate; column_range })
       P.read_slice
 
+  let exists_key ks table key =
+    match_lwt
+      async_request_ks ks
+        (Exist_keys { Exist_keys.keyspace = ks.ks_id; table; keys = [ key ] })
+        P.read_exist_result
+    with
+        true :: _ -> return true
+      | _ -> return false
+
+  let exist_keys ks table keys =
+    async_request_ks ks
+      (Exist_keys { Exist_keys.keyspace = ks.ks_id; table; keys; })
+      P.read_exist_result
+
   let get_slice_values ks table ?max_keys key_range columns =
     sync_request_ks ks
       (Get_slice_values { Get_slice_values.keyspace = ks.ks_id; table;

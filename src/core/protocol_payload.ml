@@ -63,6 +63,8 @@ struct
         None -> add_int32_le b 0
       | Some x -> add_int32_le b 1;
                   f b x
+
+    let add_bool b x = add_byte b (if x then 1 else 0)
   end
 
   module D =
@@ -96,6 +98,10 @@ struct
       match_lwt get_int32_le ich with
           0 -> return None
         | _ -> lwt x = f ich in return (Some x)
+
+    let get_bool ich =
+      lwt c = Lwt_io.read_char ich in
+        return (c <> '\000')
   end
 
   let null_timestamp = String.make 8 '\255'
@@ -312,5 +318,13 @@ struct
       (fun ich ->
          lwt s = D.get_string ich in
            return (Extprot.Conv.deserialize Request.Load_stats.read s))
+
+  let return_exist_result =
+    writer
+      (fun b l ->
+         E.add_status b 0;
+         E.add_list E.add_bool b l)
+
+  let read_exist_result = reader (D.get_list D.get_bool)
 end
 

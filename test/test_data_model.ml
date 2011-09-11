@@ -1073,6 +1073,38 @@ struct
              aeq_slice ~msg:"after delete, after transaction commit"
                (Some "a", [ "a", "z", [ "x", ""; "y", ""; "z", "" ]]))
 
+  let test_exists_key db =
+    lwt ks = D.register_keyspace db "test_exists_key" in
+      put_slice ks "t1" [ "1", ["1", ""] ] >>
+      D.read_committed_transaction ks
+        (fun ks ->
+           D.exists_key ks "t1" "1" >|= aeq_bool ~msg:"key 1" true >>
+           D.exists_key ks "t1" "2" >|= aeq_bool ~msg:"key 2" false >>
+           D.exists_key ks "t2" "1" >|= aeq_bool ~msg:"key 1 in t2" false >>
+           put_slice ks "t1" [ "2", ["1", ""] ] >>
+           D.delete_columns ks "t1" "1" ["1"; "2"] >>
+           D.exists_key ks "t1" "1" >|= aeq_bool ~msg:"key 1" false >>
+           D.exists_key ks "t1" "2" >|= aeq_bool ~msg:"key 2" true) >>
+      D.read_committed_transaction ks
+        (fun ks ->
+           D.exists_key ks "t1" "1" >|= aeq_bool ~msg:"key 1" false >>
+           D.exists_key ks "t1" "2" >|= aeq_bool ~msg:"key 2" true)
+
+  let test_exist_keys db =
+    lwt ks = D.register_keyspace db "test_exist_key" in
+    let aeq = aeq (string_of_list (sprintf "%b")) in
+      put_slice ks "t1" [ "1", ["1", ""] ] >>
+      D.read_committed_transaction ks
+        (fun ks ->
+           D.exist_keys ks "t1" ["1"; "2"] >|= aeq [true; false] >>
+           D.exist_keys ks "t2" ["1"] >|= aeq [false] >>
+           put_slice ks "t1" [ "2", ["1", ""] ] >>
+           D.delete_columns ks "t1" "1" ["1"; "2"] >>
+           D.exist_keys ks "t1" ["1"; "2"] >|= aeq [false; true]) >>
+      D.read_committed_transaction ks
+        (fun ks ->
+           D.exist_keys ks "t1" ["1"; "2"] >|= aeq [false; true])
+
   let get_all tx tbl =
     get_slice tx tbl (key_range ()) DM.All_columns
 
@@ -1158,6 +1190,8 @@ struct
       "put_columns", test_put_columns;
       "delete_key", test_delete_key;
       "delete_columns", test_delete_columns;
+      "exists_key", test_exists_key;
+      "exist_keys", test_exist_keys;
     ]
 
   let () =

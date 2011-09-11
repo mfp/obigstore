@@ -105,6 +105,7 @@ message request =
   | Commit { keyspace : keyspace; }
   | Abort { keyspace : keyspace; }
   | Lock { keyspace : keyspace; name : string; }
+  | Exist_keys { keyspace : keyspace; table : table; keys : [string] }
   | Get_keys { keyspace : keyspace; table : table; max_keys : max_keys;
                key_range : key_range }
   | Count_keys { keyspace : keyspace; table : table;

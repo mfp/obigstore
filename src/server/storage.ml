@@ -971,6 +971,24 @@ let get_keys tx table ?(max_keys = max_int) range =
       | _ -> keys_in_lexicographic_order
   in return (List.take max_keys all_keys_in_wanted_order)
 
+let exist_keys tx table keys =
+  with_exists_key tx table
+    (fun exists_key ->
+       detach_ks_op tx.ks
+         (fun keys ->
+            List.map
+              (fun key ->
+                 S.mem key (M.find_default S.empty table tx.added_keys) ||
+                 (not (S.mem key (M.find_default S.empty table tx.deleted_keys)) &&
+                  exists_key key))
+              keys)
+         keys)
+
+let exists_key tx table key =
+  exist_keys tx table [key] >>= function
+    | true :: _ -> return true
+    | _ -> return false
+
 let count_keys tx table range =
   let s = ref S.empty in
   get_keys_aux
@@ -2029,6 +2047,12 @@ let get_keys ks table ?max_keys key_range =
 
 let count_keys ks table key_range =
   with_transaction ks (fun tx -> count_keys tx table key_range)
+
+let exists_key ks table key =
+  with_transaction ks (fun tx -> exists_key tx table key)
+
+let exist_keys ks table keys =
+  with_transaction ks (fun tx -> exist_keys tx table keys)
 
 let get_slice ks table ?max_keys ?max_columns ?decode_timestamps
       key_range ?predicate column_range =

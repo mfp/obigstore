@@ -274,6 +274,10 @@ struct
         with_keyspace c keyspace ~request_id
           (fun ks -> D.get_keys ks table ?max_keys key_range >>=
                      P.return_keys ?buf c.och ~request_id)
+    | Exist_keys { Exist_keys.keyspace; table; keys; } ->
+        with_keyspace c keyspace ~request_id
+          (fun ks -> D.exist_keys ks table keys >>=
+                     P.return_exist_result ?buf c.och ~request_id)
     | Count_keys { Count_keys.keyspace; table; key_range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks -> D.count_keys ks table key_range >>=

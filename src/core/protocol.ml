@@ -142,6 +142,7 @@ sig
   val return_backup_dump : (string * backup_cursor option) option writer
   val return_backup_load_result : bool writer
   val return_load_stats : Load_stats.stats writer
+  val return_exist_result : bool list writer
 
   val read_keyspace : int reader
   val read_keyspace_maybe : int option reader
@@ -160,4 +161,5 @@ sig
   val read_backup_dump : (string * backup_cursor option) option reader
   val read_backup_load_result : bool reader
   val read_load_stats : Load_stats.stats reader
+  val read_exist_result : bool list reader
 end

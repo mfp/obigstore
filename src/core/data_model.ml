@@ -131,6 +131,15 @@ sig
     ?max_keys:int ->
     key_range -> string list Lwt.t
 
+  (** [exists_key ks table k] returns [true] if any column with the given
+    * [key] exists in the given [table] within the keyspace [ks]. *)
+  val exists_key : keyspace -> table -> string -> bool Lwt.t
+
+  (** [exist_keys ks table keys] returns a list of bools indicating whether
+    * each key in [keys] has got any column in the given [table] within the
+    * keyspace [ks]. *)
+  val exist_keys : keyspace -> table -> string list -> bool list Lwt.t
+
   (** Count the keys in the given range: [count_keys tx table range] is
     * functionality equivalent to [get_keys tx table range >|= List.length]
     * but somewhat faster, by a constant factor, and more memory-efficient. *)
