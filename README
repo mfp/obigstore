@@ -13,6 +13,11 @@ model built atop it:
 * control over the physical layout of the data, allowing good spacial locality
   and fast access to data ranges
 
+obigstore also features:
+* transactions (both read-committed and repeatable-read isolation levels)
+* explicit locks
+* asynchronous notifications
+
 obigstore currently includes:
 * the (embeddable) database library
 * a server + client library
