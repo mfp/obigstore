@@ -46,7 +46,7 @@ let col_range_of_multi_range = function
 %token <int> INT
 %token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
-%token LOCK STATS
+%token LOCK STATS LISTEN UNLISTEN NOTIFY AWAIT
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
 %start input
@@ -67,6 +67,15 @@ phrase : /* empty */  { Nothing }
   | ABORT     { with_ks (fun keyspace -> R.Abort { R.Abort.keyspace }) }
   | LOCK ID   { with_ks (fun keyspace -> R.Lock { R.Lock.keyspace; name = $2 }) }
   | STATS     { with_ks (fun keyspace -> R.Stats { R.Stats.keyspace; }) }
+  | LISTEN ID { with_ks (fun keyspace -> R.Listen { R.Listen.keyspace; topic = $2 }) }
+  | UNLISTEN ID
+              { with_ks (fun keyspace ->
+                           R.Unlisten { R.Unlisten.keyspace; topic = $2 }) }
+  | NOTIFY ID
+              { with_ks (fun keyspace ->
+                           R.Notify { R.Notify.keyspace; topic = $2 }) }
+  | AWAIT
+              { with_ks (fun keyspace -> R.Await { R.Await.keyspace; }) }
   | count     { $1 }
   | get       { $1 }
   | put       { $1 }

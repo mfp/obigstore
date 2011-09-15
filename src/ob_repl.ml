@@ -134,6 +134,11 @@ struct
      ABORT;                     Abort current transaction\n\
      LOCK lock_name;            Acquire lock with given name\n\
 \n\
+     LISTEN topic;              Subscribe to topic.\n\
+     UNLISTEN topic;            Unsubscribe to topic.\n\
+     NOTIFY topic;              Send async notification to topic.\n\
+     AWAIT;                     Wait for a notification.\n\
+\n\
      COUNT table;               Count keys in table\n\
      COUNT table[x:y];          Count keys in table between keys x and y\n\
 \n\
@@ -258,8 +263,7 @@ let execute ks db loop r =
 
   | Register_keyspace _ | Get_keyspace _
   | Load _| Dump _ | Get_column _ | Get_column_values _ | Get_columns _
-  | Get_slice_values _ | Exist_keys _
-  | Await _ | Notify _ | Listen _ | Unlisten _ -> ret_nothing ()
+  | Get_slice_values _ | Exist_keys _ -> ret_nothing ()
   | List_keyspaces _ -> D.list_keyspaces db >>= ret (print_list (sprintf "%S"))
   | List_tables _ -> D.list_tables ks >>= ret (print_list (sprintf "%S"))
   | Table_size_on_disk { Table_size_on_disk.table; _ } ->
@@ -359,6 +363,12 @@ let execute ks db loop r =
           (Int64.to_float stats.total_near_seeks /. dt);
         List.iter pr_avg stats.averages;
         ret_nothing ()
+    | Listen { Listen.topic } -> D.listen ks topic >>= ret_nothing
+    | Unlisten { Unlisten.topic } -> D.unlisten ks topic >>= ret_nothing
+    | Notify { Notify.topic } -> D.notify ks topic >>= ret_nothing
+    | Await _ ->
+        lwt l = D.await_notifications ks in
+          ret (print_list (sprintf "%S")) l
 
 let execute ks db loop req =
   let keys = !Timing.cnt_keys in

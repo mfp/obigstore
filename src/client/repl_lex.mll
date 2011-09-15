@@ -38,6 +38,10 @@
        "delete", DELETE;
        "lock", LOCK;
        "stats", STATS;
+       "listen", LISTEN;
+       "unlisten", UNLISTEN;
+       "notify", NOTIFY;
+       "await", AWAIT;
      ]
      
 }
