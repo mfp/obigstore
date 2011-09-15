@@ -134,5 +134,9 @@ message request =
            cursor : opt<backup_cursor>; format : opt<int>; }
   | Load { keyspace : keyspace; data : string; }
   | Stats { keyspace : keyspace; }
+  | Listen { keyspace : keyspace; topic : string; }
+  | Unlisten { keyspace : keyspace; topic : string }
+  | Notify { keyspace : keyspace; topic : string; }
+  | Await { keyspace : keyspace; }
 
 (* vim:set ft=omlet: *) 

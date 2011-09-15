@@ -43,6 +43,7 @@ struct
     | Unix.ADDR_INET (a, p) -> sprintf "%s:%d" (Unix.string_of_inet_addr a) p
 
   let rec run_plain_server ?(debug=false) db address port =
+    let server = S.make db in
     let rec accept_loop sock =
       begin try_lwt
         lwt (fd, addr) = Lwt_unix.accept sock in
@@ -52,7 +53,7 @@ struct
             let ich = Lwt_io.of_fd Lwt_io.input fd in
             let och = Lwt_io.of_fd Lwt_io.output fd in
               try_lwt
-                handle_connection ~debug db { ich; och; addr }
+                handle_connection ~debug server { ich; och; addr }
               finally
                 Lwt_io.abort och
           with
@@ -77,6 +78,6 @@ struct
       Lwt_unix.listen sock 1024;
       accept_loop sock
 
-  and handle_connection ~debug db conn =
-    S.service (S.init ~debug db conn.ich conn.och)
+  and handle_connection ~debug server conn =
+    S.service_client ~debug server conn.ich conn.och
 end

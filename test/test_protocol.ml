@@ -36,11 +36,14 @@ struct
     let db = Storage.open_db dir in
     let ch1_in, ch1_out = Lwt_io.pipe () in
     let ch2_in, ch2_out = Lwt_io.pipe () in
-    let srv_client_handle = SERVER.init db ch1_in ch2_out in
+    let server = SERVER.make db in
     let client = CLIENT.make ch2_in ch1_out in
       Lwt_unix.run begin
         try_lwt
-          ignore (try_lwt SERVER.service srv_client_handle with _ -> return ());
+          ignore
+            (try_lwt
+               SERVER.service_client server ch1_in ch2_out
+             with _ -> return ());
           f client
         finally
           CLIENT.close client;

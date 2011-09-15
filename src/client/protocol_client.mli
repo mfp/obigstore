@@ -25,4 +25,31 @@ sig
   include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
   val make : Lwt_io.input_channel -> Lwt_io.output_channel -> db
   val close : db -> unit
+
+  (** {3} Asynchronous notifications *)
+
+  (** [listen ks topìc] allows to receive notifications sent to the specified
+    * [topic] in the keyspace [ks]. Note that [listen] is not affected by
+    * surrounding transactions, i.e., the subscription is performed even if
+    * the surrounding transaction is canceled. *)
+  val listen : keyspace -> string -> unit Lwt.t
+
+  (** [unlisten ks topìc] signals that further notifications sent to the [topic]
+    * in the keyspace [ks] will not be received. Notifications that were
+    * already queued in the server will not be discarded, however.
+    * Note that [unlisten] is not affected by surrounding transactions, i.e.,
+    * the unsubscription is performed even if the surrounding transaction is
+    * canceled. *)
+  val unlisten : keyspace -> string -> unit Lwt.t
+
+  (** [notify ks topic] sends a notification associated to the given [topic]
+    * in keyspace [ks], which will be received by all the connections that
+    * performed [listen] on the same [ks]/[topic]. *)
+  val notify : keyspace -> string -> unit Lwt.t
+
+  (** Returned queued notifications, blocking if there is none yet.
+    * An empty list will be returned when there are no more queued
+    * notifications and the underlying connection is closed.
+    * *)
+  val await_notifications : keyspace -> string list Lwt.t
 end

@@ -326,5 +326,13 @@ struct
          E.add_list E.add_bool b l)
 
   let read_exist_result = reader (D.get_list D.get_bool)
+
+  let read_notifications = reader (D.get_list D.get_string)
+
+  let return_notifications =
+    writer
+      (fun b l ->
+         E.add_status b 0;
+         E.add_list E.add_string b l)
 end
 
