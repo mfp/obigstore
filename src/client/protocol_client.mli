@@ -44,7 +44,11 @@ sig
 
   (** [notify ks topic] sends a notification associated to the given [topic]
     * in keyspace [ks], which will be received by all the connections that
-    * performed [listen] on the same [ks]/[topic]. *)
+    * performed [listen] on the same [ks]/[topic]. [notify] honors surrounding
+    * transactions, i.e., the notification will be actually performed only
+    * when/if the outermost surrounding transaction is committed, and no
+    * notification is sent if any of the surrounding transactions is aborted.
+    * *)
   val notify : keyspace -> string -> unit Lwt.t
 
   (** Returned queued notifications, blocking if there is none yet.
