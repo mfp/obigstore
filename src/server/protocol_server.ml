@@ -256,24 +256,26 @@ struct
           with_keyspace c keyspace ~request_id
             (fun ks ->
                try_lwt
-                 D.repeatable_read_transaction ks
-                   (fun ks ->
-                      Lwt.with_value tx_key (Some tx_data)
-                        (fun () ->
-                           try_lwt
-                             P.return_ok ?buf c.och ~request_id () >>
-                             service c
-                           with Commit_exn ->
-                             wait_for_pending_reqs c >>
-                             let () =
-                               if is_outermost then
-                                 Notif_queue.iter
-                                   (notify c.server ks) tx_data.tx_notifications
-                               else
-                                 parent_tx_data.tx_notifications <-
-                                   tx_data.tx_notifications
-                             in
+                 lwt ret =
+                   D.repeatable_read_transaction ks
+                     (fun ks ->
+                        Lwt.with_value tx_key (Some tx_data)
+                          (fun () ->
+                             try_lwt
+                               P.return_ok ?buf c.och ~request_id () >>
+                               service c
+                             with Commit_exn ->
+                               wait_for_pending_reqs c >>
                                P.return_ok ?buf c.och ~request_id ()))
+                 in
+                   (* we deliver notifications _after_ actual commit
+                    * (otherwise, new data wouldn't be found if another client
+                    *  performs a query right away) *)
+                   begin if is_outermost then
+                     Notif_queue.iter (notify c.server ks) tx_data.tx_notifications
+                   else parent_tx_data.tx_notifications <- tx_data.tx_notifications
+                   end;
+                   return ret
                with Abort_exn ->
                  wait_for_pending_reqs c >>
                  P.return_ok ?buf c.och ~request_id ())
