@@ -88,12 +88,13 @@ end
 
 let puts fmt = printf (fmt ^^ "\n%!")
 
-let print_prompt () =
+let prompt () =
   let ks = match !curr_keyspace with
       None -> "[]"
     | Some (name, _) -> sprintf "%S" name
   in
-    printf "%s (%d) => %!" ks !tx_level
+    [ Lwt_term.Underlined; Lwt_term.text ks; Lwt_term.Reset;
+      Lwt_term.text (sprintf " (%d) > " !tx_level) ]
 
 let print_list f l =
   List.iter (fun x -> print_endline (f x)) l
@@ -122,51 +123,51 @@ struct
 
   let quick_ref =
     "\
-     KEYSPACES;                 List keyspaces\n\
-     TABLES;                    List tables in present keyspace\n\
-     STATS;                     Show load statistics\n\
+     KEYSPACES                  List keyspaces\n\
+     TABLES                     List tables in present keyspace\n\
+     STATS                      Show load statistics\n\
      \n\
-     SIZE table;                Show approx size of table\n\
-     SIZE table[x:y];           Show approx size of table between keys x and y\n\
+     SIZE table                 Show approx size of table\n\
+     SIZE table[x:y]            Show approx size of table between keys x and y\n\
      \n\
-     BEGIN;                     Start a transaction block\n\
-     COMMIT;                    Commit current transaction\n\
-     ABORT;                     Abort current transaction\n\
-     LOCK lock_name;            Acquire lock with given name\n\
+     BEGIN                      Start a transaction block\n\
+     COMMIT                     Commit current transaction\n\
+     ABORT                      Abort current transaction\n\
+     LOCK lock_name             Acquire lock with given name\n\
 \n\
-     LISTEN topic;              Subscribe to topic.\n\
-     UNLISTEN topic;            Unsubscribe to topic.\n\
-     NOTIFY topic;              Send async notification to topic.\n\
-     AWAIT;                     Wait for a notification.\n\
+     LISTEN topic               Subscribe to topic.\n\
+     UNLISTEN topic             Unsubscribe to topic.\n\
+     NOTIFY topic               Send async notification to topic.\n\
+     AWAIT                      Wait for a notification.\n\
 \n\
-     COUNT table;               Count keys in table\n\
-     COUNT table[x:y];          Count keys in table between keys x and y\n\
+     COUNT table                Count keys in table\n\
+     COUNT table[x:y]           Count keys in table between keys x and y\n\
 \n\
-     GET KEYS table;            Get all keys in table\n\
-     GET KEYS table[/10];       Get up to 10 keys from table\n\
-     GET KEYS table[~/10];      Get up to 10 keys from table, in reverse order\n\
-     GET KEYS table[k1:k2/10];  Get up to 10 keys from table between k1 and k2\n\
-     GET KEYS table[k2~k1/10];  Same as above in reverse order\n\
+     GET KEYS table             Get all keys in table\n\
+     GET KEYS table[/10]        Get up to 10 keys from table\n\
+     GET KEYS table[~/10]       Get up to 10 keys from table, in reverse order\n\
+     GET KEYS table[k1:k2/10]   Get up to 10 keys from table between k1 and k2\n\
+     GET KEYS table[k2~k1/10]   Same as above in reverse order\n\
 \n\
-     GET table[key];            Get all columns for key in table\n\
-     GET table[key][c1,c2];     Get columns c1 and c2 from key in table\n\
-     GET table[k1:k2/10];       Get all columns for up to 10 keys between k1 and k2\n\
-     GET table[k2~k1/10];       Similar to above in reverse order\n\
-     GET table[k1:k2/10][c1,c2,c5:c9/4];
+     GET table[key]             Get all columns for key in table\n\
+     GET table[key][c1,c2]      Get columns c1 and c2 from key in table\n\
+     GET table[k1:k2/10]        Get all columns for up to 10 keys between k1 and k2\n\
+     GET table[k2~k1/10]        Similar to above in reverse order\n\
+     GET table[k1:k2/10][c1,c2,c5:c9/4]
                            Get up to 4 columns taken from c1, c2, and the
                            range from c5 to c9, for up to 10 keys
                            between k1 and k2\n\
-     GET table[k1:k2/10][a,b] / x = \"foo\" || \"bar1\" < y <= \"bar9\";
+     GET table[k1:k2/10][a,b] / x = \"foo\" || \"bar1\" < y <= \"bar9\"
                            Get columns a and b for up to 10 keys between k1
                            and k2, whose x column has value 'foo' and
                            whose y column is comprised between 'bar1' and
                            'bar9'.\n\
      \n\
-     PUT table[key][c1=\"v1\", c2=\"v2\"];
+     PUT table[key][c1=\"v1\", c2=\"v2\"]
                            Put columns c1 and c2 into given key in table\n\
 \n\
-     DELETE table[key][col];    Delete column col for given key in table\n\
-     DELETE table[key];         Delete all columns for given key in table"
+     DELETE table[key][col]     Delete column col for given key in table\n\
+     DELETE table[key]          Delete all columns for given key in table"
 
   let help_message = function
       `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" (cmd ^ ";") h
@@ -250,6 +251,8 @@ struct
              puts "Request debugging is %s" (bool_to_s !debug_requests)
          | _ -> ())
 
+  let list =
+    Hashtbl.fold (fun name _ l -> name :: l) directive_tbl []
 end
 
 let execute ks db loop r =
@@ -412,6 +415,44 @@ let execute ks db loop req =
                if rate_info <> "" then puts "%s" rate_info;
                return ()
 
+module S = Set.Make(Text)
+
+let set_of_list l = List.fold_right S.add l S.empty
+
+let keyword_completions = set_of_list (List.map fst Repl_lex.keywords)
+let directive_completions = set_of_list Directives.list
+
+let is_directive = function
+    s when String.contains s ' ' -> false
+  | s when String.length s > 0 && s.[0] = '.' -> true
+  | _ -> false
+
+let complete (before, after) =
+    match before with
+        s when is_directive s ->
+          return (Lwt_read_line.complete
+                    "." (String.sub s 1 (String.length s - 1)) after
+                    directive_completions)
+      | _ ->
+          try
+            let prev_sp = String.rindex_from before (String.length before) ' ' in
+            let word =
+              String.sub before (prev_sp + 1) (String.length before - prev_sp - 1)
+            in
+              return (Lwt_read_line.complete
+                        (String.sub before 0 prev_sp) word after
+                        keyword_completions)
+          with Not_found | Invalid_argument _ ->
+              return (Lwt_read_line.complete "" before after
+                        keyword_completions)
+
+let rec get_phrase () =
+  Lwt_read_line.read_line
+    ~mode:`real_time
+    ~complete:(fun x -> complete x)
+    ~prompt:(prompt ())
+    ()
+
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
@@ -423,25 +464,25 @@ let () =
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     lwt ich, och = Lwt_io.open_connection addr in
     let db = D.make ich och in
-    let lexbuf = Lexing.from_channel stdin in
     lwt ks = D.register_keyspace db !keyspace in
     let rec loop () =
       begin try_lwt
-        print_prompt ();
-        match Repl_gram.input Repl_lex.token lexbuf with
-            Command req ->
-              execute ks db loop req
-          | Directive (directive, args) ->
-              Directives.eval_directive directive args;
-              return ()
-          | Nothing -> print_endline "Nothing"; return ()
-          | Error s -> printf "Error: %s\n%!" s; return ()
+        lwt phrase = get_phrase () in
+        let lexbuf = Lexing.from_string phrase in
+          match Repl_gram.input Repl_lex.token lexbuf with
+              Command req ->
+                execute ks db loop req
+            | Directive (directive, args) ->
+                Directives.eval_directive directive args;
+                return ()
+            | Nothing -> print_endline "Nothing"; return ()
+            | Error s -> printf "Error: %s\n%!" s; return ()
       with
         | Parsing.Parse_error ->
             print_endline "Parse error";
-            Lexing.flush_input lexbuf;
             return ()
         | End_of_file | Abort_exn | Commit_exn as e -> raise_lwt e
+        | Lwt_read_line.Interrupt -> exit 0
         | e ->
             printf "Got exception: %s\n%!" (Printexc.to_string e);
             return ()
@@ -458,6 +499,6 @@ let () =
     in
       curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
       puts "ob_repl";
-      puts "Enter \".help;\" for instructions.";
+      puts "Enter \".help\" for instructions.";
       outer_loop ()
   end

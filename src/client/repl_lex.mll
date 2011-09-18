@@ -22,27 +22,29 @@
 
  let keyword_table = Hashtbl.create 13
 
+ let keywords =
+    [
+      "keyspaces", KEYSPACES;
+      "tables", TABLES;
+      "size", SIZE;
+      "begin", BEGIN;
+      "commit", COMMIT;
+      "abort", ABORT;
+      "keys", KEYS;
+      "count", COUNT;
+      "get", GET;
+      "put", PUT;
+      "delete", DELETE;
+      "lock", LOCK;
+      "stats", STATS;
+      "listen", LISTEN;
+      "unlisten", UNLISTEN;
+      "notify", NOTIFY;
+      "await", AWAIT;
+    ]
+
  let () = 
-   List.iter (fun (k, v) -> Hashtbl.add keyword_table k v)
-     [
-       "keyspaces", KEYSPACES;
-       "tables", TABLES;
-       "size", SIZE;
-       "begin", BEGIN;
-       "commit", COMMIT;
-       "abort", ABORT;
-       "keys", KEYS;
-       "count", COUNT;
-       "get", GET;
-       "put", PUT;
-       "delete", DELETE;
-       "lock", LOCK;
-       "stats", STATS;
-       "listen", LISTEN;
-       "unlisten", UNLISTEN;
-       "notify", NOTIFY;
-       "await", AWAIT;
-     ]
+   List.iter (fun (k, v) -> Hashtbl.add keyword_table k v) keywords
      
 }
 
@@ -74,4 +76,4 @@ rule token = parse
         { ID lxm (* FIXME hex to string *) }
   | ';'            { EOF }
   | _              { token lexbuf }
-  | eof            { raise End_of_file }
+  | eof            { EOF }
