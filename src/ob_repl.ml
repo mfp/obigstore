@@ -35,6 +35,7 @@ module D = Protocol_client.Make(Protocol_payload.Version_0_0_0)
 let keyspace = ref ""
 let server = ref "127.0.0.1"
 let port = ref 12050
+let simple_repl = ref false
 
 let usage_message = "Usage: ob_repl -keyspace NAME [options]"
 
@@ -44,6 +45,7 @@ let params =
       "-keyspace", Arg.Set_string keyspace, "NAME Operate in keyspace NAME.";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+      "-simple", Arg.Set simple_repl, " Simple mode for use with rlwrap and similar.";
     ]
 
 let tx_level = ref 0
@@ -446,12 +448,17 @@ let complete (before, after) =
               return (Lwt_read_line.complete "" before after
                         keyword_completions)
 
-let rec get_phrase () =
-  Lwt_read_line.read_line
-    ~mode:`real_time
-    ~complete:(fun x -> complete x)
-    ~prompt:(prompt ())
-    ()
+let get_phrase () =
+  if !simple_repl then begin
+    printf "%s%!" (Lwt_term.strip_styles (prompt ()));
+    Lwt_io.read_line Lwt_io.stdin
+  end else begin
+    Lwt_read_line.read_line
+      ~mode:`real_time
+      ~complete:(fun x -> complete x)
+      ~prompt:(prompt ())
+      ()
+  end
 
 let () =
   Printexc.record_backtrace true;
