@@ -448,6 +448,8 @@ let complete (before, after) =
               return (Lwt_read_line.complete "" before after
                         keyword_completions)
 
+let phrase_history = ref []
+
 let get_phrase () =
   if !simple_repl then begin
     printf "%s%!" (Lwt_term.strip_styles (prompt ()));
@@ -457,6 +459,7 @@ let get_phrase () =
       ~mode:`real_time
       ~complete:(fun x -> complete x)
       ~prompt:(prompt ())
+      ~history:!phrase_history
       ()
   end
 
@@ -478,9 +481,12 @@ let () =
         let lexbuf = Lexing.from_string phrase in
           match Repl_gram.input Repl_lex.token lexbuf with
               Command req ->
-                execute ks db loop req
+                lwt () = execute ks db loop req in
+                  phrase_history := phrase :: !phrase_history;
+                  return ()
             | Directive (directive, args) ->
                 Directives.eval_directive directive args;
+                phrase_history := phrase :: !phrase_history;
                 return ()
             | Nothing -> print_endline "Nothing"; return ()
             | Error s -> printf "Error: %s\n%!" s; return ()
