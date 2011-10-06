@@ -72,6 +72,8 @@ val stringz_unsafe : (string, self_delimited) codec
 
 val positive_int64 : (Int64.t, self_delimited) codec
 
+val bool : (bool, self_delimited) codec
+
 (** Similar to {!positive_int64}, but with inverted order relative to the
   * natural order of [Int64.t] values, i.e.,
   * given [f = encode_to_string positive_int64_complement], if [x < y] then

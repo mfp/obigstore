@@ -46,6 +46,8 @@ let () =
        | _ -> None)
 
 type ('a, 'prop) encoder = Bytea.t -> 'a -> unit
+
+(* [decode s off len scratch new_offset] *)
 type ('a, 'prop) decoder = string -> int -> int -> Bytea.t -> int ref -> 'a
 
 type ('a, 'prop) codec =
@@ -163,6 +165,16 @@ let stringz =
   let pp = sprintf "%S"
   in
     { encode; decode; pp; }
+
+let bool =
+  let encode b x = Bytea.add_byte b (if x then 1 else 0) in
+  let decode s off len scratch n =
+    check_off_len "bool" s off len;
+    if len < 1 then invalid_off_len ~fname:"bool" s off len;
+    n := off + 1;
+    not (s.[off] = '\000')
+  in
+    {encode; decode; pp = string_of_bool; }
 
 let stringz_unsafe =
   let encode b s = Bytea.add_string b s; Bytea.add_byte b 0 in
