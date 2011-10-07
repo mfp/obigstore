@@ -83,6 +83,11 @@ let test_self_delimited_string () =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
 
+let test_bool () =
+  let v = [ true; false ] in
+    List.iter (check_roundtrip K.bool) v;
+    check_order_preservation K.bool v
+
 let positive_int64_vector =
     [ 0L; 1L; Int64.max_int; 42L; ]
 
@@ -143,6 +148,7 @@ let test_custom () =
 
 let tests =
   [ "stringz" >:: test_stringz;
+    "bool" >:: test_bool;
     "self_delimited_string" >:: test_self_delimited_string;
     "positive_int64" >:: test_positive_int64;
     "positive_int64 complement" >:: test_positive_int64_complement;
