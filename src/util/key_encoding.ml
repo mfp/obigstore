@@ -266,6 +266,33 @@ let tuple4 c1 c2 c3 c4 =
 
   in { encode; decode; pp; }
 
+let tuple5 c1 c2 c3 c4 c5 =
+
+  let encode b (x, y, z, zx, zy) =
+    c1.encode b x;
+    c2.encode b y;
+    c3.encode b z;
+    c4.encode b zx;
+    c5.encode b zy;
+  in
+
+  let decode s off len scratch n =
+    let x = c1.decode s off len scratch n in
+    let len = len - (!n - off) and old_n = !n in
+    let y = c2.decode s !n len scratch n in
+    let len = len - (!n - old_n) and old_n = !n in
+    let z = c3.decode s !n len scratch n in
+    let len = len - (!n - old_n) and old_n = !n in
+    let zx = c4.decode s !n len scratch n in
+    let len = len - (!n - old_n) in
+    let zy = c5.decode s !n len scratch n in
+      (x, y, z, zx, zy) in
+
+  let pp (x, y, z, zx, zy) =
+    sprintf "(%s, %s, %s, %s, %s)" (c1.pp x) (c2.pp y) (c3.pp z) (c4.pp zx) (c5.pp zy)
+
+  in { encode; decode; pp; }
+
 let custom c ~encode ~decode ~pp =
   let encode b x = c.encode b (encode x) in
   let decode s off len scratch n = decode (c.decode s off len scratch n) in

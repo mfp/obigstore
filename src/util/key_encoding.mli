@@ -93,6 +93,11 @@ val tuple4 :
   ('c, self_delimited) codec -> ('d, 'p) codec ->
   ('a * 'b * 'c * 'd, 'p) codec
 
+val tuple5 :
+  ('a, self_delimited) codec -> ('b, self_delimited) codec ->
+  ('c, self_delimited) codec -> ('d, self_delimited) codec ->
+  ('e, 'p) codec -> ('a * 'b * 'c * 'd * 'e, 'p) codec
+
 val custom :
   ('a, 'p) codec ->
   encode:('custom -> 'a) -> decode:('a -> 'custom) -> pp:('custom -> string) ->

@@ -126,6 +126,20 @@ let test_tuple4 () =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
 
+let test_tuple5 () =
+  let codec = K.tuple5 K.stringz K.stringz K.stringz K.stringz K.stringz in
+  let l1 =
+    [ "", "", "", ""; "a", "", "", ""; "", "a", "", ""; "abc", "def", "", "";
+      "asdsdsa", "", "x", "sdfdsfssdf" ] in
+  let suffix = [ ""; "a"; "x"; "abc" ] in
+  let l =
+    List.concat
+      (List.map
+         (fun (a, b, c, d) -> List.map (fun e -> (a, b, c, d, e)) suffix) l1)
+  in
+    List.iter (check_roundtrip codec) l;
+    check_order_preservation codec l
+
 let test_custom () =
   let encode s = Scanf.sscanf s "%Ld-%Ld-%s" (fun a b c -> (a, b, c)) in
   let decode (a, b, c) = Printf.sprintf "%Ld-%Ld-%s" a b c in
@@ -155,6 +169,7 @@ let tests =
     "tuple2" >:: test_tuple2;
     "tuple3" >:: test_tuple3;
     "tuple4" >:: test_tuple4;
+    "tuple5" >:: test_tuple5;
     "custom" >:: test_custom;
   ]
 
