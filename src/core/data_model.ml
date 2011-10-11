@@ -183,6 +183,14 @@ sig
     key_range -> column_name list ->
     (key option * (key * string option list) list) Lwt.t
 
+  (** Similar to [get_slice_values], but returning the data and the
+    * timestamp in microsends since the beginning of the Unix epoch. *)
+  val get_slice_values_with_timestamps :
+    keyspace -> table ->
+    ?max_keys:int ->
+    key_range -> column_name list ->
+    (key option * (key * (string * Int64.t) option list) list) Lwt.t
+
   (** @return [Some last_column_name, column_list] if any column exists for the
     * selected key, [None] otherwise. *)
   val get_columns :

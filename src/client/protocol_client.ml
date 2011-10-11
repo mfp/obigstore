@@ -347,6 +347,13 @@ struct
                           max_keys; key_range; columns; })
       P.read_slice_values
 
+  let get_slice_values_with_timestamps ks table ?max_keys key_range columns =
+    sync_request_ks ks
+      (Get_slice_values_timestamps
+         { Get_slice_values_timestamps.keyspace = ks.ks_id; table;
+           max_keys; key_range; columns; })
+      P.read_slice_values_timestamps
+
   let get_columns ks table ?max_columns ?(decode_timestamps=false)
         key column_range =
     sync_request_ks ks

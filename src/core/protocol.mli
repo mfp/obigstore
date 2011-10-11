@@ -74,6 +74,8 @@ sig
   val return_slice_values :
     (Data_model.key option * (Data_model.key * string option list) list)
     writer
+  val return_slice_values_timestamps :
+    (Data_model.key option * (Data_model.key * (string * Int64.t) option list) list) writer
   val return_columns :
     (Data_model.column_name * Data_model.column list) option writer
   val return_column_values : string option list writer
@@ -97,6 +99,8 @@ sig
   val read_slice_values :
     (Data_model.key option * (Data_model.key * string option list) list)
     reader
+  val read_slice_values_timestamps :
+    (Data_model.key option * (Data_model.key * (string * Int64.t) option list) list) reader
   val read_columns :
     (Data_model.column_name * Data_model.column list) option reader
   val read_column_values : string option list reader

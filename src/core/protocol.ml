@@ -135,6 +135,8 @@ sig
   val return_key_count : Int64.t writer
   val return_slice : slice writer
   val return_slice_values : (key option * (key * string option list) list) writer
+  val return_slice_values_timestamps :
+    (key option * (key * (string * Int64.t) option list) list) writer
   val return_columns : (column_name * (column list)) option writer
   val return_column_values : string option list writer
   val return_column : (string * timestamp) option writer
@@ -155,6 +157,8 @@ sig
   val read_key_count : Int64.t reader
   val read_slice : slice reader
   val read_slice_values : (key option * (key * string option list) list) reader
+  val read_slice_values_timestamps :
+    (key option * (key * (string * Int64.t) option list) list) reader
   val read_columns : (column_name * (column list)) option reader
   val read_column_values : string option list reader
   val read_column : (string * timestamp) option reader

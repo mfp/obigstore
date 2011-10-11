@@ -1798,6 +1798,41 @@ let get_slice_values tx table
     Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
     return ret
 
+let get_slice_values_with_timestamps tx table
+      ?(max_keys = max_int) key_range columns =
+  let bytes_read = ref 0 in
+  let cols_read = ref 0 in
+  let now = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+  let postproc_keydata ~guaranteed_cols_ok (key, cols) =
+    let l =
+      List.map
+        (fun column ->
+           try
+             let c = List.find (fun c -> c.name = column) cols in
+                bytes_read := !bytes_read + String.length c.data + 8;
+                incr cols_read;
+                Some (c.data,
+                      match c.timestamp with
+                        | Timestamp t -> t
+                        | No_timestamp -> now)
+           with Not_found -> None)
+        columns
+    in Some (key, l) in
+
+  let get_keydata_key (key, _) = key in
+
+  lwt ret =
+    get_slice_aux
+      postproc_keydata get_keydata_key ~keep_columnless_keys:true tx table
+       ~max_keys ~max_columns:(List.length columns)
+       ~decode_timestamps:true key_range
+       (Column_range_union [Columns columns])
+  in
+    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
+    Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
+    return ret
+
 let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
                 key column_range =
   match_lwt
@@ -2064,6 +2099,10 @@ let get_slice ks table ?max_keys ?max_columns ?decode_timestamps
 let get_slice_values ks table ?max_keys key_range columns =
   with_transaction ks
     (fun tx -> get_slice_values tx table ?max_keys key_range columns)
+
+let get_slice_values_with_timestamps ks table ?max_keys key_range columns =
+  with_transaction ks
+    (fun tx -> get_slice_values_with_timestamps tx table ?max_keys key_range columns)
 
 let get_columns ks table ?max_columns ?decode_timestamps key column_range =
   with_transaction ks

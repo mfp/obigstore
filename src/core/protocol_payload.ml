@@ -252,6 +252,33 @@ struct
              ich
          in return (last_key_opt, data_list))
 
+  let return_slice_values_timestamps =
+    writer
+      (fun b (last_key_opt, data_list) ->
+         E.add_status b 0;
+         E.add_option E.add_string b last_key_opt;
+         E.add_list
+           (E.add_tuple2
+              E.add_string
+              (E.add_list
+                 (E.add_option
+                    (E.add_tuple2 E.add_string E.add_int64_le))))
+           b data_list)
+
+  let read_slice_values_timestamps =
+    reader
+      (fun ich ->
+         lwt last_key_opt = D.get_option D.get_string ich in
+         lwt data_list =
+           D.get_list
+             (D.get_tuple2
+                D.get_string
+                (D.get_list
+                   (D.get_option
+                      (D.get_tuple2 D.get_string D.get_int64_le))))
+             ich
+         in return (last_key_opt, data_list))
+
   let return_columns =
     writer
       (fun b x ->

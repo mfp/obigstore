@@ -325,6 +325,12 @@ struct
           (fun ks ->
              D.get_slice_values ks table ?max_keys key_range columns >>=
              P.return_slice_values ?buf c.och ~request_id)
+    | Get_slice_values_timestamps
+        { Get_slice_values_timestamps.keyspace; table; max_keys; key_range; columns; } ->
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             D.get_slice_values_with_timestamps ks table ?max_keys key_range columns >>=
+             P.return_slice_values_timestamps ?buf c.och ~request_id)
     | Get_columns { Get_columns.keyspace; table; max_columns;
                     decode_timestamps; key; column_range; } ->
         with_keyspace c keyspace ~request_id

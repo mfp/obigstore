@@ -118,6 +118,10 @@ message request =
   | Get_slice_values { keyspace : keyspace; table : table;
                        max_keys : max_keys; key_range : key_range;
                        columns : [column_name] }
+  | Get_slice_values_timestamps
+      { keyspace : keyspace; table : table;
+        max_keys : max_keys; key_range : key_range;
+        columns : [column_name] }
   | Get_columns { keyspace : keyspace; table : table; max_columns : max_columns;
                   decode_timestamps : bool; key : key;
                   column_range : column_range }
