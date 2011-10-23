@@ -45,7 +45,14 @@
 
  let () = 
    List.iter (fun (k, v) -> Hashtbl.add keyword_table k v) keywords
-     
+
+let unescape_string =
+  let lexer = Genlex.make_lexer [] in
+  (fun s ->
+     let tok_stream = lexer (Stream.of_string ("\"" ^ s ^ "\"")) in
+       match Stream.peek tok_stream with
+           Some (Genlex.String s) -> s
+         | _ -> assert false)
 }
 
 rule token = parse
@@ -70,8 +77,8 @@ rule token = parse
         { try
             Hashtbl.find keyword_table (String.lowercase id)
           with Not_found -> ID id }
-  | '"' ([^ '"']* as lxm) '"'
-        { ID lxm }
+  | '"' (("\\\\" | "\\" '"' | [^ '"'])* as lxm) '"'
+        { ID (unescape_string lxm) }
   | "x\"" (['0'-'9' 'a'-'f' 'A'-'F']* as lxm) '"'
         { ID lxm (* FIXME hex to string *) }
   | ';'            { EOF }
