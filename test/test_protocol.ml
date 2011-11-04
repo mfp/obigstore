@@ -19,21 +19,18 @@
 
 open Lwt
 open Test_00util
-open Obigstore_core
-open Obigstore_client
-open Obigstore_server
 
-module CLIENT = Protocol_client.Make(Protocol_payload.Version_0_0_0)
+module CLIENT = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 
 module C =
 struct
-  let id = "Protocol_client atop Storage server"
+  let id = "Obs_protocol_client atop Obs_storage server"
 
-  module SERVER = Protocol_server.Make(Storage)(Protocol_payload.Version_0_0_0)
+  module SERVER = Obs_protocol_server.Make(Obs_storage)(Obs_protocol_payload.Version_0_0_0)
 
   let with_db f =
     let dir = make_temp_dir () in
-    let db = Storage.open_db dir in
+    let db = Obs_storage.open_db dir in
     let ch1_in, ch1_out = Lwt_io.pipe () in
     let ch2_in, ch2_out = Lwt_io.pipe () in
     let server = SERVER.make db in
@@ -47,7 +44,7 @@ struct
           f client
         finally
           CLIENT.close client;
-          Storage.close_db db
+          Obs_storage.close_db db
       end
 end
 

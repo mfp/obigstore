@@ -45,10 +45,10 @@ val read_header : Lwt_io.input_channel -> (string * int * string) Lwt.t
 
 val write_msg :
   ?flush:bool ->
-  Lwt_io.output Lwt_io.channel -> string -> Bytea.t -> unit Lwt.t
+  Lwt_io.output Lwt_io.channel -> string -> Obs_bytea.t -> unit Lwt.t
 
 type 'a writer =
-    ?buf:Bytea.t ->
+    ?buf:Obs_bytea.t ->
     Lwt_io.output_channel -> request_id:request_id -> 'a -> unit Lwt.t
 
 type 'a reader = Lwt_io.input_channel -> 'a Lwt.t
@@ -70,20 +70,20 @@ sig
   val return_key_range_size_on_disk : Int64.t writer
   val return_keys : string list writer
   val return_key_count : Int64.t writer
-  val return_slice : Data_model.slice writer
+  val return_slice : Obs_data_model.slice writer
   val return_slice_values :
-    (Data_model.key option * (Data_model.key * string option list) list)
+    (Obs_data_model.key option * (Obs_data_model.key * string option list) list)
     writer
   val return_slice_values_timestamps :
-    (Data_model.key option * (Data_model.key * (string * Int64.t) option list) list) writer
+    (Obs_data_model.key option * (Obs_data_model.key * (string * Int64.t) option list) list) writer
   val return_columns :
-    (Data_model.column_name * Data_model.column list) option writer
+    (Obs_data_model.column_name * Obs_data_model.column list) option writer
   val return_column_values : string option list writer
-  val return_column : (string * Data_model.timestamp) option writer
+  val return_column : (string * Obs_data_model.timestamp) option writer
   val return_ok : unit writer
   val return_backup_dump : (string * backup_cursor option) option writer
   val return_backup_load_result : bool writer
-  val return_load_stats : Load_stats.stats writer
+  val return_load_stats : Obs_load_stats.stats writer
   val return_exist_result : bool list writer
   val return_notifications : string list writer
 
@@ -95,20 +95,20 @@ sig
   val read_key_range_size_on_disk : Int64.t reader
   val read_keys : string list reader
   val read_key_count : Int64.t reader
-  val read_slice : Data_model.slice reader
+  val read_slice : Obs_data_model.slice reader
   val read_slice_values :
-    (Data_model.key option * (Data_model.key * string option list) list)
+    (Obs_data_model.key option * (Obs_data_model.key * string option list) list)
     reader
   val read_slice_values_timestamps :
-    (Data_model.key option * (Data_model.key * (string * Int64.t) option list) list) reader
+    (Obs_data_model.key option * (Obs_data_model.key * (string * Int64.t) option list) list) reader
   val read_columns :
-    (Data_model.column_name * Data_model.column list) option reader
+    (Obs_data_model.column_name * Obs_data_model.column list) option reader
   val read_column_values : string option list reader
-  val read_column : (string * Data_model.timestamp) option reader
+  val read_column : (string * Obs_data_model.timestamp) option reader
   val read_ok : unit reader
   val read_backup_dump : (string * backup_cursor option) option reader
   val read_backup_load_result : bool reader
-  val read_load_stats : Load_stats.stats reader
+  val read_load_stats : Obs_load_stats.stats reader
   val read_exist_result : bool list reader
   val read_notifications : string list reader
 end

@@ -20,44 +20,43 @@
 open Printf
 open Test_00util
 open OUnit
-open Obigstore_core
 
 let aeq expected b =
-  assert_equal ~printer:to_hex expected (Bytea.contents b)
+  assert_equal ~printer:to_hex expected (Obs_bytea.contents b)
 
 let test_add_int32_le b =
-  Bytea.add_int32_le b (-1);
+  Obs_bytea.add_int32_le b (-1);
   aeq (string_of_bytes [ 0xFF; 0xFF; 0xFF; 0xFF ]) b;
-  Bytea.add_int32_le b 0xabcd;
+  Obs_bytea.add_int32_le b 0xabcd;
   aeq (string_of_bytes [ 0xFF; 0xFF; 0xFF; 0xFF; 0xcd; 0xab; 0x00; 0x00; ]) b;
-  Bytea.clear b;
-  Bytea.add_int32_le b 0x3bcd0102;
+  Obs_bytea.clear b;
+  Obs_bytea.add_int32_le b 0x3bcd0102;
   aeq (string_of_bytes [ 0x02; 0x01; 0xcd; 0x3b; ]) b
 
 let test_add_int64_le b =
-  Bytea.add_int64_le b (-1L);
+  Obs_bytea.add_int64_le b (-1L);
   aeq (String.make 8 '\255') b;
-  Bytea.add_int64_le b 0x1bcd010203040506L;
+  Obs_bytea.add_int64_le b 0x1bcd010203040506L;
   aeq (String.make 8 '\255' ^
        string_of_bytes [ 0x06; 0x05; 0x04; 0x03; 0x02; 0x01; 0xcd; 0x1b ]) b
 
 let test_add_int32_be b =
-  Bytea.add_int32_be b (-1);
+  Obs_bytea.add_int32_be b (-1);
   aeq (string_of_bytes [ 0xFF; 0xFF; 0xFF; 0xFF ]) b;
-  Bytea.add_int32_be b 0xabcd;
+  Obs_bytea.add_int32_be b 0xabcd;
   aeq (string_of_bytes [ 0xFF; 0xFF; 0xFF; 0xFF; 0x00; 0x00; 0xab; 0xcd; ]) b;
-  Bytea.clear b;
-  Bytea.add_int32_be b 0x3bcd0102;
+  Obs_bytea.clear b;
+  Obs_bytea.add_int32_be b 0x3bcd0102;
   aeq (string_of_bytes [ 0x3b; 0xcd; 0x01; 0x02; ]) b
 
 let test_add_int64_be b =
-  Bytea.add_int64_be b (-1L);
+  Obs_bytea.add_int64_be b (-1L);
   aeq (String.make 8 '\255') b;
-  Bytea.add_int64_be b 0x1bcd010203040506L;
+  Obs_bytea.add_int64_be b 0x1bcd010203040506L;
   aeq (String.make 8 '\255' ^
        string_of_bytes [ 0x1b; 0xcd; 0x01; 0x02; 0x03; 0x04; 0x05; 0x06; ]) b
 
-let with_buf f () = f (Bytea.create 10)
+let with_buf f () = f (Obs_bytea.create 10)
 
 let tests =
   List.map (fun (n, f) -> n >:: with_buf f)
@@ -69,4 +68,4 @@ let tests =
     ]
 
 let () =
-  register_tests "Bytea" tests
+  register_tests "Obs_bytea" tests

@@ -33,7 +33,7 @@ let reset t =
 
 let update t s off len =
   if off < 0 || len < 0 || off + len > String.length s then
-    invalid_arg "Crc32c.update";
+    invalid_arg "Obs_crc32c.update";
   update_unsafe t s off len
 
 let result t =

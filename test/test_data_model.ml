@@ -22,15 +22,13 @@ open Lwt
 open Test_00util
 open OUnit
 
-open Obigstore_core
-open Obigstore_server
 
-module D = Storage
-module DM = Data_model
+module D = Obs_storage
+module DM = Obs_data_model
 
 
 module Run_test
-  (D : Data_model.S)
+  (D : Obs_data_model.S)
   (C : sig
      val id : string
      val with_db : (D.db -> unit Lwt.t) -> unit
@@ -101,11 +99,11 @@ struct
     let ks2 = 2 in
 
     let encode ks (table, key, column, timestamp) =
-      let b = Bytea.create 13 in
-        Datum_encoding.encode_datum_key b ks ~table ~key ~column ~timestamp;
-        Bytea.contents b in
+      let b = Obs_bytea.create 13 in
+        Obs_datum_encoding.encode_datum_key b ks ~table ~key ~column ~timestamp;
+        Obs_bytea.contents b in
     let cmp ks1 a ks2 b =
-      Datum_encoding.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
+      Obs_datum_encoding.apply_custom_comparator (encode ks1 a) (encode ks2 b) in
     let printer (tbl, key, col, ts) =
       sprintf
         "{ table = %d; key = %S; column = %S, timestamp = %Ld }" tbl key col ts in
@@ -162,15 +160,15 @@ struct
     let alt ?(rev=false) x y =
       aeq_bool
         ~msg:(sprintf "%S should %sbe LT %S" x (txt rev) y)
-        (not rev) (Datum_encoding.apply_custom_comparator x y < 0) in
+        (not rev) (Obs_datum_encoding.apply_custom_comparator x y < 0) in
     let agt ?(rev=false) x y =
       aeq_bool
         ~msg:(sprintf "%S should %sbe GT %S" x (txt rev) y)
-        (not rev) (Datum_encoding.apply_custom_comparator x y > 0) in
+        (not rev) (Obs_datum_encoding.apply_custom_comparator x y > 0) in
     let aeq ?(rev=false) x y =
       aeq_bool
         ~msg:(sprintf "%S should %sbe EQ %S" x (txt rev) y)
-        (not rev) (Datum_encoding.apply_custom_comparator x y = 0) in
+        (not rev) (Obs_datum_encoding.apply_custom_comparator x y = 0) in
     let rev = true in
     let alt x y = alt x y; agt y x; aeq ~rev x y in
     let b = Char.code in
@@ -184,9 +182,9 @@ struct
       alt "\255" "\255\000";
       (* multi-byte keyspace *)
       alt
-        (Datum_encoding.encode_datum_key_to_string
+        (Obs_datum_encoding.encode_datum_key_to_string
            129 ~table:9 ~key:"" ~column:"" ~timestamp:0L)
-        (Datum_encoding.encode_datum_key_to_string
+        (Obs_datum_encoding.encode_datum_key_to_string
            256 ~table:0 ~key:"" ~column:"" ~timestamp:0L);
       (* null column with non-zero timestamp vs. non-null column *)
       alt_bytes
@@ -204,26 +202,26 @@ struct
 
   let test_datum_key_encoding _ =
     let check (ks, table, key, column, timestamp) =
-      let s = Datum_encoding.encode_datum_key_to_string
+      let s = Obs_datum_encoding.encode_datum_key_to_string
                 ks ~table ~key ~column ~timestamp in
       let table_r = ref (-1) in
       let key_buf = ref "" and key_len = ref 0 in
       let column_buf = ref "" and column_len = ref 0 in
-      let timestamp_buf = Datum_encoding.make_timestamp_buf () in
+      let timestamp_buf = Obs_datum_encoding.make_timestamp_buf () in
         aeq_bool ~msg:"decoding failed" true
-          (Datum_encoding.decode_datum_key
+          (Obs_datum_encoding.decode_datum_key
              ~table_r
              ~key_buf_r:(Some key_buf) ~key_len_r:(Some key_len)
              ~column_buf_r:(Some column_buf) ~column_len_r:(Some column_len)
              ~timestamp_buf:(Some timestamp_buf) s (String.length s));
-        aeq_int ~msg:"keyspace" ks (Datum_encoding.get_datum_key_keyspace_id s);
+        aeq_int ~msg:"keyspace" ks (Obs_datum_encoding.get_datum_key_keyspace_id s);
         aeq_int ~msg:"table id" table !table_r;
         aeq_int ~msg:"key len" (String.length key) !key_len;
         aeq_string ~msg:"key" key (String.sub !key_buf 0 !key_len);
         aeq_int ~msg:"column len" (String.length column) !column_len;
         aeq_string ~msg:"column" column (String.sub !column_buf 0 !column_len);
         aeq_int64 ~msg:"timestamp" timestamp
-          (Datum_encoding.decode_timestamp timestamp_buf)
+          (Obs_datum_encoding.decode_timestamp timestamp_buf)
     in
       List.iter check
         [
@@ -1195,7 +1193,7 @@ struct
     ]
 
   let () =
-    register_tests (C.id ^ " Data_model") tests
+    register_tests (C.id ^ " Obs_data_model") tests
 end
 
 

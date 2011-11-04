@@ -1,26 +1,21 @@
 
 OBJECTS[] =
-  bytea
-  crc32c
-  data_model
-  protocol
-  protocol_payload
-  request
-  string_util
-  weak_ref
-  load_stats
+  obs_bytea
+  obs_crc32c
+  obs_data_model
+  obs_protocol
+  obs_protocol_payload
+  obs_request
+  obs_string_util
+  obs_weak_ref
+  obs_load_stats
 
-request.ml: request.proto ../libs/extprot/extprotc
+obs_request.ml: obs_request.proto ../libs/extprot/extprotc
 	../libs/extprot/extprotc $<
 
-OCamlGeneratedFiles(request.ml)
+OCamlGeneratedFiles(obs_request.ml)
 
 obigstore_stubs.o: obigstore_stubs.cc
 
-section
-    OCAMLFLAGS += -for-pack Obigstore_core
-    CamlSources($(OBJECTS)):
-
-OCamlPackage(obigstore_core, $(OBJECTS))
-CamlStubLibrary(obigstore_core, obigstore_core, obigstore_stubs)
+CamlStubLibrary(obigstore_core, $(OBJECTS), obigstore_stubs)
 

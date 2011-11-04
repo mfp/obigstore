@@ -225,7 +225,7 @@ sig
 
   val delete_key : keyspace -> table -> key -> unit Lwt.t
 
-  (** {3} Backup *)
+  (** {3} Obs_backup *)
   type backup_cursor
 
   val dump :
@@ -239,7 +239,7 @@ sig
   val load : keyspace -> string -> bool Lwt.t
 
   (** Load statistics  *)
-  val load_stats : keyspace -> Load_stats.stats Lwt.t
+  val load_stats : keyspace -> Obs_load_stats.stats Lwt.t
 end
 
 module type BACKUP_SUPPORT =

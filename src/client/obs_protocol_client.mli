@@ -17,12 +17,11 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
-open Obigstore_core
 
-module Make : functor(P : Protocol.PAYLOAD) ->
+module Make : functor(P : Obs_protocol.PAYLOAD) ->
 sig
-  include Data_model.S with type backup_cursor = string
-  include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+  include Obs_data_model.S with type backup_cursor = string
+  include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
   val make : Lwt_io.input_channel -> Lwt_io.output_channel -> db
   val close : db -> unit
 

@@ -17,10 +17,9 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
-open Obigstore_core
 
-include Data_model.S
-include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+include Obs_data_model.S
+include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
 
 (** Open or create a database in the given directory.
   *

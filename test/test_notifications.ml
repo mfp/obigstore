@@ -21,13 +21,10 @@ open OUnit
 open Printf
 open Lwt
 open Test_00util
-open Obigstore_core
-open Obigstore_client
-open Obigstore_server
 
-module CLIENT = Protocol_client.Make(Protocol_payload.Version_0_0_0)
-module SERVER = Protocol_server.Make(Storage)(Protocol_payload.Version_0_0_0)
-module DM = Data_model
+module CLIENT = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
+module SERVER = Obs_protocol_server.Make(Obs_storage)(Obs_protocol_payload.Version_0_0_0)
+module DM = Obs_data_model
 
 let with_conn server f =
   let ch1_in, ch1_out = Lwt_io.pipe () in
@@ -48,7 +45,7 @@ let expect ?msg ks l =
 
 let make_server () =
   let dir = make_temp_dir () in
-  let db = Storage.open_db dir in
+  let db = Obs_storage.open_db dir in
     SERVER.make db
 
 let test_notifications () =

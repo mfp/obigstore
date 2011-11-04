@@ -18,15 +18,14 @@
  *)
 
 open Lwt
-open Obigstore_core
-open Data_model
-open Protocol
-open Request
+open Obs_data_model
+open Obs_protocol
+open Obs_request
 
 module Make
   (D : sig
-     include Data_model.S
-     include Data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+     include Obs_data_model.S
+     include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
      val use_thread_pool : db -> bool -> unit
    end)
   (P : PAYLOAD) =
@@ -93,7 +92,7 @@ struct
         och : Lwt_io.output_channel;
         server : t;
         mutable in_buf : string;
-        out_buf : Bytea.t;
+        out_buf : Obs_bytea.t;
         debug : bool;
         mutable pending_reqs : int;
         wait_for_pending_reqs : unit Lwt_condition.t;
@@ -127,7 +126,7 @@ struct
       match_lwt read_request c ~request_id len crc with
           None -> service c
         | Some r ->
-            if Protocol.is_sync_req request_id then begin
+            if Obs_protocol.is_sync_req request_id then begin
               begin try_lwt
                 respond c ~buf:c.out_buf ~request_id r
               with
@@ -169,15 +168,15 @@ struct
     if String.length c.in_buf < len then c.in_buf <- String.create len;
     Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
     lwt crc2 = read_exactly c 4 in
-    let crc2' = Crc32c.substring c.in_buf 0 len in
+    let crc2' = Obs_crc32c.substring c.in_buf 0 len in
     let gb n = Char.code c.in_buf.[n] in
     let format_id = gb 0 + (gb 1 lsl 8) + (gb 2 lsl 16) + (gb 3 lsl 24) in
-      Crc32c.xor crc2 crc;
+      Obs_crc32c.xor crc2 crc;
       if crc2 <> crc2' then begin
         P.bad_request c.och ~request_id () >>
         return None
       end else begin
-        match Protocol_payload.Request_serialization.of_format_id format_id with
+        match Obs_protocol_payload.Obs_request_serialization.of_format_id format_id with
             `Extprot -> begin
               let m =
                 try Some (Extprot.Conv.deserialize Request.read ~offset:4 c.in_buf)
@@ -504,7 +503,7 @@ struct
         keyspaces = H.create 13;
         rev_keyspaces = H.create 13;
         ich; och; server; debug;
-        out_buf = Bytea.create 1024;
+        out_buf = Obs_bytea.create 1024;
         in_buf = String.create 128;
         pending_reqs = 0;
         wait_for_pending_reqs = Lwt_condition.create ();

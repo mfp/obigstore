@@ -33,7 +33,7 @@ let contents b = String.sub b.buffer 0 b.position
 
 let sub b ofs len =
   if ofs < 0 || len < 0 || ofs > b.position - len
-  then invalid_arg "Bytea.sub"
+  then invalid_arg "Obs_bytea.sub"
   else begin
     let r = String.create len in
     String.blit b.buffer ofs r 0 len;
@@ -43,13 +43,13 @@ let sub b ofs len =
 let blit src srcoff dst dstoff len =
   if len < 0 || srcoff < 0 || srcoff > src.position - len
              || dstoff < 0 || dstoff > (String.length dst) - len
-  then invalid_arg "Bytea.blit"
+  then invalid_arg "Obs_bytea.blit"
   else
     String.blit src.buffer srcoff dst dstoff len
 
 let nth b ofs =
   if ofs < 0 || ofs >= b.position then
-   invalid_arg "Bytea.nth"
+   invalid_arg "Obs_bytea.nth"
   else String.get b.buffer ofs
 
 let length b = b.position
@@ -67,7 +67,7 @@ let resize b more =
   if !new_len > Sys.max_string_length then begin
     if b.position + more <= Sys.max_string_length
     then new_len := Sys.max_string_length
-    else failwith "Bytea.add: cannot grow buffer"
+    else failwith "Obs_bytea.add: cannot grow buffer"
   end;
   let new_buffer = String.create !new_len in
   String.blit b.buffer 0 new_buffer 0 b.position;
@@ -82,7 +82,7 @@ let add_char b c =
 
 let add_substring b s offset len =
   if offset < 0 || len < 0 || offset > String.length s - len
-  then invalid_arg "Bytea.add_substring";
+  then invalid_arg "Obs_bytea.add_substring";
   let new_position = b.position + len in
   if new_position > b.length then resize b len;
   String.blit s offset b.buffer b.position len;

@@ -18,12 +18,11 @@
  *)
 
 open Lwt
-open Obigstore_core
-open Data_model
-open Request
+open Obs_data_model
+open Obs_request
 open Request
 
-module Make(P : Protocol.PAYLOAD) =
+module Make(P : Obs_protocol.PAYLOAD) =
 struct
   let byte s n = Char.code s.[n]
 
@@ -34,7 +33,7 @@ struct
                    let equal s1 s2 =
                      let len1 = String.length s1 in
                      let len2 = String.length s2 in
-                       len1 = len2 && String_util.strneq s1 0 s2 0 len1
+                       len1 = len2 && Obs_string_util.strneq s1 0 s2 0 len1
 
                    let hash s =
                      (byte s 0 lsl 0) lor
@@ -67,7 +66,7 @@ struct
     mutable closed_exn : exn;
     ich : Lwt_io.input_channel;
     och : Lwt_io.output_channel;
-    buf : Bytea.t;
+    buf : Obs_bytea.t;
     mutex : Lwt_mutex.t;
     pending_reqs : (module PENDING_RESPONSE) H.t;
     wait_for_pending_responses : ret Lwt_condition.t;
@@ -98,7 +97,7 @@ struct
     if not t.closed then begin
       t.closed <- true;
       ignore (try_lwt Lwt_io.abort t.ich >> Lwt_io.abort t.och with _ -> return ());
-      send_exn_to_waiters t (Protocol.Error Protocol.Closed);
+      send_exn_to_waiters t (Obs_protocol.Error Obs_protocol.Closed);
       H.clear t.pending_reqs;
     end
 
@@ -108,13 +107,13 @@ struct
       return s
 
   let rec get_response_loop t =
-    lwt request_id, len, crc = Protocol.read_header t.ich in
+    lwt request_id, len, crc = Obs_protocol.read_header t.ich in
     let pos = Lwt_io.position t.ich in
     let receiver = try_find t.pending_reqs request_id in
       match receiver with
           None ->
             (* skip response *)
-            Protocol.skip t.ich (len + 4)
+            Obs_protocol.skip t.ich (len + 4)
         | Some r ->
             let module R = (val r : PENDING_RESPONSE) in
             (* must read the trailing CRC even if there's an exn in f, lest we
@@ -146,8 +145,8 @@ struct
               end else begin
                 (* wrong length *)
                 wakeup_exn_safe R.wakeup
-                  (Protocol.Error
-                     (Protocol.Inconsistent_length (len, len')));
+                  (Obs_protocol.Error
+                     (Obs_protocol.Inconsistent_length (len, len')));
                 (* and we close the conn *)
                 close t
               end;
@@ -155,8 +154,8 @@ struct
 
   let make ich och =
     let t =
-      { ich; och; buf = Bytea.create 64;
-        closed = false; closed_exn = Protocol.Error Protocol.Closed;
+      { ich; och; buf = Obs_bytea.create 64;
+        closed = false; closed_exn = Obs_protocol.Error Obs_protocol.Closed;
         mutex = Lwt_mutex.create (); pending_reqs = H.create 13;
         async_req_id = "\001\000\000\000\000\000\000\000";
         wait_for_pending_responses = Lwt_condition.create ();
@@ -166,7 +165,7 @@ struct
       ignore begin try_lwt
         get_response_loop t
       with e ->
-        let exn = Protocol.Error (Protocol.Exception e) in
+        let exn = Obs_protocol.Error (Obs_protocol.Exception e) in
           send_exn_to_waiters t exn;
           t.closed_exn <- exn;
           close t;
@@ -180,11 +179,11 @@ struct
     else return ()
 
   let send_request t ~request_id req =
-    Bytea.clear t.buf;
-    Bytea.add_int32_le t.buf
-      (Protocol_payload.Request_serialization.format_id `Extprot);
+    Obs_bytea.clear t.buf;
+    Obs_bytea.add_int32_le t.buf
+      (Obs_protocol_payload.Obs_request_serialization.format_id `Extprot);
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
-    Protocol.write_msg t.och request_id t.buf
+    Obs_protocol.write_msg t.och request_id t.buf
 
   let sync_get_response (type a) t (f : Lwt_io.input_channel -> a Lwt.t) =
     let wait, wakeup = Lwt.task () in
@@ -195,13 +194,13 @@ struct
         let wakeup = wakeup
         let is_notification_wait = false
       end
-    in H.replace t.pending_reqs Protocol.sync_req_id (module R : PENDING_RESPONSE);
+    in H.replace t.pending_reqs Obs_protocol.sync_req_id (module R : PENDING_RESPONSE);
        wait
 
   let sync_request t req f =
     check_closed t >>
     Lwt_mutex.with_lock t.mutex
-      (fun () -> send_request t ~request_id:Protocol.sync_req_id req >>
+      (fun () -> send_request t ~request_id:Obs_protocol.sync_req_id req >>
                  sync_get_response t f)
 
   let incr_async_req_id t =

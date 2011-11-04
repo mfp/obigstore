@@ -16,7 +16,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
-open Obigstore_core
 
 module String = struct include String include BatString end
 
@@ -89,9 +88,9 @@ struct
 end
 
 let add_vint_and_ret_size dst n =
-  let off = Bytea.length dst in
-    Bytea.add_vint dst n;
-    Bytea.length dst - off
+  let off = Obs_bytea.length dst in
+    Obs_bytea.add_vint dst n;
+    Obs_bytea.length dst - off
 
 (* datum key format:
  * '1' vint(keyspace) vint(table_id) uint8(type) string(key) string(column)
@@ -103,20 +102,20 @@ let add_vint_and_ret_size dst n =
  * *)
 
 let encode_datum_key dst ks ~table ~key ~column ~timestamp =
-  Bytea.clear dst;
-  Bytea.add_char dst '1';
+  Obs_bytea.clear dst;
+  Obs_bytea.add_char dst '1';
   let ks_len = add_vint_and_ret_size dst ks in
   let t_len = add_vint_and_ret_size dst table in
-    Bytea.add_byte dst 0; (* type *)
-    Bytea.add_string dst key;
-    Bytea.add_string dst column;
-    Bytea.add_int64_complement_le dst timestamp;
+    Obs_bytea.add_byte dst 0; (* type *)
+    Obs_bytea.add_string dst key;
+    Obs_bytea.add_string dst column;
+    Obs_bytea.add_int64_complement_le dst timestamp;
     let klen_len = add_vint_and_ret_size dst (String.length key) in
     let clen_len = add_vint_and_ret_size dst (String.length column) in
-      Bytea.add_byte dst ((ks_len lsl 3) lor t_len);
-      Bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
-      Bytea.add_byte dst 0;
-      Bytea.add_byte dst version
+      Obs_bytea.add_byte dst ((ks_len lsl 3) lor t_len);
+      Obs_bytea.add_byte dst ((klen_len lsl 3) lor clen_len);
+      Obs_bytea.add_byte dst 0;
+      Obs_bytea.add_byte dst version
 
 let encode_table_successor dst ks table =
   encode_datum_key dst ks
@@ -130,18 +129,18 @@ let decode_timestamp (s : timestamp_buf) =
 
 let decode_timestamp' s =
   if String.length s <> 8 then
-    invalid_arg "Datum_encoding.decode_timestamp': want string of length 8";
+    invalid_arg "Obs_datum_encoding.decode_timestamp': want string of length 8";
   obigstore_decode_int64_complement_le s 0
 
 let encode_datum_key_to_string ks ~table ~key ~column ~timestamp =
-  let b = Bytea.create 13 in
+  let b = Obs_bytea.create 13 in
     encode_datum_key b ks ~table ~key ~column ~timestamp;
-    Bytea.contents b
+    Obs_bytea.contents b
 
 let encode_table_successor_to_string ks table =
-  let b = Bytea.create 13 in
+  let b = Obs_bytea.create 13 in
     encode_table_successor b ks table;
-    Bytea.contents b
+    Obs_bytea.contents b
 
 let decode_var_int_at s off =
   let rec loop s off shift n =

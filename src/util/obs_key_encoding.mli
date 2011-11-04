@@ -27,8 +27,6 @@
  * * [x < y] implies [enc x < enc y]
  *)
 
-open Obigstore_core
-
 type error =
     Unsatisfied_constraint of string
   | Incomplete_fragment of string
@@ -45,7 +43,7 @@ type self_delimited = [ property | `Self_delimited ]
   * [x] according to the [codec].
   * @raise Error(Unsatisfied_constraint _, _) if [x] doesn't satisfy a
   * constraint imposed by [codec]. *)
-val encode : ('a, _) codec -> Bytea.t -> 'a -> unit
+val encode : ('a, _) codec -> Obs_bytea.t -> 'a -> unit
 
 (** Similar to {!encode}, but directly returning a string. *)
 val encode_to_string : ('a, _) codec -> 'a -> string

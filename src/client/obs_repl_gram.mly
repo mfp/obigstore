@@ -19,11 +19,10 @@
 
 %{
 
-open Obigstore_core
-open Repl_common
-open Request
+open Obs_repl_common
+open Obs_request
 module R = Request
-module DM = Data_model
+module DM = Obs_data_model
 
 let all_keys =
   Key_range.Key_range { Range.first = None; up_to = None; reverse = false }
@@ -50,7 +49,7 @@ let col_range_of_multi_range = function
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
 %start input
-%type <Repl_common.req> input
+%type <Obs_repl_common.req> input
 
 %%
 

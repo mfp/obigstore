@@ -141,12 +141,12 @@ let make avg_periods =
       curr_writes = 0; curr_reads = 0; curr_bytes_wr = 0; curr_bytes_rd = 0;
       curr_cols_wr = 0; curr_cols_rd = 0; curr_seeks = 0; curr_near_seeks = 0;
     } in
-  let r = Weak_ref.make t in
+  let r = Obs_weak_ref.make t in
     ignore begin
       try_lwt
         let rec update_stats () =
           Lwt_unix.sleep 1.0 >>
-          match Weak_ref.get r with
+          match Obs_weak_ref.get r with
               None -> return ()
             | Some t -> update t; update_stats ()
         in update_stats ()

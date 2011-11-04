@@ -19,8 +19,7 @@
 
 open Printf
 open Lwt
-open Obigstore_core
-open Data_model
+open Obs_data_model
 
 module List = struct include BatList include List end
 module Option = BatOption
@@ -34,7 +33,7 @@ struct
   include BatString
 
   let compare x y =
-    String_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
+    Obs_string_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
 
 module LOCKS =
@@ -160,7 +159,7 @@ type db =
       db : L.db;
       keyspaces : (string, keyspace) Hashtbl.t;
       mutable use_thread_pool : bool;
-      load_stats : Load_stats.t;
+      load_stats : Obs_load_stats.t;
       writebatch : WRITEBATCH.t;
       mutable db_iter_pool : L.iterator Lwt_pool.t ref;
       (* We use an iterator pool to reuse iterators for read committed
@@ -176,14 +175,14 @@ and keyspace =
     ks_locks : LOCKS.t;
   }
 
-type backup_cursor = Backup.cursor
+type backup_cursor = Obs_backup.cursor
 
 let (|>) x f = f x
 
 let find_maybe h k = try Some (Hashtbl.find h k) with Not_found -> None
 
 let read_keyspace_tables db keyspace =
-  let module T = Datum_encoding.Keyspace_tables in
+  let module T = Obs_datum_encoding.Keyspace_tables in
   let h = Hashtbl.create 13 in
     L.iter_from
       (fun k v ->
@@ -200,7 +199,7 @@ let read_keyspaces db =
   let h = Hashtbl.create 13 in
     L.iter_from
       (fun k v ->
-         match Datum_encoding.decode_keyspace_table_name k with
+         match Obs_datum_encoding.decode_keyspace_table_name k with
              None -> false
            | Some keyspace_name ->
                let ks_db = db in
@@ -216,7 +215,7 @@ let read_keyspaces db =
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; ks_locks; };
                  true)
       db.db
-      Datum_encoding.keyspace_table_prefix;
+      Obs_datum_encoding.keyspace_table_prefix;
     h
 
 let close_db t =
@@ -231,19 +230,19 @@ let open_db
       ?(group_commit_period = 0.002) basedir =
   let db = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
-             ~comparator:Datum_encoding.custom_comparator basedir in
+             ~comparator:Obs_datum_encoding.custom_comparator basedir in
   let group_commit_period = max group_commit_period 0.001 in
   let db_iter_pool = ref (make_iter_pool db) in
   let writebatch =
     WRITEBATCH.make db db_iter_pool ~flush_period:group_commit_period
   in
     (* ensure we have a end_of_db record *)
-    if not (L.mem db Datum_encoding.end_of_db_key) then
-      L.put ~sync:true db Datum_encoding.end_of_db_key (String.make 8 '\000');
+    if not (L.mem db Obs_datum_encoding.end_of_db_key) then
+      L.put ~sync:true db Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
     let db =
       { basedir; db; keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
-        load_stats = Load_stats.make [1; 60; 300; 900];
+        load_stats = Obs_load_stats.make [1; 60; 300; 900];
         writebatch; db_iter_pool;
       } in
     let keyspaces = read_keyspaces db in
@@ -269,7 +268,7 @@ let register_keyspace t ks_name =
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
-      L.put ~sync:true t.db (Datum_encoding.keyspace_table_key ks_name) (string_of_int ks_id);
+      L.put ~sync:true t.db (Obs_datum_encoding.keyspace_table_key ks_name) (string_of_int ks_id);
       let ks =
         { ks_db = t; ks_id; ks_name;
           ks_tables = Hashtbl.create 13;
@@ -290,15 +289,15 @@ let keyspace_name ks = ks.ks_name
 let keyspace_id ks = ks.ks_id
 
 let it_next ks it =
-  Load_stats.record_near_seeks ks.ks_db.load_stats 1;
+  Obs_load_stats.record_near_seeks ks.ks_db.load_stats 1;
   IT.next it
 
 let it_prev ks it =
-  Load_stats.record_near_seeks ks.ks_db.load_stats 1;
+  Obs_load_stats.record_near_seeks ks.ks_db.load_stats 1;
   IT.prev it
 
 let it_seek ks it s off len =
-  Load_stats.record_seeks ks.ks_db.load_stats 1;
+  Obs_load_stats.record_seeks ks.ks_db.load_stats 1;
   IT.seek it s off len
 
 let list_tables ks =
@@ -309,11 +308,11 @@ let list_tables ks =
     match !table_r with
         -1 ->
           let datum_key =
-            Datum_encoding.encode_datum_key_to_string ks.ks_id
+            Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
               ~table:0 ~key:"" ~column:"" ~timestamp:Int64.min_int
           in it_seek ks it datum_key 0 (String.length datum_key);
       | table ->
-          let datum_key = Datum_encoding.encode_table_successor_to_string ks.ks_id table in
+          let datum_key = Obs_datum_encoding.encode_table_successor_to_string ks.ks_id table in
             it_seek ks it datum_key 0 (String.length datum_key); in
 
   let rec collect_tables acc =
@@ -321,13 +320,13 @@ let list_tables ks =
     if not (IT.valid it) then acc
     else begin
       let k = IT.get_key it in
-        if not (Datum_encoding.decode_datum_key
+        if not (Obs_datum_encoding.decode_datum_key
                   ~table_r
                   ~key_buf_r:None ~key_len_r:None
                   ~column_buf_r:None ~column_len_r:None
                   ~timestamp_buf:None
                   k (String.length k)) ||
-           Datum_encoding.get_datum_key_keyspace_id k <> ks.ks_id
+           Obs_datum_encoding.get_datum_key_keyspace_id k <> ks.ks_id
         then
           (* we have hit the end of the keyspace or the data area *)
           acc
@@ -346,10 +345,10 @@ let table_size_on_disk ks table_name =
       None -> return 0L
     | Some table ->
         let _from =
-          Datum_encoding.encode_datum_key_to_string ks.ks_id
+          Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
            ~table ~key:"" ~column:"" ~timestamp:Int64.min_int in
         let _to =
-          Datum_encoding.encode_datum_key_to_string ks.ks_id
+          Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
             ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
             ~timestamp:Int64.zero
         in detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
@@ -359,11 +358,11 @@ let key_range_size_on_disk ks ?first ?up_to table_name =
       None -> return 0L
     | Some table ->
         let _from =
-          Datum_encoding.encode_datum_key_to_string ks.ks_id
+          Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
             ~table ~key:(Option.default "" first) ~column:""
             ~timestamp:Int64.min_int in
         let _to =
-          Datum_encoding.encode_datum_key_to_string ks.ks_id
+          Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
             ~table
             ~key:(Option.default "\255\255\255\255\255\255" up_to)
             ~column:"\255\255\255\255\255\255"
@@ -435,7 +434,7 @@ type transaction =
       mutable backup_writebatch_size : int;
       outermost_tx : transaction;
       mutable locks : (string * Lwt_mutex.t option) M.t;
-      dump_buffer : Bytea.t;
+      dump_buffer : Obs_bytea.t;
     }
 
 let tx_key = Lwt.new_key ()
@@ -444,7 +443,7 @@ let register_new_table_and_add_to_writebatch_aux put_substring ks wb table_name 
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
   let table = last + 1 in
-  let k = Datum_encoding.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
+  let k = Obs_datum_encoding.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
   let v = string_of_int table in
     put_substring wb
       k 0 (String.length k) v 0 (String.length v);
@@ -470,7 +469,7 @@ let rec transaction_aux make_iter_pool ks f =
             backup_writebatch = lazy (L.Batch.make ());
             backup_writebatch_size = 0;
             outermost_tx = tx; locks = M.empty;
-            dump_buffer = Bytea.create 16;
+            dump_buffer = Obs_bytea.create 16;
           } in
         try_lwt
           lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
@@ -508,14 +507,14 @@ and commit_outermost_transaction ks tx =
       return ()
     else
       let b = Lazy.force tx.backup_writebatch in
-        Load_stats.record_writes tx.ks.ks_db.load_stats 1;
+        Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
         lwt () = detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b in
           reset_iter_pool ks.ks_db;
           return ()
     end >>
 
     (* write normal data and wait for group commit sync *)
-    let datum_key = Bytea.create 13 in
+    let datum_key = Obs_bytea.create 13 in
     let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
     let bytes_written = ref 0 in
     let cols_written = ref 0 in
@@ -532,13 +531,13 @@ and commit_outermost_transaction ks tx =
                      (fun key s ->
                         S.iter
                           (fun column ->
-                             Datum_encoding.encode_datum_key datum_key ks.ks_id
+                             Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                                ~table ~key ~column ~timestamp;
-                             let len = Bytea.length datum_key in
+                             let len = Obs_bytea.length datum_key in
                                incr cols_written;
                                bytes_written := !bytes_written + len;
                                WRITEBATCH.delete_substring b
-                                 (Bytea.unsafe_string datum_key) 0
+                                 (Obs_bytea.unsafe_string datum_key) 0
                                  len)
                           s)
                      m
@@ -558,14 +557,14 @@ and commit_outermost_transaction ks tx =
                        (* FIXME: should save timestamp provided in
                         * put_columns and use it here if it wasn't
                         * Auto_timestamp *)
-                       Datum_encoding.encode_datum_key datum_key ks.ks_id
+                       Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                          ~table ~key ~column ~timestamp;
-                       let klen = Bytea.length datum_key in
+                       let klen = Obs_bytea.length datum_key in
                        let vlen = String.length v in
                          incr cols_written;
                          bytes_written := !bytes_written + klen + vlen;
                          WRITEBATCH.put_substring b
-                           (Bytea.unsafe_string datum_key) 0 klen
+                           (Obs_bytea.unsafe_string datum_key) 0 klen
                            v 0 vlen)
                     m)
                m)
@@ -574,9 +573,9 @@ and commit_outermost_transaction ks tx =
       end in
     let stats = tx.ks.ks_db.load_stats in
     lwt () = wait_sync in
-      Load_stats.record_writes stats 1;
-      Load_stats.record_bytes_wr stats !bytes_written;
-      Load_stats.record_cols_wr stats !cols_written;
+      Obs_load_stats.record_writes stats 1;
+      Obs_load_stats.record_bytes_wr stats !bytes_written;
+      Obs_load_stats.record_cols_wr stats !cols_written;
       return ()
   end
 
@@ -623,7 +622,7 @@ let lock ks names = Lwt_list.iter_s (lock_one ks) names
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =
-  String.length v = !len && String_util.strneq v 0 !buf 0 !len
+  String.length v = !len && Obs_string_util.strneq v 0 !buf 0 !len
 
 let is_column_deleted tx table =
   let deleted_col_table = tx.deleted |> M.find_default M.empty table in
@@ -649,7 +648,7 @@ let is_column_deleted tx table =
 (* In [let f = exists_key tx table in ... f key], [f key] returns true iff
  * there's some column with the given key in the table named [table]. *)
 let with_exists_key tx table_name f =
-  let datum_key = Bytea.create 13 in
+  let datum_key = Obs_bytea.create 13 in
   let buf = ref "" in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
@@ -660,15 +659,15 @@ let with_exists_key tx table_name f =
 
   let exists_f it = begin fun key -> match find_maybe tx.ks.ks_tables table_name with
         Some table ->
-          Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
+          Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
             ~table ~key ~column:"" ~timestamp:Int64.min_int;
-          it_seek tx.ks it (Bytea.unsafe_string datum_key) 0 (Bytea.length datum_key);
+          it_seek tx.ks it (Obs_bytea.unsafe_string datum_key) 0 (Obs_bytea.length datum_key);
           if not (IT.valid it) then
             false
           else begin
             let len = IT.fill_key it buf in
             let ok =
-              Datum_encoding.decode_datum_key
+              Obs_datum_encoding.decode_datum_key
                 ~table_r ~key_buf_r ~key_len_r
                 ~column_buf_r ~column_len_r ~timestamp_buf:None
                 !buf len
@@ -715,13 +714,13 @@ let advance_until_next_key ~reverse next it
       if not (IT.valid it) then finished := true
       else begin
         let len = IT.fill_key it buf in
-          if not (Datum_encoding.decode_datum_key
+          if not (Obs_datum_encoding.decode_datum_key
                     ~table_r ~key_buf_r ~key_len_r
                     ~column_buf_r:None ~column_len_r:None
                     ~timestamp_buf:None !buf len) ||
-             Datum_encoding.get_datum_key_keyspace_id !buf <> ks_id ||
+             Obs_datum_encoding.get_datum_key_keyspace_id !buf <> ks_id ||
              (sign *
-              String_util.cmp_substrings
+              Obs_string_util.cmp_substrings
                 prev_key_buf 0 prev_key_len !key_buf 0 !key_len) < 0
           then
             finished := true
@@ -733,7 +732,7 @@ let advance_until_next_key ~reverse next it
 
 (* fold over cells whose key is in the range
  * { reverse; first = first_key; up_to = up_to_key }
- * with the semantics defined in Data_model
+ * with the semantics defined in Obs_data_model
  * *)
 let fold_over_data_aux it tx table_name f acc ?(first_column="")
       ~reverse ~first_key ~up_to_key =
@@ -743,7 +742,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
   let column_buf = ref "" and column_len = ref 0 in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
-  let timestamp_buf = Datum_encoding.make_timestamp_buf () in
+  let timestamp_buf = Obs_datum_encoding.make_timestamp_buf () in
   let some_timestamp_buf = Some timestamp_buf in
   let next_key_buf = ref "" and next_key_len = ref 0 in
   let next_key_buf_r = Some next_key_buf and next_key_len_r = Some next_key_len in
@@ -752,12 +751,12 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
       _, None -> (fun () -> false)
     | false, Some k -> (* normal *)
         (fun () ->
-           String_util.cmp_substrings
+           Obs_string_util.cmp_substrings
              !key_buf 0 !key_len
              k 0 (String.length k) >= 0)
     | true, Some k -> (* reverse *)
         (fun () ->
-           String_util.cmp_substrings
+           Obs_string_util.cmp_substrings
              !key_buf 0 !key_len
              k 0 (String.length k) < 0) in
 
@@ -767,7 +766,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
       s.[!key_len] <- '\000';
       s in
 
-  let datum_key_buf = Bytea.create 13 in
+  let datum_key_buf = Obs_bytea.create 13 in
   let table_id = ref (-2) in
 
   let rec do_fold_over_data acc =
@@ -776,13 +775,13 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
     else begin
       let len = IT.fill_key it buf in
         (* try to decode datum key, check if it's the same KS *)
-        if not (Datum_encoding.decode_datum_key
+        if not (Obs_datum_encoding.decode_datum_key
                   ~table_r
                   ~key_buf_r ~key_len_r
                   ~column_buf_r ~column_len_r
                   ~timestamp_buf:some_timestamp_buf
                   !buf len) ||
-           Datum_encoding.get_datum_key_keyspace_id !buf <> tx.ks.ks_id
+           Obs_datum_encoding.get_datum_key_keyspace_id !buf <> tx.ks.ks_id
         then
           (* we have hit the end of the keyspace or the data area *)
           acc
@@ -815,12 +814,12 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
                     with
                         `Finished -> ()
                       | `Need_seek ->
-                        Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
+                        Obs_datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
                           ~table:!table_id ~key:(next_key ())
                           ~column:"" ~timestamp:Int64.min_int;
                         it_seek tx.ks it
-                          (Bytea.unsafe_string datum_key_buf) 0
-                          (Bytea.length datum_key_buf)
+                          (Obs_bytea.unsafe_string datum_key_buf) 0
+                          (Obs_bytea.length datum_key_buf)
                   end
                 | Skip_key | Skip_key_with _ (* when reverse *) -> begin
                     match advance_until_next_key
@@ -835,12 +834,12 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
                       | `Need_seek ->
                           (* we jump to the first datum for the current key, then go
                            * one back *)
-                          Datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
+                          Obs_datum_encoding.encode_datum_key datum_key_buf tx.ks.ks_id
                             ~table:!table_id ~key:(String.sub !key_buf 0 !key_len)
                             ~column:"" ~timestamp:Int64.max_int;
                           it_seek tx.ks it
-                            (Bytea.unsafe_string datum_key_buf) 0
-                            (Bytea.length datum_key_buf);
+                            (Obs_bytea.unsafe_string datum_key_buf) 0
+                            (Obs_bytea.length datum_key_buf);
                           if IT.valid it then it_prev tx.ks it
                   end
                 | Finish_fold _ -> ()
@@ -859,7 +858,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
         (* jump to first entry *)
         if not reverse then begin
           let first_datum_key =
-            Datum_encoding.encode_datum_key_to_string tx.ks.ks_id ~table
+            Obs_datum_encoding.encode_datum_key_to_string tx.ks.ks_id ~table
               ~key:(Option.default "" first_key) ~column:first_column
               ~timestamp:Int64.min_int
           in
@@ -869,7 +868,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
               None ->
                 (* we go to the first datum of the next table, then back *)
                 let datum_key =
-                  Datum_encoding.encode_datum_key_to_string tx.ks.ks_id
+                  Obs_datum_encoding.encode_datum_key_to_string tx.ks.ks_id
                     ~table:(table + 1)
                     ~key:"" ~column:"" ~timestamp:Int64.min_int
                 in
@@ -878,7 +877,7 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
             | Some k ->
                 (* we go to the datum for the key, then back (it's exclusive) *)
                 let datum_key =
-                  Datum_encoding.encode_datum_key_to_string tx.ks.ks_id
+                  Obs_datum_encoding.encode_datum_key_to_string tx.ks.ks_id
                     ~table
                     ~key:k ~column:"" ~timestamp:Int64.min_int
                 in
@@ -951,8 +950,8 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
           (* if neither the key nor the column were deleted *)
           else begin
             incr keys_on_disk_kept;
-            Load_stats.record_bytes_rd tx.ks.ks_db.load_stats key_len;
-            Load_stats.record_cols_rd tx.ks.ks_db.load_stats 1;
+            Obs_load_stats.record_bytes_rd tx.ks.ks_db.load_stats key_len;
+            Obs_load_stats.record_cols_rd tx.ks.ks_db.load_stats 1;
             Skip_key_with (fold_f acc key_buf key_len);
           end
         end
@@ -1069,7 +1068,7 @@ let simple_column_range_selector = function
         (fun ~buf ~len ->
            List.exists
              (fun s ->
-                String_util.cmp_substrings s 0 (String.length s) buf 0 len = 0)
+                Obs_string_util.cmp_substrings s 0 (String.length s) buf 0 len = 0)
              l)
       else begin
         let s = S.of_list l in
@@ -1085,12 +1084,12 @@ let simple_column_range_selector = function
           None -> (fun ~buf ~len -> true)
         | Some x ->
             (fun ~buf ~len ->
-               String_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
+               Obs_string_util.cmp_substrings buf 0 len x 0 (String.length x) >= 0) in
       let cmp_up_to = match up_to with
           None -> (fun ~buf ~len -> true)
         | Some x ->
             (fun ~buf ~len ->
-               String_util.cmp_substrings buf 0 len x 0 (String.length x) < 0)
+               Obs_string_util.cmp_substrings buf 0 len x 0 (String.length x) < 0)
       in (fun ~buf ~len -> cmp_first ~buf ~len && cmp_up_to ~buf ~len)
 
 let column_range_selector = function
@@ -1118,7 +1117,7 @@ let column_range_selector_for_predicate = function
       simple_column_range_selector
         (Columns (S.to_list (columns_needed_for_predicate x)))
 
-let scmp = String_util.compare
+let scmp = Obs_string_util.compare
 
 let row_predicate_func = function
     None -> (fun _ -> true)
@@ -1194,7 +1193,7 @@ let get_slice_aux_discrete
                    let name = String.sub column_buf 0 column_len in
                    let timestamp = match decode_timestamps with
                        false -> No_timestamp
-                     | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
+                     | true -> Timestamp (Obs_datum_encoding.decode_timestamp timestamp_buf) in
                    let col = { name; data; timestamp; } in
                      let rev_cols =
                        (* we must check against if we have enough cols,
@@ -1297,15 +1296,15 @@ let get_slice_aux_continuous_no_predicate
 
   let first_pass = ref true in
   let keys_so_far = ref 0 in
-  let prev_key = Bytea.create 13 in
+  let prev_key = Obs_bytea.create 13 in
   let cols_in_this_key = ref 0 in
   let cols_kept = ref 0 in
 
   let fold_datum ((key_data_list, key_data) as acc)
         it ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf =
     let ((key_data_list, key_data) as acc') =
-      if String_util.cmp_substrings
-           (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
+      if Obs_string_util.cmp_substrings
+           (Obs_bytea.unsafe_string prev_key) 0 (Obs_bytea.length prev_key)
            key_buf 0 key_len = 0
       then
         acc
@@ -1317,15 +1316,15 @@ let get_slice_aux_continuous_no_predicate
             match key_data with
               _ :: _ ->
                 incr keys_so_far;
-                ((Bytea.contents prev_key, key_data) :: key_data_list, [])
+                ((Obs_bytea.contents prev_key, key_data) :: key_data_list, [])
             | [] ->
                 if not !first_pass && keep_columnless_keys then begin
                   incr keys_so_far;
-                  ((Bytea.contents prev_key, key_data) :: key_data_list, [])
+                  ((Obs_bytea.contents prev_key, key_data) :: key_data_list, [])
                 end else acc
           in
-            Bytea.clear prev_key;
-            Bytea.add_substring prev_key key_buf 0 key_len;
+            Obs_bytea.clear prev_key;
+            Obs_bytea.add_substring prev_key key_buf 0 key_len;
             acc'
       end
 
@@ -1355,7 +1354,7 @@ let get_slice_aux_continuous_no_predicate
         let col = String.sub column_buf 0 column_len in
         let timestamp = match decode_timestamps with
             false -> No_timestamp
-          | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
+          | true -> Timestamp (Obs_datum_encoding.decode_timestamp timestamp_buf) in
         let col_data = { name = col; data; timestamp; } in
 
         let key_data = col_data :: key_data in
@@ -1376,9 +1375,9 @@ let get_slice_aux_continuous_no_predicate
       if !keys_so_far >= max_keys then return l1
       else match d1 with
           [] when not !first_pass && keep_columnless_keys ->
-            return ((Bytea.contents prev_key, d1) :: l1)
+            return ((Obs_bytea.contents prev_key, d1) :: l1)
         | [] -> return l1
-        | cols -> return ((Bytea.contents prev_key, cols) :: l1) in
+        | cols -> return ((Obs_bytea.contents prev_key, cols) :: l1) in
 
   let rev_key_data_list2 =
     M.fold
@@ -1469,15 +1468,15 @@ let get_slice_aux_continuous_with_predicate
 
   let first_pass = ref true in
   let keys_so_far = ref 0 in
-  let prev_key = Bytea.create 13 in
+  let prev_key = Obs_bytea.create 13 in
   let cols_in_this_key = ref 0 in
   let cols_kept = ref 0 in
 
   let fold_datum ((key_data_list, key_data, pred_cols, missing_pred_cols) as acc)
         it ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf =
     let ((key_data_list, key_data, pred_cols, missing_pred_cols) as acc') =
-      if String_util.cmp_substrings
-           (Bytea.unsafe_string prev_key) 0 (Bytea.length prev_key)
+      if Obs_string_util.cmp_substrings
+           (Obs_bytea.unsafe_string prev_key) 0 (Obs_bytea.length prev_key)
            key_buf 0 key_len = 0
       then
         acc
@@ -1505,19 +1504,19 @@ let get_slice_aux_continuous_with_predicate
             match key_data with
               _ :: _ when eval_predicate pred_cols ->
                 incr keys_so_far;
-                ((Bytea.contents prev_key, key_data) :: key_data_list,
+                ((Obs_bytea.contents prev_key, key_data) :: key_data_list,
                  [], pred_cols_in_mem, missing_pred_cols)
             | _ :: _ -> (key_data_list, [], pred_cols_in_mem, missing_pred_cols)
             | [] ->
                 if not !first_pass && keep_columnless_keys &&
                    eval_predicate pred_cols then begin
                   incr keys_so_far;
-                  ((Bytea.contents prev_key, key_data) :: key_data_list,
+                  ((Obs_bytea.contents prev_key, key_data) :: key_data_list,
                    [], pred_cols_in_mem, missing_pred_cols)
                 end else (key_data_list, [], pred_cols_in_mem, missing_pred_cols)
           in
-            Bytea.clear prev_key;
-            Bytea.add_substring prev_key key_buf 0 key_len;
+            Obs_bytea.clear prev_key;
+            Obs_bytea.add_substring prev_key key_buf 0 key_len;
             acc'
       end
 
@@ -1549,7 +1548,7 @@ let get_slice_aux_continuous_with_predicate
             let name = String.sub column_buf 0 column_len in
             let timestamp = match decode_timestamps with
                 false -> No_timestamp
-              | true -> Timestamp (Datum_encoding.decode_timestamp timestamp_buf) in
+              | true -> Timestamp (Obs_datum_encoding.decode_timestamp timestamp_buf) in
             let col_data = { name; data; timestamp; } in
 
             let key_data =
@@ -1584,7 +1583,7 @@ let get_slice_aux_continuous_with_predicate
       if !keys_so_far >= max_keys then return l1
       else begin
         (* take predicate columns from tx data and add them to pred_cols *)
-        let last_key = Bytea.contents prev_key in
+        let last_key = Obs_bytea.contents prev_key in
         let pred_cols =
           let m = M.find_default M.empty table tx.added |>
                   M.find_default M.empty last_key
@@ -1719,9 +1718,9 @@ let record_column_reads load_stats key last_column columns =
       0
       columns
   in
-    Load_stats.record_bytes_rd load_stats
+    Obs_load_stats.record_bytes_rd load_stats
       (String.length key + String.length last_column + col_bytes);
-    Load_stats.record_cols_rd load_stats (List.length columns)
+    Obs_load_stats.record_cols_rd load_stats (List.length columns)
 
 let get_slice tx table
       ?(max_keys = max_int) ?max_columns
@@ -1764,7 +1763,7 @@ let get_slice tx table
             in S.cardinal columns
         | Column_range_union _ | All_columns -> max_int
   in
-    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
     get_slice_aux
       postproc_keydata get_keydata_key ~keep_columnless_keys:false tx table
       ~max_keys ~max_columns ~decode_timestamps key_range ?predicate column_range
@@ -1795,9 +1794,9 @@ let get_slice_values tx table
        ~decode_timestamps:false key_range
        (Column_range_union [Columns columns])
   in
-    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
-    Load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
-    Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
+    Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Obs_load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
+    Obs_load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
     return ret
 
 let get_slice_values_with_timestamps tx table
@@ -1830,9 +1829,9 @@ let get_slice_values_with_timestamps tx table
        ~decode_timestamps:true key_range
        (Column_range_union [Columns columns])
   in
-    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
-    Load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
-    Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
+    Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Obs_load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
+    Obs_load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
     return ret
 
 let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
@@ -1910,14 +1909,14 @@ let rec put_multi_columns_no_tx ks table data =
           (fun (key, columns) ->
              List.iter
                (fun c ->
-                  Datum_encoding.encode_datum_key datum_key ks.ks_id
+                  Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                     ~table ~key ~column:c.name ~timestamp;
-                  let klen = Bytea.length datum_key in
+                  let klen = Obs_bytea.length datum_key in
                   let vlen = String.length c.data in
                     incr cols_written;
                     bytes_written := !bytes_written + klen + vlen;
                     WRITEBATCH.put_substring b
-                      (Bytea.unsafe_string datum_key) 0 klen
+                      (Obs_bytea.unsafe_string datum_key) 0 klen
                       c.data 0 vlen)
                columns)
           data;
@@ -1925,12 +1924,12 @@ let rec put_multi_columns_no_tx ks table data =
       end in
   lwt () = wait_sync in
   let stats = ks.ks_db.load_stats in
-    Load_stats.record_writes stats 1;
-    Load_stats.record_bytes_wr stats !bytes_written;
-    Load_stats.record_cols_wr stats !cols_written;
+    Obs_load_stats.record_writes stats 1;
+    Obs_load_stats.record_bytes_wr stats !bytes_written;
+    Obs_load_stats.record_cols_wr stats !cols_written;
     return ()
 
-and put_multi_columns_no_tx_buf = Bytea.create 10
+and put_multi_columns_no_tx_buf = Obs_bytea.create 10
 
 let delete_columns tx table key cols =
   tx.added <-
@@ -1966,9 +1965,9 @@ let delete_key tx table key =
           return ()
 
 let dump tx ?(format = 0) ?only_tables ?offset () =
-  let open Backup in
+  let open Obs_backup in
   let max_chunk = 65536 in
-  let module ENC = (val Backup.encoder format : Backup.ENCODER) in
+  let module ENC = (val Obs_backup.encoder format : Obs_backup.ENCODER) in
   let enc = ENC.make ~buffer:tx.dump_buffer () in
   lwt pending_tables = match offset with
       Some c -> return c.bc_remaining_tables
@@ -2003,7 +2002,7 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
   let rec collect_data ~curr_key ~curr_col = function
       [] ->
         if ENC.is_empty enc then return None
-        else return (Some (Bytea.contents (ENC.finish enc), None))
+        else return (Some (Obs_bytea.contents (ENC.finish enc), None))
     | curr_table :: tl as tables ->
         lwt _ =
           fold_over_data tx curr_table fold_datum curr_table
@@ -2014,43 +2013,43 @@ let dump tx ?(format = 0) ?only_tables ?offset () =
             let cursor =
               { bc_remaining_tables = tables; bc_key = !next_key;
                 bc_column = !next_col; }
-            in return (Some (Bytea.contents (ENC.finish enc), Some cursor))
+            in return (Some (Obs_bytea.contents (ENC.finish enc), Some cursor))
 
           (* we don't have enough data yet, move to next table *)
           end else begin
             collect_data ~curr_key:None ~curr_col:None tl
           end in
   lwt ret = collect_data ~curr_key ~curr_col pending_tables in
-    Load_stats.record_reads tx.ks.ks_db.load_stats 1;
-    Load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
+    Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
+    Obs_load_stats.record_cols_rd tx.ks.ks_db.load_stats !cols_read;
     Option.may
       (fun (d, _) ->
-         Load_stats.record_bytes_rd tx.ks.ks_db.load_stats (String.length d))
+         Obs_load_stats.record_bytes_rd tx.ks.ks_db.load_stats (String.length d))
       ret;
     return ret
 
 let load tx data =
-  Load_stats.record_bytes_wr tx.ks.ks_db.load_stats (String.length data);
-  Load_stats.record_writes tx.ks.ks_db.load_stats 1;
+  Obs_load_stats.record_bytes_wr tx.ks.ks_db.load_stats (String.length data);
+  Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
   let cols_written = ref 0 in
   let wb = Lazy.force tx.backup_writebatch in
   let enc_datum_key datum_key ~table:table_name ~key ~column ~timestamp =
     incr cols_written;
     match find_maybe tx.ks.ks_tables table_name with
-        Some table -> Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
+        Some table -> Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                         ~table ~key ~column ~timestamp
       | None ->
           (* register table first *)
           let table =
             register_new_table_and_add_to_writebatch tx.ks wb table_name
-          in Datum_encoding.encode_datum_key datum_key tx.ks.ks_id
+          in Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                ~table ~key ~column ~timestamp in
 
-  let ok = Backup.load enc_datum_key wb data in
+  let ok = Obs_backup.load enc_datum_key wb data in
     if not ok then
       return false
     else begin
-      Load_stats.record_cols_wr tx.ks.ks_db.load_stats !cols_written;
+      Obs_load_stats.record_cols_wr tx.ks.ks_db.load_stats !cols_written;
       tx.backup_writebatch_size <- tx.backup_writebatch_size + String.length data;
       begin
         (* we check if there's enough data in this batch, and write it if so *)
@@ -2069,10 +2068,10 @@ let load tx data =
     end
 
 let load_stats tx =
-  return (Load_stats.stats tx.ks.ks_db.load_stats)
+  return (Obs_load_stats.stats tx.ks.ks_db.load_stats)
 
-let cursor_of_string = Backup.cursor_of_string
-let string_of_cursor = Backup.string_of_cursor
+let cursor_of_string = Obs_backup.cursor_of_string
+let string_of_cursor = Obs_backup.string_of_cursor
 
 let with_transaction ks f =
   match Lwt.get tx_key with

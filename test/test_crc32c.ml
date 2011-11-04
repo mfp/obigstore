@@ -20,7 +20,6 @@
 open Printf
 open Test_00util
 open OUnit
-open Obigstore_core
 
 let test_vectors =
   [
@@ -35,21 +34,21 @@ let test_vectors =
 
 let aeq_crc expected input =
   let check = assert_equal ~printer:to_hex in
-    check ~msg:"Crc32c.string" expected (Crc32c.string input);
-    check ~msg:"Crc32c.substring" expected
-      (Crc32c.substring input 0 (String.length input));
-    let crc = Crc32c.create () in
+    check ~msg:"Obs_crc32c.string" expected (Obs_crc32c.string input);
+    check ~msg:"Obs_crc32c.substring" expected
+      (Obs_crc32c.substring input 0 (String.length input));
+    let crc = Obs_crc32c.create () in
     let check_with_update () =
       for i = 0 to String.length input - 1 do
-        Crc32c.update crc input i 1;
+        Obs_crc32c.update crc input i 1;
       done;
-      check ~msg:"Crc32c.update followed by result"
-        expected (Crc32c.result crc);
-      check ~msg:"Crc32c.update followed by unsafe_result"
-        expected (Crc32c.unsafe_result crc)
+      check ~msg:"Obs_crc32c.update followed by result"
+        expected (Obs_crc32c.result crc);
+      check ~msg:"Obs_crc32c.update followed by unsafe_result"
+        expected (Obs_crc32c.unsafe_result crc)
     in
       check_with_update ();
-      Crc32c.reset crc;
+      Obs_crc32c.reset crc;
       check_with_update ()
 
 let test_crc32c () =
@@ -60,4 +59,4 @@ let test_crc32c () =
   in List.iter test test_vectors
 
 let () =
-  register_tests "Crc32c" ["test vectors" >:: test_crc32c]
+  register_tests "Obs_crc32c" ["test vectors" >:: test_crc32c]

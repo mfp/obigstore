@@ -18,7 +18,7 @@
  *)
 
 {
- open Repl_gram
+ open Obs_repl_gram
 
  let keyword_table = Hashtbl.create 13
 

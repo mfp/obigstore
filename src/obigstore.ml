@@ -19,10 +19,8 @@
 
 open Printf
 open Lwt
-open Obigstore_core
-open Obigstore_server
 
-module S = Server.Make(Storage)(Protocol_payload.Version_0_0_0)
+module S = Obs_server.Make(Obs_storage)(Obs_protocol_payload.Version_0_0_0)
 
 let port = ref 12050
 let db_dir = ref None
@@ -64,7 +62,7 @@ let () =
         None -> Arg.usage params usage_message;
                 exit 1
       | Some dir ->
-          let db = Storage.open_db
+          let db = Obs_storage.open_db
                      ~group_commit_period:!gcommit_period dir
                      ~write_buffer_size:!write_buffer_size
                      ~block_size:!block_size

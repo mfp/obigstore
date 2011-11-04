@@ -3,7 +3,7 @@
 /ob_dump
 /ob_repl
 /toplevel
-/core/request.ml
-/client/repl_gram.ml
-/client/repl_gram.mli
-/client/repl_lex.ml
+/core/obs_request.ml
+/client/obs_repl_gram.ml
+/client/obs_repl_gram.mli
+/client/obs_repl_lex.ml

@@ -1,18 +1,13 @@
-OCAMLINCLUDES += ..
+OCAMLINCLUDES += ../core
 OCAML_LIBS[] += ../obigstore_core
 
 OBJECTS[] =
-  ob_util
-  protocol_client
-  repl_common
-  repl_gram
-  repl_lex
+  obs_util
+  obs_protocol_client
+  obs_repl_common
+  obs_repl_gram
+  obs_repl_lex
 
-OCamlGeneratedFiles(repl_gram.ml repl_gram.mli repl_lex.ml)
+OCamlGeneratedFiles(obs_repl_gram.ml obs_repl_gram.mli obs_repl_lex.ml)
 
-section
-    OCAMLFLAGS += -for-pack Obigstore_client
-    CamlSources($(OBJECTS)):
-
-OCamlPackage(obigstore_client, $(OBJECTS))
-OCamlLibrary(obigstore_client, obigstore_client)
+OCamlLibrary(obigstore_client, $(OBJECTS))

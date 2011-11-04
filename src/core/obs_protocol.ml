@@ -19,7 +19,7 @@
 
 open Printf
 open Lwt
-open Data_model
+open Obs_data_model
 
 type error =
     Internal_error | Closed | Corrupted_frame | Bad_request
@@ -47,13 +47,13 @@ let string_of_error = function
 
 let () =
   Printexc.register_printer
-    (function Error x -> Some (sprintf "Protocol.Error %s" (string_of_error x))
+    (function Error x -> Some (sprintf "Obs_protocol.Error %s" (string_of_error x))
        | _ -> None)
 
 let sync_req_id = String.make 8 '\000'
 
 let is_sync_req x = x ==
-  sync_req_id || String_util.strneq x 0 sync_req_id 0 8
+  sync_req_id || Obs_string_util.strneq x 0 sync_req_id 0 8
 
 let skip_buf = String.create 4096
 
@@ -74,11 +74,11 @@ let head = String.create 16
 let read_header ich =
   Lwt_io.read_into_exactly ich head 0 16 >>
   let crc = String.sub head 12 4 in
-    if Crc32c.substring head 0 12 <> crc then
+    if Obs_crc32c.substring head 0 12 <> crc then
       raise_lwt (Error Corrupted_frame)
     else begin
       let req_id =
-        if String_util.cmp_substrings sync_req_id 0 8 head 0 8 = 0 then
+        if Obs_string_util.cmp_substrings sync_req_id 0 8 head 0 8 = 0 then
           sync_req_id
         else
           String.sub head 0 8 in
@@ -97,22 +97,22 @@ let write_msg ?(flush=false) och req_id msg =
   (* FIXME: ensure req_id's size is 8 *)
   Lwt_io.atomic
     (fun och ->
-      let header = Bytea.create 12 in
-      let len = Bytea.length msg in
-        Bytea.add_string header req_id;
-        Bytea.add_int32_le header len;
-        let crc = Crc32c.substring (Bytea.unsafe_string header) 0 12 in
-          Lwt_io.write_from_exactly och (Bytea.unsafe_string header) 0 12 >>
+      let header = Obs_bytea.create 12 in
+      let len = Obs_bytea.length msg in
+        Obs_bytea.add_string header req_id;
+        Obs_bytea.add_int32_le header len;
+        let crc = Obs_crc32c.substring (Obs_bytea.unsafe_string header) 0 12 in
+          Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string header) 0 12 >>
           Lwt_io.write_from_exactly och crc 0 4 >>
-          Lwt_io.write_from_exactly och (Bytea.unsafe_string msg) 0 len >>
-          let crc2 = Crc32c.substring (Bytea.unsafe_string msg) 0 len in
-            Crc32c.xor crc2 crc;
+          Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string msg) 0 len >>
+          let crc2 = Obs_crc32c.substring (Obs_bytea.unsafe_string msg) 0 len in
+            Obs_crc32c.xor crc2 crc;
             Lwt_io.write och crc2 >>
             (if flush then Lwt_io.flush och else return ()))
     och
 
 type 'a writer =
-  ?buf:Bytea.t -> Lwt_io.output_channel -> request_id:request_id -> 'a -> unit Lwt.t
+  ?buf:Obs_bytea.t -> Lwt_io.output_channel -> request_id:request_id -> 'a -> unit Lwt.t
 type 'a reader = Lwt_io.input_channel -> 'a Lwt.t
 
 type backup_cursor = string
@@ -143,7 +143,7 @@ sig
   val return_ok : unit writer
   val return_backup_dump : (string * backup_cursor option) option writer
   val return_backup_load_result : bool writer
-  val return_load_stats : Load_stats.stats writer
+  val return_load_stats : Obs_load_stats.stats writer
   val return_exist_result : bool list writer
   val return_notifications : string list writer
 
@@ -165,7 +165,7 @@ sig
   val read_ok : unit reader
   val read_backup_dump : (string * backup_cursor option) option reader
   val read_backup_load_result : bool reader
-  val read_load_stats : Load_stats.stats reader
+  val read_load_stats : Obs_load_stats.stats reader
   val read_exist_result : bool list reader
   val read_notifications : string list reader
 end

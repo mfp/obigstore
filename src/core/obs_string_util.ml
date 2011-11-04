@@ -33,7 +33,7 @@ let rec strneq s1 o1 s2 o2 = function
 let cmp_substrings s1 o1 l1 s2 o2 l2 =
   if o1 < 0 || l1 < 0 || o1 + l1 > String.length s1 ||
      o2 < 0 || l2 < 0 || o2 + l2 > String.length s2 then
-    invalid_arg "String_util.cmp_substrings";
+    invalid_arg "Obs_string_util.cmp_substrings";
   let rec loop_cmp s1 p1 l1 s2 p2 l2 = function
       0 -> l1 - l2
     | n ->

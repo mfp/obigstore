@@ -18,7 +18,6 @@
  *)
 
 open Printf
-open Obigstore_core
 
 external decode_int64_be :
   string -> int -> Int64.t = "obigstore_decode_int64_be"
@@ -45,10 +44,10 @@ let () =
                                      (string_of_error x) where)
        | _ -> None)
 
-type ('a, 'prop) encoder = Bytea.t -> 'a -> unit
+type ('a, 'prop) encoder = Obs_bytea.t -> 'a -> unit
 
 (* [decode s off len scratch new_offset] *)
-type ('a, 'prop) decoder = string -> int -> int -> Bytea.t -> int ref -> 'a
+type ('a, 'prop) decoder = string -> int -> int -> Obs_bytea.t -> int ref -> 'a
 
 type ('a, 'prop) codec =
     {
@@ -63,23 +62,23 @@ type self_delimited = [ property | `Self_delimited ]
 let encode c b x = c.encode b x
 
 let encode_to_string c x =
-  let b = Bytea.create 13 in
+  let b = Obs_bytea.create 13 in
     encode c b x;
-    Bytea.contents b
+    Obs_bytea.contents b
 
 let dummy_ref = ref 0
-let dummy_scratch = Bytea.create 13
+let dummy_scratch = Obs_bytea.create 13
 let decode c s off len = c.decode s off len dummy_scratch dummy_ref
 let decode_string c s = decode c s 0 (String.length s)
 
 let pp c x = c.pp x
 
-let error where e = raise (Error (e, "Key_encoding." ^ where))
+let error where e = raise (Error (e, "Obs_key_encoding." ^ where))
 
 let invalid_off_len ~fname s off len =
   raise
     (Invalid_argument
-       (sprintf "Key_encoding.%s decoding: \
+       (sprintf "Obs_key_encoding.%s decoding: \
                  invalid offset (%d) or length (%d) in string of length %d"
           fname off len (String.length s)))
 
@@ -88,7 +87,7 @@ let check_off_len fname s off len =
     invalid_off_len ~fname s off len
 
 let string =
-  let encode = Bytea.add_string in
+  let encode = Obs_bytea.add_string in
   let decode s off len scratch n =
     check_off_len "string" s off len;
     n := off + len;
@@ -102,10 +101,10 @@ let self_delimited_string =
   let encode b s =
     for i = 0 to String.length s - 1 do
       match String.unsafe_get s i with
-          c when c <> '\000' -> Bytea.add_char b c
-        | _ (* \000 *) -> Bytea.add_string b "\000\001"
+          c when c <> '\000' -> Obs_bytea.add_char b c
+        | _ (* \000 *) -> Obs_bytea.add_string b "\000\001"
     done;
-    Bytea.add_string b "\000\000" in
+    Obs_bytea.add_string b "\000\000" in
 
   let decode s off len scratch n =
     check_off_len "self_delimited_string" s off len;
@@ -113,17 +112,17 @@ let self_delimited_string =
     let finished = ref false in
     let state = ref Normal in
     let b = scratch in
-      Bytea.clear b;
+      Obs_bytea.clear b;
       n := off;
       while !n < max && not !finished do
         begin match !state with
             Normal -> begin match String.unsafe_get s !n with
-                c when c <> '\000' -> Bytea.add_char b c
+                c when c <> '\000' -> Obs_bytea.add_char b c
               | _ (* \000 *) -> state := Got_zero
             end
           | Got_zero -> match String.unsafe_get s !n with
                 '\000' -> finished := true; state := Normal
-              | '\001' -> Bytea.add_char b '\000'; state := Normal;
+              | '\001' -> Obs_bytea.add_char b '\000'; state := Normal;
               | _ -> error "self_delimited_string.decode"
                        (Bad_encoding "self_delimited_string")
         end;
@@ -132,7 +131,7 @@ let self_delimited_string =
       if !state <> Normal then
         error "self_delimited_string.decode"
           (Bad_encoding "self_delimited_string");
-      Bytea.contents b in
+      Obs_bytea.contents b in
 
   let pp = sprintf "%S"
   in
@@ -145,8 +144,8 @@ let stringz =
       ignore (String.index s '\000');
       error "stringz.encode" (Unsatisfied_constraint "non null")
     with Not_found ->
-      Bytea.add_string b s;
-      Bytea.add_char b '\000' in
+      Obs_bytea.add_string b s;
+      Obs_bytea.add_char b '\000' in
 
   let decode s off len scratch n =
     check_off_len "stringz" s off len;
@@ -167,7 +166,7 @@ let stringz =
     { encode; decode; pp; }
 
 let bool =
-  let encode b x = Bytea.add_byte b (if x then 1 else 0) in
+  let encode b x = Obs_bytea.add_byte b (if x then 1 else 0) in
   let decode s off len scratch n =
     check_off_len "bool" s off len;
     if len < 1 then invalid_off_len ~fname:"bool" s off len;
@@ -177,14 +176,14 @@ let bool =
     {encode; decode; pp = string_of_bool; }
 
 let stringz_unsafe =
-  let encode b s = Bytea.add_string b s; Bytea.add_byte b 0 in
+  let encode b s = Obs_bytea.add_string b s; Obs_bytea.add_byte b 0 in
     { stringz with encode; }
 
 let positive_int64 =
   let encode b n =
     if Int64.compare n 0L < 0 then
       error "positive_int64.encode" (Unsatisfied_constraint "negative Int64.t");
-    Bytea.add_int64_be b n in
+    Obs_bytea.add_int64_be b n in
 
   let decode s off len scratch n =
     check_off_len "int64" s off len;
@@ -199,7 +198,7 @@ let positive_int64_complement =
     if Int64.compare n 0L < 0 then
       error "positive_int64_complement.encode"
         (Unsatisfied_constraint "negative Int64.t");
-    Bytea.add_int64_complement_be b n in
+    Obs_bytea.add_int64_complement_be b n in
 
   let decode s off len scratch n =
     check_off_len "int64" s off len;

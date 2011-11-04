@@ -1,6 +1,5 @@
 
-open Obigstore_core
-open Request
+open Obs_request
 
 type req =
     Command of Request.request

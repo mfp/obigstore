@@ -1,16 +1,11 @@
-OCAMLINCLUDES += ..
+OCAMLINCLUDES += ../core
 
 OBJECTS[] =
-  backup
-  datum_encoding
-  protocol_server
-  server
-  storage
+  obs_backup
+  obs_datum_encoding
+  obs_protocol_server
+  obs_server
+  obs_storage
 
-section
-    OCAMLFLAGS += -for-pack Obigstore_server
-    CamlSources($(OBJECTS)):
-
-OCamlPackage(obigstore_server, $(OBJECTS))
-OCamlLibrary(obigstore_server, obigstore_server)
+OCamlLibrary(obigstore_server, $(OBJECTS))
 

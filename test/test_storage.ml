@@ -18,21 +18,20 @@
  *)
 
 open Test_00util
-open Obigstore_server
 
 module TEST =
   Test_data_model.Run_test
-    (Storage)
+    (Obs_storage)
     (struct
-       let id = "Storage"
+       let id = "Obs_storage"
 
        let with_db f =
          let dir = make_temp_dir () in
-         let db = Storage.open_db dir in
+         let db = Obs_storage.open_db dir in
            Lwt_unix.run begin
              try_lwt
                f db
              finally
-               Storage.close_db db
+               Obs_storage.close_db db
            end
      end)

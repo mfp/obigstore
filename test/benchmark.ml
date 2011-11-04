@@ -19,16 +19,13 @@
 
 open Lwt
 open Printf
-open Obigstore_core
-open Obigstore_client
-open Obigstore_server
 
-module D = Storage
-module DM = Data_model
+module D = Obs_storage
+module DM = Obs_data_model
 module List = struct include BatList include List end
 
 module Make
-  (D : Data_model.S)
+  (D : Obs_data_model.S)
   (C : sig
      val is_remote : bool
      val make_tmp_db : unit -> D.db Lwt.t
@@ -408,12 +405,12 @@ let params =
           "N Number of values to insert (default: 100000)\n"
     ]
 
-module CLIENT = Protocol_client.Make(Protocol_payload.Version_0_0_0)
+module CLIENT = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 
 let usage_message = "Usage: benchmark [options]\n"
 
-module BM_Storage =
-  Make(Storage)
+module BM_Obs_storage =
+  Make(Obs_storage)
     (struct
        let make_tmp_db () =
          let tmp_dir = match !db_dir with
@@ -430,7 +427,7 @@ let () =
   Arg.parse params ignore usage_message;
   if not !remote_test then
     Lwt_unix.run
-      (BM_Storage.run
+      (BM_Obs_storage.run
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
          ~complex_payload:!complex_payload
          ~batch_size:!batch_size

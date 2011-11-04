@@ -4,15 +4,17 @@ OCAMLPACKS[] += unix extlib threads oUnit
 OCAMLFLAGS += $(mapprefix -cclib, $(addprefix -L, $(LD_PATHS)))
 OCAML_BYTE_LINK_FLAGS =
 
-OCAMLINCLUDES += ../src ../src/libs/ocaml-leveldb/src
+OCAMLINCLUDES += \
+    ../src ../src/core ../src/client ../src/server ../src/util \
+    ../src/libs/ocaml-leveldb/src
 
 OCAML_LIBS[] +=
     ../src/libs/ocaml-leveldb/src/leveldb
     ../src/libs/extprot/runtime/extprot
-    ../src/obigstore_core
-    ../src/obigstore_client
-    ../src/obigstore_server
-    ../src/obigstore_util
+    ../src/core/obigstore_core
+    ../src/client/obigstore_client
+    ../src/server/obigstore_server
+    ../src/util/obigstore_util
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
 OCamlProgram(benchmark, test_00util benchmark)

@@ -20,18 +20,16 @@
 open Printf
 open Test_00util
 open OUnit
-open Obigstore_core
-open Obigstore_util
 
-module K = Key_encoding
+module K = Obs_key_encoding
 
 let check_roundtrip codec x =
-  let b = Bytea.create 13 in
+  let b = Obs_bytea.create 13 in
   let printer x =
     sprintf "%s (encoded as %S)" (K.pp codec x) (K.encode_to_string codec x)
   in
     K.encode codec b x;
-    aeq printer x (K.decode_string codec (Bytea.contents b))
+    aeq printer x (K.decode_string codec (Obs_bytea.contents b))
 
 let comparison = function
     n when n < 0 -> `LT
@@ -70,7 +68,7 @@ let test_stringz () =
     try
       check_roundtrip K.stringz "a\000";
       assert_failure "Expected Unsatisfied_constraint error"
-    with K.Error (K.Unsatisfied_constraint _, "Key_encoding.stringz.encode") -> ()
+    with K.Error (K.Unsatisfied_constraint _, "Obs_key_encoding.stringz.encode") -> ()
 
 let test_self_delimited_string () =
   let codec = K.self_delimited_string in
@@ -174,4 +172,4 @@ let tests =
   ]
 
 let () =
-  register_tests "Key_encoding" tests
+  register_tests "Obs_key_encoding" tests

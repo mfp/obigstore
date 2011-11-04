@@ -18,11 +18,11 @@
  *)
 
 open Lwt
-open Data_model
+open Obs_data_model
 
 module Option = BatOption
 
-module Request_serialization =
+module Obs_request_serialization =
 struct
   type t = [`Raw | `Extprot | `Unknown]
 
@@ -36,12 +36,12 @@ struct
     | `Extprot -> 1
 end
 
-module Version_0_0_0 : Protocol.PAYLOAD =
+module Version_0_0_0 : Obs_protocol.PAYLOAD =
 struct
 
   module E =
   struct
-    open Bytea
+    open Obs_bytea
 
     let add_int32_le = add_int32_le
     let add_status = add_int32_le
@@ -106,13 +106,13 @@ struct
 
   let null_timestamp = String.make 8 '\255'
 
-  let writer f ?(buf=Bytea.create 16) och ~request_id x =
-    Bytea.clear buf;
+  let writer f ?(buf=Obs_bytea.create 16) och ~request_id x =
+    Obs_bytea.clear buf;
     f buf x;
-    Protocol.write_msg och request_id buf
+    Obs_protocol.write_msg och request_id buf
 
   let reader f ich =
-    let open Protocol in
+    let open Obs_protocol in
     match_lwt D.get_status ich with
         0 -> f ich
       | -1 -> raise_lwt (Error Bad_request)
@@ -338,13 +338,13 @@ struct
     writer
       (fun b stats ->
          E.add_status b 0;
-         E.add_string b (Extprot.Conv.serialize Request.Load_stats.write stats))
+         E.add_string b (Extprot.Conv.serialize Obs_request.Load_stats.write stats))
 
   let read_load_stats =
     reader
       (fun ich ->
          lwt s = D.get_string ich in
-           return (Extprot.Conv.deserialize Request.Load_stats.read s))
+           return (Extprot.Conv.deserialize Obs_request.Load_stats.read s))
 
   let return_exist_result =
     writer

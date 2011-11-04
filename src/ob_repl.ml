@@ -19,18 +19,16 @@
 
 open Lwt
 open Printf
-open Obigstore_core
-open Obigstore_client
-open Request
-open Repl_common
-open Data_model
+open Obs_request
+open Obs_repl_common
+open Obs_data_model
 
 module Option = BatOption
 
 exception Commit_exn
 exception Abort_exn
 
-module D = Protocol_client.Make(Protocol_payload.Version_0_0_0)
+module D = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 
 let keyspace = ref ""
 let server = ref "127.0.0.1"
@@ -344,8 +342,8 @@ let execute ks db loop r =
         puts "%.0f writes, %.0f reads" r.writes r.reads;
         puts "%.0f columns written, %.0f columns read" r.cols_wr r.cols_rd;
         puts "%s written, %s read"
-          (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_wr))
-          (Ob_util.format_speed 0. 1. (Int64.of_float r.bytes_rd));
+          (Obs_util.format_speed 0. 1. (Int64.of_float r.bytes_wr))
+          (Obs_util.format_speed 0. 1. (Int64.of_float r.bytes_rd));
         puts "%.0f seeks, %.0f near seeks" r.seeks r.near_seeks; in
       let dt = stats.uptime in
         puts "Totals:";
@@ -357,10 +355,10 @@ let execute ks db loop r =
           stats.total_cols_wr (Int64.to_float stats.total_cols_wr /. dt)
           stats.total_cols_rd (Int64.to_float stats.total_cols_rd /. dt);
         puts "%s written (%s/s), %s read (%s/s)"
-          (Ob_util.format_size 1.0 stats.total_bytes_wr)
-          (Ob_util.format_size (1.0 /. dt) stats.total_bytes_wr)
-          (Ob_util.format_size 1.0 stats.total_bytes_rd)
-          (Ob_util.format_size (1.0 /. dt) stats.total_bytes_rd);
+          (Obs_util.format_size 1.0 stats.total_bytes_wr)
+          (Obs_util.format_size (1.0 /. dt) stats.total_bytes_wr)
+          (Obs_util.format_size 1.0 stats.total_bytes_rd)
+          (Obs_util.format_size (1.0 /. dt) stats.total_bytes_rd);
         puts "%Ld seeks (%.0f/s), %Ld near seeks (%.0f/s)"
           stats.total_seeks
           (Int64.to_float stats.total_seeks /. dt)
@@ -421,7 +419,7 @@ module S = Set.Make(Text)
 
 let set_of_list l = List.fold_right S.add l S.empty
 
-let keyword_completions = set_of_list (List.map fst Repl_lex.keywords)
+let keyword_completions = set_of_list (List.map fst Obs_repl_lex.keywords)
 let directive_completions = set_of_list Directives.list
 
 let is_directive = function
@@ -479,7 +477,7 @@ let () =
       begin try_lwt
         lwt phrase = get_phrase () in
         let lexbuf = Lexing.from_string phrase in
-          match Repl_gram.input Repl_lex.token lexbuf with
+          match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
               Command req ->
                 lwt () = execute ks db loop req in
                   phrase_history := phrase :: !phrase_history;
