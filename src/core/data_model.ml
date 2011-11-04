@@ -118,10 +118,10 @@ sig
 
   val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
-  (** Acquire a lock with the given name. The lock will be released
+  (** Acquire locks with the given names. The locks will be released
     * automatically when the outermost transaction is committed or aborted.
     * This is a NOP unless inside a transaction. *)
-  val lock : keyspace -> string -> unit Lwt.t
+  val lock : keyspace -> string list -> unit Lwt.t
 
   (** {3 Read operations} *)
 

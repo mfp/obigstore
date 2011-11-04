@@ -599,7 +599,7 @@ let repeatable_read_transaction f =
            in (ref pool, true))
     f
 
-let lock ks name =
+let lock_one ks name =
   match Lwt.get tx_key with
       None -> return ()
     | Some tx ->
@@ -618,6 +618,8 @@ let lock ks name =
         in
           tx.outermost_tx.locks <- M.add name k tx.outermost_tx.locks;
           Lwt_mutex.lock mutex
+
+let lock ks names = Lwt_list.iter_s (lock_one ks) names
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =

@@ -65,7 +65,8 @@ phrase : /* empty */  { Nothing }
   | BEGIN     { with_ks (fun keyspace -> R.Begin { R.Begin.keyspace }) }
   | COMMIT    { with_ks (fun keyspace -> R.Commit { R.Commit.keyspace }) }
   | ABORT     { with_ks (fun keyspace -> R.Abort { R.Abort.keyspace }) }
-  | LOCK ID   { with_ks (fun keyspace -> R.Lock { R.Lock.keyspace; name = $2 }) }
+  | LOCK id_list
+              { with_ks (fun keyspace -> R.Lock { R.Lock.keyspace; names = $2 }) }
   | STATS     { with_ks (fun keyspace -> R.Stats { R.Stats.keyspace; }) }
   | LISTEN ID { with_ks (fun keyspace -> R.Listen { R.Listen.keyspace; topic = $2 }) }
   | UNLISTEN ID

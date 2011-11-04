@@ -135,7 +135,7 @@ struct
      BEGIN                      Start a transaction block\n\
      COMMIT                     Commit current transaction\n\
      ABORT                      Abort current transaction\n\
-     LOCK lock_name             Acquire lock with given name\n\
+     LOCK name1 name2...        Acquire locks with given names\n\
 \n\
      LISTEN topic               Subscribe to topic.\n\
      UNLISTEN topic             Unsubscribe to topic.\n\
@@ -298,7 +298,7 @@ let execute ks db loop r =
       ret_nothing
   | Abort _ -> raise_lwt Abort_exn
   | Commit _ -> raise_lwt Commit_exn
-  | Lock { Lock.name; _ } -> D.lock ks name >>= ret_nothing
+  | Lock { Lock.names; _ } -> D.lock ks names >>= ret_nothing
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       lwt keys = D.get_keys ks table ?max_keys key_range in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));

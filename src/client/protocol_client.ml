@@ -304,9 +304,9 @@ struct
 
   let repeatable_read_transaction = read_committed_transaction
 
-  let lock ks name =
+  let lock ks names =
     sync_request_ks ks
-      (Lock { Lock.keyspace = ks.ks_id; name; })
+      (Lock { Lock.keyspace = ks.ks_id; names; })
       P.read_ok
 
   let get_keys ks table ?max_keys key_range =
