@@ -288,9 +288,9 @@ struct
         | `EXN e -> raise_lwt e
     end else return ()
 
-  let read_committed_transaction ks f =
+  let transaction_aux tx_type ks f =
     wait_for_pending_responses ks.ks_db >>
-    sync_request_ks ks (Begin { Begin.keyspace = ks.ks_id }) P.read_ok >>
+    sync_request_ks ks (Begin { Begin.keyspace = ks.ks_id; tx_type }) P.read_ok >>
     try_lwt
       lwt y = f ks in
         wait_for_pending_responses ks.ks_db >>
@@ -301,7 +301,11 @@ struct
       sync_request_ks ks (Abort { Abort.keyspace = ks.ks_id }) P.read_ok >>
       raise_lwt e
 
-  let repeatable_read_transaction = read_committed_transaction
+  let read_committed_transaction ks f =
+    transaction_aux Tx_type.Read_committed ks f
+
+  let repeatable_read_transaction ks f =
+    transaction_aux Tx_type.Repeatable_read ks f
 
   let lock ks names =
     sync_request_ks ks

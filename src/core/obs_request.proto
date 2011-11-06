@@ -93,6 +93,10 @@ type load_stats_ =
 (* work around type_equals not being honored in messages *)
 message load_stats = load_stats_
 
+type tx_type =
+    Repeatable_read
+  | Read_committed
+
 message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
@@ -101,7 +105,7 @@ message request =
   | Table_size_on_disk { keyspace : keyspace; table : table }
   | Key_range_size_on_disk { keyspace : keyspace; table : table;
                              range : range }
-  | Begin { keyspace : keyspace; }
+  | Begin { keyspace : keyspace; tx_type : tx_type; }
   | Commit { keyspace : keyspace; }
   | Abort { keyspace : keyspace; }
   | Lock { keyspace : keyspace; names : [string]; }

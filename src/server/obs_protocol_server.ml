@@ -241,7 +241,7 @@ struct
              D.key_range_size_on_disk ks table
                ?first:range.first ?up_to:range.up_to >>=
              P.return_key_range_size_on_disk ?buf c.och ~request_id)
-    | Begin { Begin.keyspace; } ->
+    | Begin { Begin.keyspace; tx_type; } ->
         (* FIXME: check if we have an open tx in another ks, and signal error
          * if so *)
         let is_outermost, parent_tx_data, tx_data =
@@ -249,14 +249,17 @@ struct
               None ->
                 let d = { tx_notifications = Notif_queue.empty } in
                   (true, d, d)
-            | Some d -> (false, d, { tx_notifications = d.tx_notifications; })
+            | Some d -> (false, d, { tx_notifications = d.tx_notifications; }) in
+        let transaction_f = match tx_type with
+            Tx_type.Repeatable_read -> D.repeatable_read_transaction
+          | Tx_type.Read_committed -> D.read_committed_transaction
         in
           wait_for_pending_reqs c >>
           with_keyspace c keyspace ~request_id
             (fun ks ->
                try_lwt
                  lwt ret =
-                   D.repeatable_read_transaction ks
+                   transaction_f ks
                      (fun ks ->
                         Lwt.with_value tx_key (Some tx_data)
                           (fun () ->
