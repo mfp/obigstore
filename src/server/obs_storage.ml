@@ -602,7 +602,9 @@ let lock_one ks name =
   match Lwt.get tx_key with
       None -> return ()
     | Some tx ->
-      if M.mem name tx.locks then return ()
+      (* we use tx.outermost_tx.locks instead of tx.locks because locks are
+       * always associated to the outermost transaction! *)
+      if M.mem name tx.outermost_tx.locks then return ()
       else
         let ks = tx.ks in
         let k, mutex =

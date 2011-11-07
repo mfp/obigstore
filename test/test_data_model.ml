@@ -1153,6 +1153,25 @@ struct
            get_slice tx "tbl" (DM.Keys ["c"]) DM.All_columns >|=
              aeq_slice (Some "c", [ "c", "z", ["c", "c"; "z", ""] ]))
 
+  let test_lock_recursive db =
+    lwt ks = D.register_keyspace db "test_lock_recursive" in
+      D.read_committed_transaction ks
+        (fun _ ->
+           D.lock ks ["test_lock_recursive"] >>
+           D.lock ks ["test_lock_recursive"] >>
+           D.read_committed_transaction ks
+             (fun _ ->
+                D.lock ks ["test_lock_recursive"]))
+
+  let test_lock_nested db =
+    lwt ks = D.register_keyspace db "test_lock_nested" in
+      D.read_committed_transaction ks
+        (fun _ ->
+           D.read_committed_transaction ks
+             (fun _ ->
+                D.lock ks ["test_lock_nested"] >>
+                D.lock ks ["test_lock_nested"]))
+
   let test_with_db f () = C.with_db f
 
   let tests =
@@ -1190,6 +1209,8 @@ struct
       "delete_columns", test_delete_columns;
       "exists_key", test_exists_key;
       "exist_keys", test_exist_keys;
+      "lock recursive", test_lock_recursive;
+      "lock nested", test_lock_nested;
     ]
 
   let () =
