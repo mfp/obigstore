@@ -190,7 +190,7 @@ struct
       end
 
   and respond ?buf c ~request_id r =
-    if c.debug then Format.eprintf "Got request %a@." Request.pp r;
+    if c.debug then Format.eprintf "Got request from %d %a@." c.id Request.pp r;
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks = D.register_keyspace c.server.db name in
