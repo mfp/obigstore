@@ -133,7 +133,8 @@ struct
      BEGIN                      Start a transaction block\n\
      COMMIT                     Commit current transaction\n\
      ABORT                      Abort current transaction\n\
-     LOCK name1 name2...        Acquire locks with given names\n\
+     LOCK name1 name2...        Acquire exclusive locks with given names\n\
+     LOCK SHARED name1 name2... Acquire shared locks with given names\n\
 \n\
      LISTEN topic               Subscribe to topic.\n\
      UNLISTEN topic             Unsubscribe to topic.\n\

@@ -41,6 +41,7 @@
       "unlisten", UNLISTEN;
       "notify", NOTIFY;
       "await", AWAIT;
+      "shared", SHARED;
     ]
 
  let () = 
