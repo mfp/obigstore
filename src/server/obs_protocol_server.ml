@@ -293,11 +293,11 @@ struct
             None -> P.return_ok ?buf c.och ~request_id ()
           | Some _ -> raise_lwt Abort_exn
         end
-    | Lock { Lock.keyspace; names; } ->
+    | Lock { Lock.keyspace; names; shared; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              try_lwt
-               D.lock ks names >>
+               D.lock ks ~shared names >>
                P.return_ok ?buf c.och ~request_id ()
              with Error Deadlock ->
                P.deadlock ?buf c.och ~request_id () >>

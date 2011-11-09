@@ -120,8 +120,11 @@ sig
 
   (** Acquire locks with the given names. The locks will be released
     * automatically when the outermost transaction is committed or aborted.
-    * This is a NOP unless inside a transaction. *)
-  val lock : keyspace -> string list -> unit Lwt.t
+    * This is a NOP unless inside a transaction.
+    *
+    * @param shared indicates whether shared or exclusive locks are to be
+    * acquired *)
+  val lock : keyspace -> shared:bool -> string list -> unit Lwt.t
 
   (** {3 Read operations} *)
 

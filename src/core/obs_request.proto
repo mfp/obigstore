@@ -108,7 +108,7 @@ message request =
   | Begin { keyspace : keyspace; tx_type : tx_type; }
   | Commit { keyspace : keyspace; }
   | Abort { keyspace : keyspace; }
-  | Lock { keyspace : keyspace; names : [string]; }
+  | Lock { keyspace : keyspace; names : [string]; shared : bool; }
   | Exist_keys { keyspace : keyspace; table : table; keys : [string] }
   | Get_keys { keyspace : keyspace; table : table; max_keys : max_keys;
                key_range : key_range }

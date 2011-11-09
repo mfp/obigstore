@@ -296,7 +296,7 @@ let execute ks db loop r =
       ret_nothing
   | Abort _ -> raise_lwt Abort_exn
   | Commit _ -> raise_lwt Commit_exn
-  | Lock { Lock.names; _ } -> D.lock ks names >>= ret_nothing
+  | Lock { Lock.names; shared; _ } -> D.lock ks ~shared names >>= ret_nothing
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       lwt keys = D.get_keys ks table ?max_keys key_range in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));

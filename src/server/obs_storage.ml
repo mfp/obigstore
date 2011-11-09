@@ -38,7 +38,7 @@ end
 
 module LOCKS =
   Weak.Make(struct
-              type t = (string * Lwt_mutex.t option)
+              type t = (string * Obs_shared_mutex.t option)
               let hash (s, _) = Hashtbl.hash s
               let equal (s1, _) (s2, _) = String.compare s1 s2 = 0
             end)
@@ -433,7 +433,7 @@ type transaction =
       (* approximate size of data written in current backup_writebatch *)
       mutable backup_writebatch_size : int;
       outermost_tx : transaction;
-      mutable locks : (string * Lwt_mutex.t option) M.t;
+      mutable locks : (string * Obs_shared_mutex.t option) M.t;
       dump_buffer : Obs_bytea.t;
     }
 
@@ -477,7 +477,7 @@ let rec transaction_aux make_iter_pool ks f =
             return y
         finally
           (* release locks *)
-          M.iter (fun _ (_, m) -> Option.may Lwt_mutex.unlock m) tx.locks;
+          M.iter (fun _ (_, m) -> Option.may Obs_shared_mutex.unlock m) tx.locks;
           return ()
       end
     | Some parent_tx ->
@@ -598,7 +598,7 @@ let repeatable_read_transaction f =
            in (ref pool, true))
     f
 
-let lock_one ks name =
+let lock_one ks ~shared name =
   match Lwt.get tx_key with
       None -> return ()
     | Some tx ->
@@ -612,15 +612,15 @@ let lock_one ks name =
             let k = LOCKS.find ks.ks_locks (name, None) in
               (k, Option.get (snd k))
           with Not_found ->
-            let m = Lwt_mutex.create () in
+            let m = Obs_shared_mutex.create () in
             let k = (name, Some m) in
               LOCKS.add ks.ks_locks k;
               (k, m)
         in
           tx.outermost_tx.locks <- M.add name k tx.outermost_tx.locks;
-          Lwt_mutex.lock mutex
+          Obs_shared_mutex.lock ~shared mutex
 
-let lock ks names = Lwt_list.iter_s (lock_one ks) names
+let lock ks ~shared names = Lwt_list.iter_s (lock_one ks ~shared) names
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =

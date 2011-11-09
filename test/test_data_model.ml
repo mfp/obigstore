@@ -1157,11 +1157,11 @@ struct
     lwt ks = D.register_keyspace db "test_lock_recursive" in
       D.read_committed_transaction ks
         (fun _ ->
-           D.lock ks ["test_lock_recursive"] >>
-           D.lock ks ["test_lock_recursive"] >>
+           D.lock ks ~shared:false ["test_lock_recursive"] >>
+           D.lock ks ~shared:false ["test_lock_recursive"] >>
            D.read_committed_transaction ks
              (fun _ ->
-                D.lock ks ["test_lock_recursive"]))
+                D.lock ks ~shared:false ["test_lock_recursive"]))
 
   let test_lock_nested db =
     lwt ks = D.register_keyspace db "test_lock_nested" in
@@ -1169,8 +1169,8 @@ struct
         (fun _ ->
            D.read_committed_transaction ks
              (fun _ ->
-                D.lock ks ["test_lock_nested"] >>
-                D.lock ks ["test_lock_nested"]))
+                D.lock ks ~shared:false ["test_lock_nested"] >>
+                D.lock ks ~shared:false ["test_lock_nested"]))
 
   let test_with_db f () = C.with_db f
 

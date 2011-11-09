@@ -307,9 +307,9 @@ struct
   let repeatable_read_transaction ks f =
     transaction_aux Tx_type.Repeatable_read ks f
 
-  let lock ks names =
+  let lock ks ~shared names =
     sync_request_ks ks
-      (Lock { Lock.keyspace = ks.ks_id; names; })
+      (Lock { Lock.keyspace = ks.ks_id; names; shared; })
       P.read_ok
 
   let get_keys ks table ?max_keys key_range =
