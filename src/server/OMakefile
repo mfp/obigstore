@@ -5,6 +5,7 @@ OBJECTS[] =
   obs_datum_encoding
   obs_protocol_server
   obs_server
+  obs_shared_mutex
   obs_storage
 
 OCamlLibrary(obigstore_server, $(OBJECTS))
