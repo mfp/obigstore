@@ -71,7 +71,7 @@ struct
          * the actual sync needs to be exclusive *)
         mutable wait_last_sync : unit Lwt.t * unit Lwt.u;
         (* used to wait for last sync before close *)
-        mutable iter_pool : L.iterator Lwt_pool.t ref;
+        iter_pool : L.iterator Lwt_pool.t ref;
         (* will be overwritten after an update *)
       }
 
@@ -161,7 +161,7 @@ type db =
       mutable use_thread_pool : bool;
       load_stats : Obs_load_stats.t;
       writebatch : WRITEBATCH.t;
-      mutable db_iter_pool : L.iterator Lwt_pool.t ref;
+      db_iter_pool : L.iterator Lwt_pool.t ref;
       (* We use an iterator pool to reuse iterators for read committed
        * transactions whenever possible. After an update, the db_iter_pool is
        * replaced by a new one (so that only new iterators are used). *)
