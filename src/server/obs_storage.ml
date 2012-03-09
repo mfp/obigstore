@@ -193,10 +193,7 @@ type db =
        * transactions whenever possible. After an update, the db_iter_pool is
        * replaced by a new one (so that only new iterators are used). *)
 
-      reopen : unit -> (L.db * (unit -> unit))
-      (* @return [(lldb, finish_reopen]  where [finish_reopen] is a function
-       * that must be called right before the underlying lldb is modified by
-       * Miniregion.update_value (which will be given lldb). *)
+      reopen : unit -> L.db;
     }
 
 and keyspace =
@@ -284,12 +281,12 @@ let open_db
       let lldb = L.open_db
                     ~write_buffer_size ~block_size ~max_open_files
                     ~comparator:Obs_datum_encoding.custom_comparator
-                    basedir in
-      let finish_reopen () =
+                    basedir
+      in
         db.db_iter_pool := make_iter_pool lldb;
         db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
                            ~flush_period:group_commit_period;
-      in (lldb, finish_reopen) in
+        lldb in
     let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
       Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
@@ -642,32 +639,29 @@ and commit_outermost_transaction ks tx =
       return ()
   end
 
-let read_committed_transaction f =
-  transaction_aux
-    (fun db parent_tx f -> match parent_tx with
-         None ->
-           Miniregion.use db.db
-             (fun _ -> f ~iter_pool:db.db_iter_pool ~repeatable_read:false)
-       | Some tx ->
-           Miniregion.use db.db
-             (fun _ -> f ~iter_pool:tx.iter_pool ~repeatable_read:false))
-    f
+let read_committed_transaction ks f =
+  Miniregion.use ks.ks_db.db
+    (fun _ ->
+       transaction_aux
+         (fun db parent_tx f -> match parent_tx with
+              None -> f ~iter_pool:db.db_iter_pool ~repeatable_read:false
+            | Some tx -> f ~iter_pool:tx.iter_pool ~repeatable_read:false)
+         ks f)
 
-let repeatable_read_transaction f =
-  transaction_aux
-    (fun db parent_tx f -> match parent_tx with
-         Some { repeatable_read = true; iter_pool; _} ->
-           Miniregion.use db.db
-             (fun _ -> f ~iter_pool ~repeatable_read:true)
-       | _ ->
-           Miniregion.use db.db
-             (fun lldb ->
+let repeatable_read_transaction ks f =
+  Miniregion.use ks.ks_db.db
+    (fun lldb ->
+       transaction_aux
+         (fun db parent_tx f -> match parent_tx with
+              Some { repeatable_read = true; iter_pool; _} ->
+                f ~iter_pool ~repeatable_read:true
+            | _ ->
                 let access = lazy (L.Snapshot.read_access (L.Snapshot.make lldb)) in
                 let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
                              (fun () -> return (RA.iterator (Lazy.force access)))
                 in
-                  f ~iter_pool:(ref pool) ~repeatable_read:true))
-    f
+                  f ~iter_pool:(ref pool) ~repeatable_read:true)
+         ks f)
 
 let lock_one ks ~shared name =
   match Lwt.get tx_key with
@@ -2004,6 +1998,12 @@ let rec put_multi_columns_no_tx ks table data =
 
 and put_multi_columns_no_tx_buf = Obs_bytea.create 10
 
+let put_multi_columns_no_tx ks table data =
+  (* we wrap in Miniregion.use because we don't want ks.ks_db.writebatch to
+   * change under our feet (due to a concurrent trigger_raw_dump) *)
+  Miniregion.use ks.ks_db.db
+    (fun _ -> put_multi_columns_no_tx ks table data)
+
 let delete_columns tx table key cols =
   tx.added <-
     M.modify_if_found
@@ -2155,7 +2155,7 @@ let trigger_raw_dump db =
        (* flush *)
        WRITEBATCH.close db.writebatch >>
        let () = L.close lldb in
-       let lldb, finish_reopen = db.reopen () in
+       let lldb = db.reopen () in
          begin try_lwt
            let dstdir =
              Filename.concat db.basedir
@@ -2182,8 +2182,7 @@ let trigger_raw_dump db =
            eprintf "Error in trigger_raw_dump: %s\n%!" (Printexc.to_string exn);
            return ()
          end >>
-         let () = finish_reopen () in
-           return lldb)
+         return lldb)
 
 let with_transaction ks f =
   match Lwt.get tx_key with
