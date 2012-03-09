@@ -246,10 +246,13 @@ sig
 
 
   (** {3} Database dump. *)
-  type raw_dump
+  module Raw_dump :
+  sig
+    type raw_dump
 
-  (** Request that the current state of the DB be dumped. *)
-  val trigger_raw_dump : db -> raw_dump Lwt.t
+    (** Request that the current state of the DB be dumped. *)
+    val dump : db -> raw_dump Lwt.t
+  end
 end
 
 module type BACKUP_SUPPORT =

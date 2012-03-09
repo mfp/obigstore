@@ -452,8 +452,8 @@ struct
                with Not_found ->
                  P.return_notifications ?buf c.och ~request_id [])
     | Trigger_raw_dump { Trigger_raw_dump.record; } ->
-      (* FIXME: catch errors in trigger_raw_dump, signal to client *)
-      lwt raw_dump = D.trigger_raw_dump c.server.db in
+      (* FIXME: catch errors in Raw_dump.dump, signal to client *)
+      lwt raw_dump = D.Raw_dump.dump c.server.db in
         (* FIXME: register raw dump in some table *)
         P.return_raw_dump_id ?buf c.och ~request_id 0L
 

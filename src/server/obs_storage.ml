@@ -2000,7 +2000,7 @@ and put_multi_columns_no_tx_buf = Obs_bytea.create 10
 
 let put_multi_columns_no_tx ks table data =
   (* we wrap in Miniregion.use because we don't want ks.ks_db.writebatch to
-   * change under our feet (due to a concurrent trigger_raw_dump) *)
+   * change under our feet (due to a concurrent Raw_dump.dump) *)
   Miniregion.use ks.ks_db.db
     (fun _ -> put_multi_columns_no_tx ks table data)
 
@@ -2147,42 +2147,46 @@ let load_stats tx =
 let cursor_of_string = Obs_backup.cursor_of_string
 let string_of_cursor = Obs_backup.string_of_cursor
 
-type raw_dump = unit
 
-let trigger_raw_dump db =
-  Miniregion.update_value db.db
-    (fun lldb ->
-       (* flush *)
-       WRITEBATCH.close db.writebatch >>
-       let () = L.close lldb in
-       let lldb = db.reopen () in
-         begin try_lwt
-           let dstdir =
-             Filename.concat db.basedir
-               (sprintf "dump-%f" (Unix.gettimeofday ())) in
-           let is_file fname =
-             let fname = Filename.concat db.basedir fname in
-             let st = Unix.stat fname in
-               match st.Unix.st_kind with
-                   Unix.S_REG -> true
-                 | _ -> false in
-           let hardlink_file fname =
-             let src = Filename.concat db.basedir fname in
-             let dst = Filename.concat dstdir fname in
-               Unix.link src dst in
-           let src_files =
-             Sys.readdir db.basedir |> Array.to_list |>
-             List.filter is_file
-           in
-             Unix.mkdir dstdir 0o755;
-             List.iter hardlink_file src_files;
+module Raw_dump =
+struct
+  type raw_dump = unit
+
+  let dump db =
+    Miniregion.update_value db.db
+      (fun lldb ->
+         (* flush *)
+         WRITEBATCH.close db.writebatch >>
+         let () = L.close lldb in
+         let lldb = db.reopen () in
+           begin try_lwt
+             let dstdir =
+               Filename.concat db.basedir
+                 (sprintf "dump-%f" (Unix.gettimeofday ())) in
+             let is_file fname =
+               let fname = Filename.concat db.basedir fname in
+               let st = Unix.stat fname in
+                 match st.Unix.st_kind with
+                     Unix.S_REG -> true
+                   | _ -> false in
+             let hardlink_file fname =
+               let src = Filename.concat db.basedir fname in
+               let dst = Filename.concat dstdir fname in
+                 Unix.link src dst in
+             let src_files =
+               Sys.readdir db.basedir |> Array.to_list |>
+               List.filter is_file
+             in
+               Unix.mkdir dstdir 0o755;
+               List.iter hardlink_file src_files;
+               return ()
+           with exn ->
+             (* FIXME: better log *)
+             eprintf "Error in Raw_dump.dump: %s\n%!" (Printexc.to_string exn);
              return ()
-         with exn ->
-           (* FIXME: better log *)
-           eprintf "Error in trigger_raw_dump: %s\n%!" (Printexc.to_string exn);
-           return ()
-         end >>
-         return lldb)
+           end >>
+           return lldb)
+end
 
 let with_transaction ks f =
   match Lwt.get tx_key with
