@@ -468,6 +468,7 @@ let get_phrase () =
   end
 
 let () =
+  ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
   if !keyspace = "" then begin
