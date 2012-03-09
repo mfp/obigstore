@@ -45,7 +45,7 @@ let col_range_of_multi_range = function
 %token <int> INT
 %token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
-%token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP
+%token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
 %start input
@@ -84,6 +84,8 @@ phrase : /* empty */  { Nothing }
               { with_ks (fun keyspace -> R.Await { R.Await.keyspace; }) }
   | DUMP      { with_ks (fun keyspace -> R.Trigger_raw_dump
                                            { R.Trigger_raw_dump.record = false }) }
+  | DUMP LOCAL { Dump_local None }
+  | DUMP LOCAL ID { Dump_local (Some $3) }
   | count     { $1 }
   | get       { $1 }
   | put       { $1 }

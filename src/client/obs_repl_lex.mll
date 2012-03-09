@@ -43,6 +43,7 @@
       "await", AWAIT;
       "shared", SHARED;
       "dump", DUMP;
+      "local", LOCAL;
     ]
 
  let () = 

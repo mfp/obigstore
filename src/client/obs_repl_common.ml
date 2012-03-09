@@ -6,6 +6,7 @@ type req =
   | Error of string
   | Directive of string * string list
   | Nothing
+  | Dump_local of string option
 
 type generic_range =
     Range of Range.range

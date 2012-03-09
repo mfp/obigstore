@@ -467,6 +467,51 @@ let get_phrase () =
       ()
   end
 
+let copy_stream ic oc =
+  let buf = String.create 16384 in
+  let rec copy_loop () =
+    match_lwt Lwt_io.read_into ic buf 0 16384 with
+        0 -> return ()
+      | n -> Lwt_io.write_from_exactly oc buf 0 n >>
+             copy_loop ()
+  in copy_loop ()
+
+let dump_local db dst =
+  lwt dump = D.Raw_dump.dump db in
+  lwt files = D.Raw_dump.list_files dump in
+  lwt timestamp = D.Raw_dump.timestamp dump in
+  let nfiles, size =
+    List.fold_left (fun (n, s) (_, fsiz) -> n + 1, Int64.add s fsiz) (0, 0L) files in
+  let dstdir = match dst with
+      None -> sprintf "dump-%Ld" timestamp
+    | Some dst -> dst in
+  let t0 = Unix.gettimeofday () in
+    Unix.mkdir dstdir 0o750;
+    puts "Dumping %s (%d files) to directory %s"
+      (Obs_util.format_size 1.0 size) nfiles dstdir;
+    Lwt_list.iter_s
+      (fun (file, size) ->
+         match_lwt D.Raw_dump.open_file dump file with
+             None -> return ()
+           | Some ic ->
+               let dst = Filename.concat dstdir file in
+                 Lwt_io.with_file
+                   ~mode:Lwt_io.output
+                   ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
+                   dst (copy_stream ic))
+      files >>
+    let dt = Unix.gettimeofday () -. t0 in
+      puts "Retrieved in %.2fs (%s/s)" dt (Obs_util.format_size (1.0 /. dt) size);
+      return ()
+
+let dump_local db dst =
+  try_lwt
+    dump_local db dst
+  with exn ->
+    let backtrace = Printexc.get_backtrace () in
+      puts "%s\n%s" (Printexc.to_string exn) backtrace;
+      return ()
+
 let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
   Printexc.record_backtrace true;
@@ -496,6 +541,7 @@ let () =
                 return ()
             | Nothing -> print_endline "Nothing"; return ()
             | Error s -> printf "Error: %s\n%!" s; return ()
+            | Dump_local dst -> dump_local db dst
       with
         | Parsing.Parse_error ->
             print_endline "Parse error";
