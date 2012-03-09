@@ -88,7 +88,6 @@ sig
   val return_exist_result : bool list writer
   val return_notifications : string list writer
   val return_raw_dump_id_and_timestamp : (Int64.t * raw_dump_timestamp) writer
-  val return_raw_dump_size : Int64.t writer
   val return_raw_dump_files : (string * Int64.t) list writer
   val return_raw_dump_file_digest : string option writer
 
@@ -117,7 +116,6 @@ sig
   val read_exist_result : bool list reader
   val read_notifications : string list reader
   val read_raw_dump_id_and_timestamp : (Int64.t * raw_dump_timestamp) reader
-  val read_raw_dump_size : Int64.t reader
   val read_raw_dump_files : (string * Int64.t) list reader
   val read_raw_dump_file_digest : string option reader
 end

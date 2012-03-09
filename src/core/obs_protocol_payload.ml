@@ -371,12 +371,6 @@ struct
   let read_raw_dump_id_and_timestamp =
     reader (D.get_tuple2 D.get_int64_le D.get_int64_le)
 
-  let return_raw_dump_size =
-    writer (fun b siz -> E.add_status b 0;
-                         E.add_int64_le b siz)
-
-  let read_raw_dump_size = reader D.get_int64_le
-
   let return_raw_dump_files =
     writer
       (fun b l ->

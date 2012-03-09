@@ -260,7 +260,6 @@ sig
     val release : raw_dump -> unit Lwt.t
 
     val timestamp : raw_dump -> raw_dump_timestamp Lwt.t
-    val size : raw_dump -> Int64.t Lwt.t
     val list_files : raw_dump -> (string * Int64.t) list Lwt.t
     val file_digest : raw_dump -> string -> string option Lwt.t
 

@@ -476,9 +476,6 @@ struct
              Hashtbl.remove c.server.raw_dumps id;
              D.Raw_dump.release raw_dump) >>=
         P.return_ok ?buf c.och ~request_id
-    | Raw_dump_size { Raw_dump_size.id } ->
-        with_raw_dump c id 0L D.Raw_dump.size >>=
-        P.return_raw_dump_size ?buf c.och ~request_id
     | Raw_dump_list_files { Raw_dump_list_files.id } ->
         with_raw_dump c id [] D.Raw_dump.list_files >>=
         P.return_raw_dump_files ?buf c.och ~request_id

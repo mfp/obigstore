@@ -269,8 +269,7 @@ let execute ks db loop r =
   | Load _| Dump _ | Get_column _ | Get_column_values _ | Get_columns _
   | Get_slice_values _ | Get_slice_values_timestamps _ | Exist_keys _
   | Raw_dump_file_digest _ | Raw_dump_list_files _
-  | Raw_dump_size _ | Raw_dump_release _
-    -> ret_nothing ()
+  | Raw_dump_release _ -> ret_nothing ()
   | Trigger_raw_dump _ ->
       D.Raw_dump.dump db >>=
       ret (fun _ -> printf "Raw dump saved\n%!")

@@ -150,7 +150,6 @@ message request =
   | Await { keyspace : keyspace; }
   | Trigger_raw_dump { record : bool; }
   | Raw_dump_release { id : raw_dump_id; }
-  | Raw_dump_size { id : raw_dump_id; }
   | Raw_dump_list_files { id : raw_dump_id; }
   | Raw_dump_file_digest { id : raw_dump_id; file : string; }
 

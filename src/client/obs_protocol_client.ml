@@ -474,11 +474,6 @@ struct
 
     let timestamp d = return d.timestamp
 
-    let size d =
-      async_request d.db
-        (Raw_dump_size { Raw_dump_size.id = d.id; })
-        P.read_raw_dump_size
-
     let list_files d =
       async_request d.db
         (Raw_dump_list_files { Raw_dump_list_files.id = d.id; })
