@@ -361,5 +361,11 @@ struct
       (fun b l ->
          E.add_status b 0;
          E.add_list E.add_string b l)
+
+  let return_raw_dump_id =
+    writer (fun b id -> E.add_status b 0;
+                        E.add_int64_le b id)
+
+  let read_raw_dump_id = reader D.get_int64_le
 end
 

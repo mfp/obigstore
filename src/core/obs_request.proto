@@ -146,5 +146,6 @@ message request =
   | Unlisten { keyspace : keyspace; topic : string }
   | Notify { keyspace : keyspace; topic : string; }
   | Await { keyspace : keyspace; }
+  | Trigger_raw_dump { record : bool; }
 
 (* vim:set ft=omlet: *) 

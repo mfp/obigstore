@@ -268,6 +268,9 @@ let execute ks db loop r =
   | Register_keyspace _ | Get_keyspace _
   | Load _| Dump _ | Get_column _ | Get_column_values _ | Get_columns _
   | Get_slice_values _ | Get_slice_values_timestamps _ | Exist_keys _ -> ret_nothing ()
+  | Trigger_raw_dump _ ->
+      D.trigger_raw_dump db >>=
+      ret (fun _ -> printf "Raw dump saved\n%!")
   | List_keyspaces _ -> D.list_keyspaces db >>= ret (print_list (sprintf "%S"))
   | List_tables _ -> D.list_tables ks >>= ret (print_list (sprintf "%S"))
   | Table_size_on_disk { Table_size_on_disk.table; _ } ->

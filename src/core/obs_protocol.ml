@@ -146,6 +146,7 @@ sig
   val return_load_stats : Obs_load_stats.stats writer
   val return_exist_result : bool list writer
   val return_notifications : string list writer
+  val return_raw_dump_id : Int64.t writer
 
   val read_keyspace : int reader
   val read_keyspace_maybe : int option reader
@@ -168,4 +169,5 @@ sig
   val read_load_stats : Obs_load_stats.stats reader
   val read_exist_result : bool list reader
   val read_notifications : string list reader
+  val read_raw_dump_id : Int64.t reader
 end

@@ -428,4 +428,10 @@ struct
   let await_notifications ks =
     async_request_ks ks (Await { Await.keyspace = ks.ks_id; })
       P.read_notifications
+
+  type raw_dump = Int64.t
+
+  let trigger_raw_dump t =
+    sync_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
+      P.read_raw_dump_id
 end

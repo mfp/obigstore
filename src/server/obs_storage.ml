@@ -153,18 +153,50 @@ struct
     L.Batch.put_substring tx.t.wb k o1 l1 v o2 l2
 end
 
+module Miniregion : sig
+  type 'a t
+
+  val make : 'a -> 'a t
+  val use : 'a t -> ('a -> 'b Lwt.t) -> 'b Lwt.t
+  val update_value : 'a t -> ('a -> 'a Lwt.t) -> unit Lwt.t
+end =
+struct
+  type 'a t =
+      {
+        mutable v : 'a;
+        mutex : Obs_shared_mutex.t;
+      }
+
+  let make v = { v; mutex = Obs_shared_mutex.create (); }
+
+  let use t f =
+    Obs_shared_mutex.with_lock ~shared:true t.mutex (fun () -> f t.v)
+
+  let update_value t f =
+    Obs_shared_mutex.with_lock ~shared:false t.mutex
+      (fun () ->
+         lwt new_v = f t.v in
+           t.v <- new_v;
+           return ())
+end
+
 type db =
     {
       basedir : string;
-      db : L.db;
+      db : L.db Miniregion.t;
       keyspaces : (string, keyspace) Hashtbl.t;
       mutable use_thread_pool : bool;
       load_stats : Obs_load_stats.t;
-      writebatch : WRITEBATCH.t;
+      mutable writebatch : WRITEBATCH.t;
       db_iter_pool : L.iterator Lwt_pool.t ref;
       (* We use an iterator pool to reuse iterators for read committed
        * transactions whenever possible. After an update, the db_iter_pool is
        * replaced by a new one (so that only new iterators are used). *)
+
+      reopen : unit -> (L.db * (unit -> unit))
+      (* @return [(lldb, finish_reopen]  where [finish_reopen] is a function
+       * that must be called right before the underlying lldb is modified by
+       * Miniregion.update_value (which will be given lldb). *)
     }
 
 and keyspace =
@@ -181,7 +213,7 @@ let (|>) x f = f x
 
 let find_maybe h k = try Some (Hashtbl.find h k) with Not_found -> None
 
-let read_keyspace_tables db keyspace =
+let read_keyspace_tables lldb keyspace =
   let module T = Obs_datum_encoding.Keyspace_tables in
   let h = Hashtbl.create 13 in
     L.iter_from
@@ -191,11 +223,11 @@ let read_keyspace_tables db keyspace =
            | Some (ks, table) when ks <> keyspace -> false
            | Some (_, table) -> Hashtbl.add h table (int_of_string v);
                                 true)
-      db.db
+      lldb
       (T.ks_table_table_prefix_for_ks keyspace);
     h
 
-let read_keyspaces db =
+let read_keyspaces db lldb =
   let h = Hashtbl.create 13 in
     L.iter_from
       (fun k v ->
@@ -205,7 +237,7 @@ let read_keyspaces db =
                let ks_db = db in
                let ks_name = keyspace_name in
                let ks_id = int_of_string v in
-               let ks_tables = read_keyspace_tables db ks_name in
+               let ks_tables = read_keyspace_tables lldb ks_name in
                let ks_rev_tables = Hashtbl.create (Hashtbl.length ks_tables) in
                let ks_locks = LOCKS.create 13 in
                  Hashtbl.iter
@@ -214,43 +246,58 @@ let read_keyspaces db =
                  Hashtbl.add h keyspace_name
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; ks_locks; };
                  true)
-      db.db
+      lldb
       Obs_datum_encoding.keyspace_table_prefix;
     h
 
 let close_db t =
-  lwt () = WRITEBATCH.close t.writebatch in
-    L.close t.db;
-    return ()
+  Miniregion.use t.db
+    (fun lldb ->
+       lwt () = WRITEBATCH.close t.writebatch in
+         L.close lldb;
+         return ())
 
 let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)
       ?(block_size = 4096)
       ?(max_open_files = 1000)
       ?(group_commit_period = 0.002) basedir =
-  let db = L.open_db
+  let lldb = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
              ~comparator:Obs_datum_encoding.custom_comparator basedir in
   let group_commit_period = max group_commit_period 0.001 in
-  let db_iter_pool = ref (make_iter_pool db) in
+  let db_iter_pool = ref (make_iter_pool lldb) in
   let writebatch =
-    WRITEBATCH.make db db_iter_pool ~flush_period:group_commit_period
+    WRITEBATCH.make lldb db_iter_pool ~flush_period:group_commit_period
   in
     (* ensure we have a end_of_db record *)
-    if not (L.mem db Obs_datum_encoding.end_of_db_key) then
-      L.put ~sync:true db Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
-    let db =
-      { basedir; db; keyspaces = Hashtbl.create 13;
+    if not (L.mem lldb Obs_datum_encoding.end_of_db_key) then
+      L.put ~sync:true lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
+    let rec db =
+      { basedir; db = Miniregion.make lldb;
+        keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
-        writebatch; db_iter_pool;
-      } in
-    let keyspaces = read_keyspaces db in
+        writebatch; db_iter_pool; reopen;
+      }
+    and reopen () =
+      let lldb = L.open_db
+                    ~write_buffer_size ~block_size ~max_open_files
+                    ~comparator:Obs_datum_encoding.custom_comparator
+                    basedir in
+      let finish_reopen () =
+        db.db_iter_pool := make_iter_pool lldb;
+        db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
+                           ~flush_period:group_commit_period;
+      in (lldb, finish_reopen) in
+    let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
       Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
       db
 
-let reset_iter_pool t = t.db_iter_pool := make_iter_pool t.db
+let reset_iter_pool t =
+  Miniregion.use t.db
+    (fun lldb -> t.db_iter_pool := make_iter_pool lldb; return ())
 
 let use_thread_pool db v = db.use_thread_pool <- v
 
@@ -268,16 +315,19 @@ let register_keyspace t ks_name =
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
-      L.put ~sync:true t.db (Obs_datum_encoding.keyspace_table_key ks_name) (string_of_int ks_id);
-      let ks =
-        { ks_db = t; ks_id; ks_name;
-          ks_tables = Hashtbl.create 13;
-          ks_rev_tables = Hashtbl.create 13;
-          ks_locks = LOCKS.create 31;
-        }
-      in
-        Hashtbl.add t.keyspaces ks_name ks;
-        return ks
+      Miniregion.use t.db
+        (fun lldb ->
+           L.put ~sync:true lldb (Obs_datum_encoding.keyspace_table_key ks_name)
+             (string_of_int ks_id);
+           let ks =
+             { ks_db = t; ks_id; ks_name;
+               ks_tables = Hashtbl.create 13;
+               ks_rev_tables = Hashtbl.create 13;
+               ks_locks = LOCKS.create 31;
+             }
+           in
+             Hashtbl.add t.keyspaces ks_name ks;
+             return ks)
 
 let get_keyspace t ks_name =
   return begin try
@@ -301,10 +351,9 @@ let it_seek ks it s off len =
   IT.seek it s off len
 
 let list_tables ks =
-  let it = L.iterator ks.ks_db.db in
   let table_r = ref (-1) in
 
-  let jump_to_next_table () =
+  let jump_to_next_table it =
     match !table_r with
         -1 ->
           let datum_key =
@@ -312,11 +361,13 @@ let list_tables ks =
               ~table:0 ~key:"" ~column:"" ~timestamp:Int64.min_int
           in it_seek ks it datum_key 0 (String.length datum_key);
       | table ->
-          let datum_key = Obs_datum_encoding.encode_table_successor_to_string ks.ks_id table in
+          let datum_key =
+            Obs_datum_encoding.encode_table_successor_to_string ks.ks_id table
+          in
             it_seek ks it datum_key 0 (String.length datum_key); in
 
-  let rec collect_tables acc =
-    jump_to_next_table ();
+  let rec collect_tables it acc =
+    jump_to_next_table it;
     if not (IT.valid it) then acc
     else begin
       let k = IT.get_key it in
@@ -334,11 +385,15 @@ let list_tables ks =
           let acc = match find_maybe ks.ks_rev_tables !table_r with
               Some table -> table :: acc
             | None -> acc
-          in collect_tables acc
+          in collect_tables it acc
         end
     end
 
-  in detach_ks_op ks collect_tables [] >|= List.sort String.compare
+  in
+    Miniregion.use ks.ks_db.db
+      (fun lldb ->
+         let it = L.iterator lldb in
+           detach_ks_op ks (collect_tables it) [] >|= List.sort String.compare)
 
 let table_size_on_disk ks table_name =
   match find_maybe ks.ks_tables table_name with
@@ -351,7 +406,10 @@ let table_size_on_disk ks table_name =
           Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
             ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
             ~timestamp:Int64.zero
-        in detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
+        in
+          Miniregion.use ks.ks_db.db
+            (fun lldb ->
+               detach_ks_op ks (L.get_approximate_size lldb _from) _to)
 
 let key_range_size_on_disk ks ?first ?up_to table_name =
   match find_maybe ks.ks_tables table_name with
@@ -367,7 +425,9 @@ let key_range_size_on_disk ks ?first ?up_to table_name =
             ~key:(Option.default "\255\255\255\255\255\255" up_to)
             ~column:"\255\255\255\255\255\255"
             ~timestamp:Int64.zero
-        in detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
+        in
+          Miniregion.use ks.ks_db.db
+            (fun lldb -> detach_ks_op ks (L.get_approximate_size lldb _from) _to)
 
 module S =
 struct
@@ -457,38 +517,39 @@ let register_new_table_and_add_to_writebatch =
 let register_new_table_and_add_to_writebatch' =
   register_new_table_and_add_to_writebatch_aux WRITEBATCH.put_substring
 
-let rec transaction_aux make_iter_pool ks f =
+let rec transaction_aux with_iter_pool ks f =
   match Lwt.get tx_key with
-    | None -> begin
-        let iter_pool, repeatable_read =
-          make_iter_pool ks.ks_db None in
-        let rec tx =
-          { added_keys = M.empty; deleted_keys = M.empty;
-            added = M.empty; deleted = M.empty;
-            repeatable_read; iter_pool; ks;
-            backup_writebatch = lazy (L.Batch.make ());
-            backup_writebatch_size = 0;
-            outermost_tx = tx; locks = M.empty;
-            dump_buffer = Obs_bytea.create 16;
-          } in
-        try_lwt
-          lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
-            commit_outermost_transaction ks tx >>
-            return y
-        finally
-          (* release locks *)
-          M.iter (fun _ (_, m) -> Option.may Obs_shared_mutex.unlock m) tx.locks;
-          return ()
-      end
+    | None ->
+        with_iter_pool ks.ks_db None begin fun ~iter_pool ~repeatable_read ->
+          let rec tx =
+            { added_keys = M.empty; deleted_keys = M.empty;
+              added = M.empty; deleted = M.empty;
+              repeatable_read; iter_pool; ks;
+              backup_writebatch = lazy (L.Batch.make ());
+              backup_writebatch_size = 0;
+              outermost_tx = tx; locks = M.empty;
+              dump_buffer = Obs_bytea.create 16;
+            } in
+          try_lwt
+            lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
+              commit_outermost_transaction ks tx >>
+              return y
+          finally
+            (* release locks *)
+            M.iter (fun _ (_, m) -> Option.may Obs_shared_mutex.unlock m) tx.locks;
+            return ()
+        end
     | Some parent_tx ->
-        let iter_pool, repeatable_read = make_iter_pool ks.ks_db (Some parent_tx) in
-        let tx = { parent_tx with iter_pool; repeatable_read; } in
-        lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
-          parent_tx.deleted_keys <- tx.deleted_keys;
-          parent_tx.added <- tx.added;
-          parent_tx.deleted <- tx.deleted;
-          parent_tx.added_keys <- tx.added_keys;
-          return y
+        with_iter_pool
+          ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
+            let tx = { parent_tx with iter_pool; repeatable_read; } in
+            lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
+              parent_tx.deleted_keys <- tx.deleted_keys;
+              parent_tx.added <- tx.added;
+              parent_tx.deleted <- tx.deleted;
+              parent_tx.added_keys <- tx.added_keys;
+              return y
+          end
 
 and commit_outermost_transaction ks tx =
   (* early termination for read-only or NOP txs if:
@@ -508,9 +569,11 @@ and commit_outermost_transaction ks tx =
     else
       let b = Lazy.force tx.backup_writebatch in
         Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
-        lwt () = detach_ks_op ks (L.Batch.write ~sync:true ks.ks_db.db) b in
-          reset_iter_pool ks.ks_db;
-          return ()
+        Miniregion.use ks.ks_db.db
+          (fun lldb ->
+             detach_ks_op ks (L.Batch.write ~sync:true lldb) b >>
+             reset_iter_pool ks.ks_db >>
+             return ())
     end >>
 
     (* write normal data and wait for group commit sync *)
@@ -581,21 +644,29 @@ and commit_outermost_transaction ks tx =
 
 let read_committed_transaction f =
   transaction_aux
-    (fun db -> function
-         None -> (db.db_iter_pool, false)
-       | Some tx -> (tx.iter_pool, false))
+    (fun db parent_tx f -> match parent_tx with
+         None ->
+           Miniregion.use db.db
+             (fun _ -> f ~iter_pool:db.db_iter_pool ~repeatable_read:false)
+       | Some tx ->
+           Miniregion.use db.db
+             (fun _ -> f ~iter_pool:tx.iter_pool ~repeatable_read:false))
     f
 
 let repeatable_read_transaction f =
   transaction_aux
-    (fun db -> function
+    (fun db parent_tx f -> match parent_tx with
          Some { repeatable_read = true; iter_pool; _} ->
-           (iter_pool, true)
+           Miniregion.use db.db
+             (fun _ -> f ~iter_pool ~repeatable_read:true)
        | _ ->
-           let access = lazy (L.Snapshot.read_access (L.Snapshot.make db.db)) in
-           let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
-                        (fun () -> return (RA.iterator (Lazy.force access)))
-           in (ref pool, true))
+           Miniregion.use db.db
+             (fun lldb ->
+                let access = lazy (L.Snapshot.read_access (L.Snapshot.make lldb)) in
+                let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
+                             (fun () -> return (RA.iterator (Lazy.force access)))
+                in
+                  f ~iter_pool:(ref pool) ~repeatable_read:true))
     f
 
 let lock_one ks ~shared name =
@@ -2061,9 +2132,10 @@ let load tx data =
         else begin
           tx.backup_writebatch <- lazy (L.Batch.make ());
           tx.backup_writebatch_size <- 0;
-          detach_ks_op tx.ks (L.Batch.write ~sync:true tx.ks.ks_db.db) wb >>
-          let () = reset_iter_pool tx.ks.ks_db in
-            return ()
+          Miniregion.use tx.ks.ks_db.db
+            (fun lldb ->
+               detach_ks_op tx.ks (L.Batch.write ~sync:true lldb) wb >>
+               reset_iter_pool tx.ks.ks_db)
         end
       end >>
       return true
@@ -2074,6 +2146,44 @@ let load_stats tx =
 
 let cursor_of_string = Obs_backup.cursor_of_string
 let string_of_cursor = Obs_backup.string_of_cursor
+
+type raw_dump = unit
+
+let trigger_raw_dump db =
+  Miniregion.update_value db.db
+    (fun lldb ->
+       (* flush *)
+       WRITEBATCH.close db.writebatch >>
+       let () = L.close lldb in
+       let lldb, finish_reopen = db.reopen () in
+         begin try_lwt
+           let dstdir =
+             Filename.concat db.basedir
+               (sprintf "dump-%f" (Unix.gettimeofday ())) in
+           let is_file fname =
+             let fname = Filename.concat db.basedir fname in
+             let st = Unix.stat fname in
+               match st.Unix.st_kind with
+                   Unix.S_REG -> true
+                 | _ -> false in
+           let hardlink_file fname =
+             let src = Filename.concat db.basedir fname in
+             let dst = Filename.concat dstdir fname in
+               Unix.link src dst in
+           let src_files =
+             Sys.readdir db.basedir |> Array.to_list |>
+             List.filter is_file
+           in
+             Unix.mkdir dstdir 0o755;
+             List.iter hardlink_file src_files;
+             return ()
+         with exn ->
+           (* FIXME: better log *)
+           eprintf "Error in trigger_raw_dump: %s\n%!" (Printexc.to_string exn);
+           return ()
+         end >>
+         let () = finish_reopen () in
+           return lldb)
 
 let with_transaction ks f =
   match Lwt.get tx_key with

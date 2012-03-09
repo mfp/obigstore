@@ -243,6 +243,13 @@ sig
 
   (** Load statistics  *)
   val load_stats : keyspace -> Obs_load_stats.stats Lwt.t
+
+
+  (** {3} Database dump. *)
+  type raw_dump
+
+  (** Request that the current state of the DB be dumped. *)
+  val trigger_raw_dump : db -> raw_dump Lwt.t
 end
 
 module type BACKUP_SUPPORT =

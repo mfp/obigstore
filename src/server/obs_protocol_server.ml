@@ -451,6 +451,11 @@ struct
                  in P.return_notifications ?buf c.och ~request_id l
                with Not_found ->
                  P.return_notifications ?buf c.och ~request_id [])
+    | Trigger_raw_dump { Trigger_raw_dump.record; } ->
+      (* FIXME: catch errors in trigger_raw_dump, signal to client *)
+      lwt raw_dump = D.trigger_raw_dump c.server.db in
+        (* FIXME: register raw dump in some table *)
+        P.return_raw_dump_id ?buf c.och ~request_id 0L
 
   and notify server ks topic =
     let ks_name = D.keyspace_name ks in

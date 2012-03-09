@@ -42,6 +42,7 @@
       "notify", NOTIFY;
       "await", AWAIT;
       "shared", SHARED;
+      "dump", DUMP;
     ]
 
  let () = 
