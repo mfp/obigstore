@@ -440,11 +440,12 @@ let () =
          ~seq_iterations:!write_iters)
   else begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
+    let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     let module C =
       struct
         let make_tmp_db () =
           lwt ich, och = Lwt_io.open_connection addr in
-            return (CLIENT.make ich och)
+            return (CLIENT.make ~data_address ich och)
 
         let is_remote = true
       end in

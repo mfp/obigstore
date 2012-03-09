@@ -13,7 +13,7 @@ OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread
 OCAMLFINDFLAGS += -syntax camlp4o
 
-OCAMLPACKS[] = batteries lwt lwt.unix lwt.syntax lwt.preemptive lwt.text
+OCAMLPACKS[] = batteries cryptokit lwt lwt.unix lwt.syntax lwt.preemptive lwt.text
 
 LD_PATHS[] =
 	$(file src/libs/ocaml-leveldb/leveldb)

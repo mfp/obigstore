@@ -87,8 +87,9 @@ let () =
                ~flags:[ Unix.O_CREAT; Unix.O_WRONLY; Unix.O_TRUNC; ]
                ~perm:0o600 ~mode:Lwt_io.output f in
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
+    let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
-    let db = D.make ich och in
+    let db = D.make ~data_address ich och in
       try_lwt
         dump db ~keyspace:!keyspace ?only_tables output
       finally

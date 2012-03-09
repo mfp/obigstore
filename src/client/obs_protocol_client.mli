@@ -22,7 +22,10 @@ module Make : functor(P : Obs_protocol.PAYLOAD) ->
 sig
   include Obs_data_model.S with type backup_cursor = string
   include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
-  val make : Lwt_io.input_channel -> Lwt_io.output_channel -> db
+
+  val make :
+    data_address:Unix.sockaddr ->
+    Lwt_io.input_channel -> Lwt_io.output_channel -> db
   val close : db -> unit
 
   (** {3} Asynchronous notifications *)

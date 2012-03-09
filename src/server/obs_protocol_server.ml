@@ -22,6 +22,8 @@ open Obs_data_model
 open Obs_protocol
 open Obs_request
 
+let data_protocol_version = (0, 0, 0)
+
 module Make
   (D : sig
      include Obs_data_model.S
@@ -81,6 +83,8 @@ struct
         subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
         rev_subscriptions :
           (keyspace_name, subs_stream * mutable_string_set) Hashtbl.t H.t;
+        raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
+        mutable raw_dump_seqno : Int64.t;
       }
 
   type client_state =
@@ -119,6 +123,12 @@ struct
   let request_slot_cost = function
       Load _ -> 100
     | _ -> 1
+
+  let with_raw_dump c id default f =
+    try_lwt
+      let raw_dump = Hashtbl.find c.server.raw_dumps id in
+        f raw_dump
+    with Not_found -> return default
 
   let rec service c =
     !auto_yielder () >>
@@ -454,8 +464,28 @@ struct
     | Trigger_raw_dump { Trigger_raw_dump.record; } ->
       (* FIXME: catch errors in Raw_dump.dump, signal to client *)
       lwt raw_dump = D.Raw_dump.dump c.server.db in
-        (* FIXME: register raw dump in some table *)
-        P.return_raw_dump_id ?buf c.och ~request_id 0L
+      lwt timestamp = D.Raw_dump.timestamp raw_dump in
+      let dump_id = c.server.raw_dump_seqno in
+        c.server.raw_dump_seqno <- Int64.add 1L dump_id;
+        Hashtbl.add c.server.raw_dumps dump_id raw_dump;
+        P.return_raw_dump_id_and_timestamp ?buf c.och ~request_id
+          (dump_id, timestamp)
+    | Raw_dump_release { Raw_dump_release.id } ->
+        with_raw_dump c id ()
+          (fun raw_dump ->
+             Hashtbl.remove c.server.raw_dumps id;
+             D.Raw_dump.release raw_dump) >>=
+        P.return_ok ?buf c.och ~request_id
+    | Raw_dump_size { Raw_dump_size.id } ->
+        with_raw_dump c id 0L D.Raw_dump.size >>=
+        P.return_raw_dump_size ?buf c.och ~request_id
+    | Raw_dump_list_files { Raw_dump_list_files.id } ->
+        with_raw_dump c id [] D.Raw_dump.list_files >>=
+        P.return_raw_dump_files ?buf c.och ~request_id
+    | Raw_dump_file_digest { Raw_dump_file_digest.id; file; } ->
+        with_raw_dump c id None
+          (fun d -> D.Raw_dump.file_digest d file) >>=
+        P.return_raw_dump_file_digest ?buf c.och ~request_id
 
   and notify server ks topic =
     let ks_name = D.keyspace_name ks in
@@ -500,6 +530,8 @@ struct
       db;
       subscriptions = Hashtbl.create 13;
       rev_subscriptions = H.create 13;
+      raw_dump_seqno = 0L;
+      raw_dumps = Hashtbl.create 13;
     }
 
   let client_id = ref 0
@@ -542,5 +574,47 @@ struct
            H.remove server.rev_subscriptions c.id;
            List.iter (Hashtbl.remove server.subscriptions) empty_topics;
            return ()
+
+  type data_protocol_response_code = [ `OK | `Unknown_dump | `Unknown_file ]
+
+  let data_response_code = function
+      `OK -> 0
+    | `Unknown_dump -> 1
+    | `Unknown_file -> 2
+
+  let send_response_code code och =
+    Lwt_io.LE.write_int och (data_response_code code)
+
+  let service_data_client server ?(debug=false) ich och =
+    try_lwt
+      let (self_major, self_minor, self_bugfix) = data_protocol_version in
+      lwt () =
+        Lwt_io.LE.write_int och self_major >>
+        Lwt_io.LE.write_int och self_minor >>
+        Lwt_io.LE.write_int och self_bugfix in
+      lwt major = Lwt_io.LE.read_int ich in
+      lwt minor = Lwt_io.LE.read_int ich in
+      lwt bugfix = Lwt_io.LE.read_int ich in
+      lwt dump_id = Lwt_io.LE.read_int64 ich in
+      lwt offset = Lwt_io.LE.read_int64 ich in
+      lwt name_siz = Lwt_io.LE.read_int ich in
+      lwt name = Lwt_io.read ~count:name_siz ich in
+        try
+          let dump = Hashtbl.find server.raw_dumps dump_id in
+            match_lwt D.Raw_dump.open_file dump ~offset name with
+                None -> send_response_code `Unknown_file och
+              | Some ic ->
+                  send_response_code `OK och >>
+                  let buf = String.create 16384 in
+                  let rec loop_copy_data () =
+                    match_lwt Lwt_io.read_into ic buf 0 16384 with
+                        0 -> return ()
+                      | n -> Lwt_io.write_from_exactly och buf 0 n >>
+                             loop_copy_data ()
+                  in loop_copy_data ()
+        with Not_found -> send_response_code `Unknown_dump och
+    with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
+      raise_lwt End_of_file
+
 end
 

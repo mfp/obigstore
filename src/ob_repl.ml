@@ -267,7 +267,10 @@ let execute ks db loop r =
 
   | Register_keyspace _ | Get_keyspace _
   | Load _| Dump _ | Get_column _ | Get_column_values _ | Get_columns _
-  | Get_slice_values _ | Get_slice_values_timestamps _ | Exist_keys _ -> ret_nothing ()
+  | Get_slice_values _ | Get_slice_values_timestamps _ | Exist_keys _
+  | Raw_dump_file_digest _ | Raw_dump_list_files _
+  | Raw_dump_size _ | Raw_dump_release _
+    -> ret_nothing ()
   | Trigger_raw_dump _ ->
       D.Raw_dump.dump db >>=
       ret (fun _ -> printf "Raw dump saved\n%!")
@@ -474,8 +477,9 @@ let () =
   end;
   Lwt_unix.run begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
+    let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
-    let db = D.make ich och in
+    let db = D.make ~data_address ich och in
     lwt ks = D.register_keyspace db !keyspace in
     let rec loop () =
       begin try_lwt

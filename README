@@ -33,6 +33,7 @@ Requirements
 * omake to build (omake)
 * GCC with C++ frontend (g++)
 * OCaml Batteries (libbatteries-ocaml-dev)
+* Cryptokit (libcryptokit-ocaml-dev)
 * Lwt (liblwt-ocaml-dev)
 * oUnit for the unit tests  (libounit-ocaml-dev)
 * extlib (libextlib-ocaml-dev)

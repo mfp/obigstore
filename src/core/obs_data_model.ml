@@ -87,6 +87,8 @@ type row_predicate = Satisfy_any of row_predicate_and list (* any of them *)
 
 type backup_format = int
 
+type raw_dump_timestamp = Int64.t
+
 (* {2 Data model } *)
 
 module type S =
@@ -252,6 +254,19 @@ sig
 
     (** Request that the current state of the DB be dumped. *)
     val dump : db -> raw_dump Lwt.t
+
+    (** Allow to release the resources associated to the dump (e.g., delete
+      * the actual data). Further operations on the dump will fail. *)
+    val release : raw_dump -> unit Lwt.t
+
+    val timestamp : raw_dump -> raw_dump_timestamp Lwt.t
+    val size : raw_dump -> Int64.t Lwt.t
+    val list_files : raw_dump -> (string * Int64.t) list Lwt.t
+    val file_digest : raw_dump -> string -> string option Lwt.t
+
+    val open_file :
+      raw_dump -> ?offset:Int64.t -> string ->
+      Lwt_io.input_channel option Lwt.t
   end
 end
 

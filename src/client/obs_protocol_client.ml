@@ -72,6 +72,7 @@ struct
     wait_for_pending_responses : ret Lwt_condition.t;
     async_req_id : string;
     mutable num_notification_waiters : int;
+    data_address : Unix.sockaddr;
   }
 
   type keyspace = { ks_name : string; ks_id : int; ks_db : db; }
@@ -152,7 +153,7 @@ struct
               end;
               get_response_loop t
 
-  let make ich och =
+  let make ~data_address ich och =
     let t =
       { ich; och; buf = Obs_bytea.create 64;
         closed = false; closed_exn = Obs_protocol.Error Obs_protocol.Closed;
@@ -160,6 +161,7 @@ struct
         async_req_id = "\001\000\000\000\000\000\000\000";
         wait_for_pending_responses = Lwt_condition.create ();
         num_notification_waiters = 0;
+        data_address;
       }
     in
       ignore begin try_lwt
@@ -429,12 +431,62 @@ struct
     async_request_ks ks (Await { Await.keyspace = ks.ks_id; })
       P.read_notifications
 
+  let data_protocol_version = (0, 0, 0)
+
+  let data_response_of_code = function
+      0 -> `OK
+    | 1 -> `Unknown_dump
+    | 2 -> `Unknown_file
+    | _ -> `Other
+
   module Raw_dump =
   struct
-    type raw_dump = Int64.t
+    type raw_dump = { db : db; id : Int64.t; timestamp : Int64.t; }
 
     let dump t =
-      sync_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
-        P.read_raw_dump_id
+      lwt id, timestamp =
+        sync_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
+          P.read_raw_dump_id_and_timestamp
+      in return { db = t; id; timestamp; }
+
+    let release d =
+      sync_request d.db
+        (Raw_dump_release { Raw_dump_release.id = d.id; })
+        P.read_ok
+
+    let open_file d ?(offset=0L) fname =
+      lwt ich, och = Lwt_io.open_connection d.db.data_address in
+      let (self_major, self_minor, self_bugfix) = data_protocol_version in
+      lwt () =
+        Lwt_io.LE.write_int och self_major >>
+        Lwt_io.LE.write_int och self_minor >>
+        Lwt_io.LE.write_int och self_bugfix in
+      lwt major = Lwt_io.LE.read_int ich in
+      lwt minor = Lwt_io.LE.read_int ich in
+      lwt bugfix = Lwt_io.LE.read_int ich in
+        Lwt_io.LE.write_int64 och d.id >>
+        Lwt_io.LE.write_int64 och offset >>
+        Lwt_io.LE.write_int och (String.length fname) >>
+        Lwt_io.write_from_exactly och fname 0 (String.length fname) >>
+        match_lwt Lwt_io.read_int ich >|= data_response_of_code with
+            `Other | `Unknown_dump | `Unknown_file -> return None
+          | `OK -> return (Some ich)
+
+    let timestamp d = return d.timestamp
+
+    let size d =
+      async_request d.db
+        (Raw_dump_size { Raw_dump_size.id = d.id; })
+        P.read_raw_dump_size
+
+    let list_files d =
+      async_request d.db
+        (Raw_dump_list_files { Raw_dump_list_files.id = d.id; })
+        P.read_raw_dump_files
+
+    let file_digest d file =
+      async_request d.db
+        (Raw_dump_file_digest { Raw_dump_file_digest.id = d.id; file; })
+        P.read_raw_dump_file_digest
   end
 end

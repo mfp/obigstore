@@ -72,6 +72,7 @@ struct
     let get_int32_le = Lwt_io.LE.read_int
     let get_status = get_int32_le
     let get_int64_le = Lwt_io.LE.read_int64
+    let get_float ich = Lwt_io.LE.read_int64 ich >|= Int64.float_of_bits
 
     let get_string ich =
       lwt count = get_int32_le ich in
@@ -362,10 +363,34 @@ struct
          E.add_status b 0;
          E.add_list E.add_string b l)
 
-  let return_raw_dump_id =
-    writer (fun b id -> E.add_status b 0;
-                        E.add_int64_le b id)
+  let return_raw_dump_id_and_timestamp =
+    writer (fun b (id, timestamp) -> E.add_status b 0;
+                                     E.add_int64_le b id;
+                                     E.add_int64_le b timestamp)
 
-  let read_raw_dump_id = reader D.get_int64_le
+  let read_raw_dump_id_and_timestamp =
+    reader (D.get_tuple2 D.get_int64_le D.get_int64_le)
+
+  let return_raw_dump_size =
+    writer (fun b siz -> E.add_status b 0;
+                         E.add_int64_le b siz)
+
+  let read_raw_dump_size = reader D.get_int64_le
+
+  let return_raw_dump_files =
+    writer
+      (fun b l ->
+         E.add_status b 0;
+         E.add_list (E.add_tuple2 E.add_string E.add_int64_le) b l)
+
+  let read_raw_dump_files =
+    reader (D.get_list (D.get_tuple2 D.get_string D.get_int64_le))
+
+  let return_raw_dump_file_digest =
+    writer
+      (fun b digest -> E.add_status b 0;
+                       E.add_option E.add_string b digest)
+
+  let read_raw_dump_file_digest = reader (D.get_option D.get_string)
 end
 

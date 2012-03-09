@@ -97,6 +97,8 @@ type tx_type =
     Repeatable_read
   | Read_committed
 
+type raw_dump_id = long
+
 message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
@@ -147,5 +149,9 @@ message request =
   | Notify { keyspace : keyspace; topic : string; }
   | Await { keyspace : keyspace; }
   | Trigger_raw_dump { record : bool; }
+  | Raw_dump_release { id : raw_dump_id; }
+  | Raw_dump_size { id : raw_dump_id; }
+  | Raw_dump_list_files { id : raw_dump_id; }
+  | Raw_dump_file_digest { id : raw_dump_id; file : string; }
 
 (* vim:set ft=omlet: *) 

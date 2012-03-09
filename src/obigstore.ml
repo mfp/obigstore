@@ -57,7 +57,8 @@ let () =
               Arg.usage params usage_message;
               exit 1)
     usage_message;
-  let addr = Unix.ADDR_INET (Unix.inet_addr_any, !port) in
+  let address = Unix.ADDR_INET (Unix.inet_addr_any, !port) in
+  let data_address = Unix.ADDR_INET (Unix.inet_addr_any, !port + 1) in
     match !db_dir with
         None -> Arg.usage params usage_message;
                 exit 1
@@ -67,4 +68,5 @@ let () =
                      ~write_buffer_size:!write_buffer_size
                      ~block_size:!block_size
                      ~max_open_files:!max_open_files
-          in Lwt_unix.run (S.run_plain_server ~debug:!debug db addr !port)
+          in Lwt_unix.run (S.run_plain_server ~debug:!debug db
+                             ~address ~data_address)

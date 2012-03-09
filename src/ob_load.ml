@@ -85,7 +85,8 @@ let () =
           lwt size = Lwt_io.file_length f in
             return (ich, Some size) in
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
+    let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
-    let db = D.make ich och in
+    let db = D.make ~data_address ich och in
       load db ~keyspace:!keyspace ?size input
   end

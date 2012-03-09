@@ -41,42 +41,51 @@ struct
       Unix.ADDR_UNIX s -> sprintf "unix socket %S" s
     | Unix.ADDR_INET (a, p) -> sprintf "%s:%d" (Unix.string_of_inet_addr a) p
 
-  let rec run_plain_server ?(debug=false) db address port =
-    let server = S.make db in
-    let rec accept_loop sock =
-      begin try_lwt
-        lwt (fd, addr) = Lwt_unix.accept sock in
-          if debug then eprintf "Got connection\n%!";
-          Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
-          ignore begin try_lwt
-            let ich = Lwt_io.of_fd Lwt_io.input fd in
-            let och = Lwt_io.of_fd Lwt_io.output fd in
-              try_lwt
-                handle_connection ~debug server { ich; och; addr }
-              finally
-                Lwt_io.abort och
-          with
-            | End_of_file ->
-                eprintf "Closing connection from %s\n%!" (string_of_addr addr);
-                return ()
-            | e ->
-                eprintf "Error with connection: %s\n%!" (Printexc.to_string e);
-                return ()
-          end;
-          return ()
-      with e ->
-        eprintf "Got toplevel exception: %s\n%!" (Printexc.to_string e);
-        Printexc.print_backtrace stderr;
-        Lwt_unix.sleep 0.05
-      end >>
-      accept_loop sock in
+  let rec accept_loop handle_connection ~debug ~server sock =
+    begin try_lwt
+      lwt (fd, addr) = Lwt_unix.accept sock in
+        if debug then eprintf "Got connection\n%!";
+        Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
+        ignore begin try_lwt
+          let ich = Lwt_io.of_fd Lwt_io.input fd in
+          let och = Lwt_io.of_fd Lwt_io.output fd in
+            try_lwt
+              handle_connection ~debug server { ich; och; addr }
+            finally
+              Lwt_io.abort och
+        with
+          | End_of_file ->
+              eprintf "Closing connection from %s\n%!" (string_of_addr addr);
+              return ()
+          | e ->
+              eprintf "Error with connection: %s\n%!" (Printexc.to_string e);
+              return ()
+        end;
+        return ()
+    with e ->
+      eprintf "Got toplevel exception: %s\n%!" (Printexc.to_string e);
+      Printexc.print_backtrace stderr;
+      Lwt_unix.sleep 0.05
+    end >>
+    accept_loop handle_connection ~debug ~server sock
 
+  let make_sock ?(reuseaddr=true) ?(backlog=1024) address =
     let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-      Lwt_unix.setsockopt sock Unix.SO_REUSEADDR true;
+      if reuseaddr then Lwt_unix.setsockopt sock Unix.SO_REUSEADDR true;
       Lwt_unix.bind sock address;
-      Lwt_unix.listen sock 1024;
-      accept_loop sock
+      Lwt_unix.listen sock backlog;
+      sock
+
+  let rec run_plain_server ?(debug=false) db ~address ~data_address =
+    let server = S.make db in
+      Lwt.join
+        [ accept_loop handle_connection ~debug ~server (make_sock address);
+          accept_loop handle_data_connection ~debug ~server (make_sock data_address);
+        ]
 
   and handle_connection ~debug server conn =
     S.service_client ~debug server conn.ich conn.och
+
+  and handle_data_connection ~debug server conn =
+    S.service_data_client ~debug server conn.ich conn.och
 end

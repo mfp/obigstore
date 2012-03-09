@@ -2150,42 +2150,97 @@ let string_of_cursor = Obs_backup.string_of_cursor
 
 module Raw_dump =
 struct
-  type raw_dump = unit
+  type raw_dump =
+      {
+        timestamp : Int64.t;
+        directory : string;
+      }
+
+  let is_file fname =
+    try
+        match (Unix.stat fname).Unix.st_kind with
+            Unix.S_REG -> true
+          | _ -> false
+    with Unix.Unix_error _ -> false
 
   let dump db =
-    Miniregion.update_value db.db
-      (fun lldb ->
-         (* flush *)
-         WRITEBATCH.close db.writebatch >>
-         let () = L.close lldb in
-         let lldb = db.reopen () in
-           begin try_lwt
-             let dstdir =
-               Filename.concat db.basedir
-                 (sprintf "dump-%f" (Unix.gettimeofday ())) in
-             let is_file fname =
-               let fname = Filename.concat db.basedir fname in
-               let st = Unix.stat fname in
-                 match st.Unix.st_kind with
-                     Unix.S_REG -> true
-                   | _ -> false in
-             let hardlink_file fname =
-               let src = Filename.concat db.basedir fname in
-               let dst = Filename.concat dstdir fname in
-                 Unix.link src dst in
-             let src_files =
-               Sys.readdir db.basedir |> Array.to_list |>
-               List.filter is_file
-             in
-               Unix.mkdir dstdir 0o755;
-               List.iter hardlink_file src_files;
+    let dstdir = ref "" in
+    let timestamp = ref 0L in
+      Miniregion.update_value db.db
+        (fun lldb ->
+           (* flush *)
+           WRITEBATCH.close db.writebatch >>
+           let () = L.close lldb in
+           let lldb = db.reopen () in
+             begin try_lwt
+               timestamp := Int64.of_float (Unix.gettimeofday () *. 1e6);
+               dstdir := Filename.concat db.basedir (sprintf "dump-%Ld" !timestamp);
+               let is_file fname = is_file (Filename.concat db.basedir fname) in
+               let hardlink_file fname =
+                 let src = Filename.concat db.basedir fname in
+                 let dst = Filename.concat !dstdir fname in
+                   Unix.link src dst in
+               let src_files =
+                 Sys.readdir db.basedir |> Array.to_list |>
+                 List.filter is_file
+               in
+                 Unix.mkdir !dstdir 0o755;
+                 List.iter hardlink_file src_files;
+                 return ()
+             with exn ->
+               (* FIXME: better log *)
+               eprintf "Error in Raw_dump.dump: %s\n%!" (Printexc.to_string exn);
                return ()
-           with exn ->
-             (* FIXME: better log *)
-             eprintf "Error in Raw_dump.dump: %s\n%!" (Printexc.to_string exn);
-             return ()
-           end >>
-           return lldb)
+             end >>
+             return lldb) >>
+    let ret = { directory = !dstdir; timestamp = !timestamp; } in
+      return ret
+
+  let timestamp d = return d.timestamp
+
+  let list_files d =
+    Sys.readdir d.directory |> Array.to_list |>
+    List.filter_map
+      (fun fname ->
+         let fullname = Filename.concat d.directory fname in
+         let open Unix.LargeFile in
+         let stat = stat fullname in
+           match stat.st_kind with
+               Unix.S_REG -> Some (fname, stat.st_size)
+             | _ -> None)
+    |> return
+
+  let size d =
+    list_files d >|=
+    List.fold_left (fun s (_, fs) -> Int64.add s fs) 0L
+
+  let md5digest_of_file fname =
+    try_lwt
+      let ic = open_in fname in
+        try_lwt
+          lwt digest =
+            Lwt_preemptive.detach
+              (fun () -> Cryptokit.hash_channel (Cryptokit.Hash.md5 ()) ic)
+              ()
+          in return (Some digest)
+        finally
+          close_in ic;
+          return ()
+    with _ -> return None
+
+  let file_digest d fname =
+    md5digest_of_file (Filename.concat d.directory fname)
+
+  let open_file d ?offset fname =
+    let fname = Filename.concat d.directory fname in
+      try_lwt
+        lwt ic = Lwt_io.open_file ~mode:Lwt_io.input fname in
+          match offset with
+              None -> return (Some ic)
+            | Some off -> Lwt_io.set_position ic off >> return (Some ic)
+      with _ -> return None
+
+  let release d = return () (* FIXME: delete dir and files *)
 end
 
 let with_transaction ks f =
