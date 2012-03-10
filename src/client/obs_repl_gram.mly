@@ -86,6 +86,7 @@ phrase : /* empty */  { Nothing }
                                            { R.Trigger_raw_dump.record = false }) }
   | DUMP LOCAL { Dump_local None }
   | DUMP LOCAL ID { Dump_local (Some $3) }
+  | DUMP LOCAL TO ID { Dump_local (Some $4) }
   | count     { $1 }
   | get       { $1 }
   | put       { $1 }
