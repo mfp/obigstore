@@ -132,7 +132,8 @@ let escape_string s =
     let n = ref 0 in
       for i = 0 to String.length s - 1 do
         n := !n + (match s.[i] with
-                       c when is_printable c -> 1
+                       '\\' | '"' -> 2
+                     | c when is_printable c -> 1
                      | _ -> 4);
       done;
       !n in
@@ -140,7 +141,10 @@ let escape_string s =
   let n = ref 0 in
     for i = 0 to String.length s - 1 do
       match s.[i] with
-          c when is_printable c -> ret.[!n] <- c;
+          '\\' | '"' as c -> ret.[!n] <- '\\';
+                             ret.[!n+1] <- c;
+                             n := !n + 2;
+        | c when is_printable c -> ret.[!n] <- c;
                                    incr n
         | c -> ret.[!n] <- '\\';
                ret.[!n+1] <- 'x';
