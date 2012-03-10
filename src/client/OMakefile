@@ -2,6 +2,7 @@ OCAMLINCLUDES += ../core
 OCAML_LIBS[] += ../obigstore_core
 
 OBJECTS[] =
+  obs_dump
   obs_util
   obs_protocol_client
   obs_repl_common

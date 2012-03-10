@@ -91,6 +91,27 @@ type raw_dump_timestamp = Int64.t
 
 (* {2 Data model } *)
 
+module type RAW_DUMP =
+sig
+  type db
+  type raw_dump
+
+  (** Request that the current state of the DB be dumped. *)
+  val dump : db -> raw_dump Lwt.t
+
+  (** Allow to release the resources associated to the dump (e.g., delete
+    * the actual data). Further operations on the dump will fail. *)
+  val release : raw_dump -> unit Lwt.t
+
+  val timestamp : raw_dump -> raw_dump_timestamp Lwt.t
+  val list_files : raw_dump -> (string * Int64.t) list Lwt.t
+  val file_digest : raw_dump -> string -> string option Lwt.t
+
+  val open_file :
+    raw_dump -> ?offset:Int64.t -> string ->
+    Lwt_io.input_channel option Lwt.t
+end
+
 module type S =
 sig
   type db
@@ -248,25 +269,7 @@ sig
 
 
   (** {3} Database dump. *)
-  module Raw_dump :
-  sig
-    type raw_dump
-
-    (** Request that the current state of the DB be dumped. *)
-    val dump : db -> raw_dump Lwt.t
-
-    (** Allow to release the resources associated to the dump (e.g., delete
-      * the actual data). Further operations on the dump will fail. *)
-    val release : raw_dump -> unit Lwt.t
-
-    val timestamp : raw_dump -> raw_dump_timestamp Lwt.t
-    val list_files : raw_dump -> (string * Int64.t) list Lwt.t
-    val file_digest : raw_dump -> string -> string option Lwt.t
-
-    val open_file :
-      raw_dump -> ?offset:Int64.t -> string ->
-      Lwt_io.input_channel option Lwt.t
-  end
+  module Raw_dump : RAW_DUMP with type db := db
 end
 
 module type BACKUP_SUPPORT =

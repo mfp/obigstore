@@ -562,67 +562,6 @@ let get_phrase () =
       ()
   end
 
-let copy_stream ic oc =
-  let buf = String.create 16384 in
-  let rec copy_loop () =
-    match_lwt Lwt_io.read_into ic buf 0 16384 with
-        0 -> return ()
-      | n -> Lwt_io.write_from_exactly oc buf 0 n >>
-             copy_loop ()
-  in copy_loop ()
-
-let file_exists_with_size file size =
-  try
-    let open Unix.LargeFile in
-    let st = stat file in
-      match st.st_kind with
-          Unix.S_REG -> st.st_size = size
-        | _ -> false
-  with Unix.Unix_error _ -> false
-
-let dump_local db dst =
-  lwt dump = D.Raw_dump.dump db in
-  lwt files = D.Raw_dump.list_files dump >|=
-              List.sort (fun (n1, _) (n2, _) -> String.compare n1 n2) in
-  lwt timestamp = D.Raw_dump.timestamp dump in
-  let nfiles, size =
-    List.fold_left (fun (n, s) (_, fsiz) -> n + 1, Int64.add s fsiz) (0, 0L) files in
-  let dstdir = match dst with
-      None -> sprintf "dump-%Ld" timestamp
-    | Some dst -> dst in
-  let t0 = Unix.gettimeofday () in
-    (try Unix.mkdir dstdir 0o750
-     with Unix.Unix_error(Unix.EEXIST, _, _) -> ());
-    puts "Dumping %s (%d files) to directory %s"
-      (Obs_util.format_size 1.0 size) nfiles dstdir;
-    Lwt_list.iter_s
-      (fun (file, size) ->
-         let dst = Filename.concat dstdir file in
-           if file_exists_with_size dst size then begin
-             puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
-             return ()
-           end else begin
-             match_lwt D.Raw_dump.open_file dump file with
-                 None -> return ()
-               | Some ic ->
-                     Lwt_io.with_file
-                       ~mode:Lwt_io.output
-                       ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
-                       dst (copy_stream ic)
-           end)
-      files >>
-    let dt = Unix.gettimeofday () -. t0 in
-      puts "Retrieved in %.2fs (%s/s)" dt (Obs_util.format_size (1.0 /. dt) size);
-      D.Raw_dump.release dump
-
-let dump_local db dst =
-  try_lwt
-    dump_local db dst
-  with exn ->
-    let backtrace = Printexc.get_backtrace () in
-      puts "%s\n%s" (Printexc.to_string exn) backtrace;
-      return ()
-
 let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
   Printexc.record_backtrace true;
@@ -665,7 +604,13 @@ let () =
                 return ()
             | Nothing -> print_endline "Nothing"; return ()
             | Error s -> printf "Error: %s\n%!" s; return ()
-            | Dump_local dst -> dump_local db dst
+            | Dump_local destdir ->
+                let module DUMP = Obs_dump.Make(struct
+                                                  include D
+                                                  include D.Raw_dump
+                                                end ) in
+                lwt _ = DUMP.dump_local db ?destdir in
+                  return ()
       with
         | Parsing.Parse_error ->
             print_endline "Parse error";
