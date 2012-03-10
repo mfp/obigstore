@@ -1,0 +1,3 @@
+* review possible long-lived iterator mem usage issue 
+
+  http://groups.google.com/group/leveldb/browse_thread/thread/3ecaf0126363c0be
