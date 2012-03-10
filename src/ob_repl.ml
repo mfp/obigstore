@@ -487,7 +487,8 @@ let dump_local db dst =
       None -> sprintf "dump-%Ld" timestamp
     | Some dst -> dst in
   let t0 = Unix.gettimeofday () in
-    Unix.mkdir dstdir 0o750;
+    (try Unix.mkdir dstdir 0o750
+     with Unix.Unix_error(Unix.EEXIST, _, _) -> ());
     puts "Dumping %s (%d files) to directory %s"
       (Obs_util.format_size 1.0 size) nfiles dstdir;
     Lwt_list.iter_s
