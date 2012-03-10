@@ -608,7 +608,10 @@ struct
                         0 -> return ()
                       | n -> Lwt_io.write_from_exactly och buf 0 n >>
                              loop_copy_data ()
-                  in loop_copy_data ()
+                  in loop_copy_data () >>
+                     (* client gets End_of_file if we don't flush (i.e. the
+                      * conn is shutdown before the data is sent) *)
+                     Lwt_io.flush och
         with Not_found -> send_response_code `Unknown_dump och
     with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
       raise_lwt End_of_file
