@@ -99,22 +99,50 @@ let prompt () =
 let print_list f l =
   List.iter (fun x -> print_endline (f x)) l
 
-let pp_data fmt = Format.fprintf fmt "%S"
+let is_id_char = function
+    'A'..'Z' | 'a'..'z' | '0'..'9' | '_' -> true
+    | _ -> false
+
+let all_characters_are_id s =
+  let ok_so_far = ref true in
+  let i = ref 0 in
+  let len = String.length s in
+    while !ok_so_far && !i < len do
+      ok_so_far := is_id_char (String.unsafe_get s !i);
+      incr i
+    done;
+    !ok_so_far
+
+let can_print_as_identifier = function
+    "" -> false
+  | s -> all_characters_are_id s
+
+let pp_datum fmt = function
+    s when can_print_as_identifier s -> Format.fprintf fmt "%s" s
+  | s -> Format.fprintf fmt "%S" s
 
 let rec pp_cols fmt = function
     [] -> ()
-  | [ { name; data } ] -> Format.fprintf fmt "%a: %a" pp_data name pp_data data
+  | [ { name; data } ] -> Format.fprintf fmt "%a: %a" pp_datum name pp_datum data
   | { name; data } :: tl ->
-      Format.fprintf fmt "%a: %a@ " pp_data name pp_data data;
+      Format.fprintf fmt "%a: %a,@ " pp_datum name pp_datum data;
       pp_cols fmt tl
 
 let pprint_slice (last_key, key_data) =
+  Format.printf "%s@." (String.make 78 '-');
+  Format.printf "{@\n";
   List.iter
-    (fun kd -> Format.printf " %S: @[%a@]@." kd.key pp_cols kd.columns)
+    (fun kd ->
+       Format.printf " @[<2>%a:@\n{@[<1> %a },@]@]@\n@."
+         pp_datum kd.key pp_cols kd.columns)
     key_data;
-  Format.printf "Last_key: %s@."
-    (Option.map_default (sprintf "%S") "<none>" last_key)
-
+  Format.printf "}@\n";
+  Format.printf "%s@." (String.make 78 '-');
+  Format.printf "Last_key: %a@."
+    (fun fmt k -> match k with
+         None -> Format.printf "<none>"
+       | Some k -> pp_datum fmt k)
+    last_key
 
 module Directives =
 struct
