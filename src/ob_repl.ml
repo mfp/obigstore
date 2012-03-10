@@ -178,16 +178,24 @@ let rec pp_cols fmt = function
       Format.fprintf fmt "%a: %a,@ " pp_key name pp_datum data;
       pp_cols fmt tl
 
-let pprint_slice (last_key, key_data) =
-  Format.printf "%s@." (String.make 78 '-');
-  Format.printf "{@\n";
+let rec pp_lines f fmt = function
+    [] -> ()
+  | x :: tl ->
+      Format.fprintf fmt "%a@." f x;
+      pp_lines f fmt tl
+
+let pprint_slice fmt (last_key, key_data) =
+  if fmt == Format.std_formatter then
+    Format.printf "%s@." (String.make 78 '-');
+  Format.fprintf fmt "{@\n";
   List.iter
     (fun kd ->
-       Format.printf " @[<2>%a:@\n{@[<1> %a },@]@]@\n@."
+       Format.fprintf fmt " @[<2>%a:@\n{@[<1> %a },@]@]@\n@."
          pp_key kd.key pp_cols kd.columns)
     key_data;
-  Format.printf "}@\n";
-  Format.printf "%s@." (String.make 78 '-');
+  Format.fprintf fmt "}@\n@.";
+  if fmt == Format.std_formatter then
+    Format.printf "%s@." (String.make 78 '-');
   Format.printf "Last_key: %a@."
     (fun fmt k -> match k with
          None -> Format.printf "<none>"
@@ -334,7 +342,7 @@ struct
     Hashtbl.fold (fun name _ l -> name :: l) directive_tbl []
 end
 
-let execute ks db loop r =
+let execute ?(fmt=Format.std_formatter) ks db loop r =
   let open Request in
   let ret f v = return (fun () -> f v) in
   let ret_nothing () = return (fun () -> ()) in
@@ -384,7 +392,7 @@ let execute ks db loop r =
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       lwt keys = D.get_keys ks table ?max_keys key_range in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));
-        ret (print_list (sprintf "%S")) keys
+        ret (pp_lines pp_datum fmt) keys
   | Count_keys { Count_keys.table; key_range; } ->
       D.count_keys ks table key_range >>= ret (printf "%Ld\n%!")
   | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range;
@@ -398,7 +406,7 @@ let execute ks db loop r =
       in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int nkeys));
         Timing.cnt_cols := Int64.(add !Timing.cnt_cols (of_int ncols));
-        ret pprint_slice slice
+        ret (pprint_slice fmt) slice
   | Put_columns { Put_columns.table; data } ->
       let keys = List.length data in
       let columns = List.fold_left (fun s (_, l) -> List.length l + s) 0 data in
@@ -457,13 +465,13 @@ let execute ks db loop r =
         lwt l = D.await_notifications ks in
           ret (print_list (sprintf "%S")) l
 
-let execute ks db loop req =
+let execute ?(fmt = Format.std_formatter) ks db loop req =
   let keys = !Timing.cnt_keys in
   let cols = !Timing.cnt_cols in
   let put_keys = !Timing.cnt_put_keys in
   let put_cols = !Timing.cnt_put_cols in
     Timing.set_time_ref ();
-    lwt print = execute ks db loop req in
+    lwt print = execute ~fmt ks db loop req in
       match Timing.get_time_delta () with
           None -> print (); return ()
         | Some _ when not (Timing.enabled ()) -> print (); return ()
@@ -625,10 +633,23 @@ let () =
         lwt phrase = get_phrase () in
         let lexbuf = Lexing.from_string phrase in
           match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
-              Command req ->
+              Command (req, None) ->
                 lwt () = execute ks db loop req in
                   phrase_history := phrase :: !phrase_history;
                   return ()
+            | Command (req, Some dst) ->
+                let oc = open_out dst in
+                  try_lwt
+                    let fmt =
+                      Format.make_formatter
+                        (Pervasives.output oc)
+                        (fun () -> Pervasives.flush oc) in
+                    lwt () = execute ~fmt ks db loop req in
+                      phrase_history := phrase :: !phrase_history;
+                      return ()
+                  finally
+                    close_out oc;
+                    return ()
             | Directive (directive, args) ->
                 Directives.eval_directive directive args;
                 phrase_history := phrase :: !phrase_history;

@@ -45,7 +45,7 @@ let col_range_of_multi_range = function
 %token <int> INT
 %token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
-%token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL
+%token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
 %start input
@@ -56,7 +56,7 @@ let col_range_of_multi_range = function
 input : phrase EOF { $1 }
 
 phrase : /* empty */  { Nothing }
-  | KEYSPACES { Command (R.List_keyspaces { R.List_keyspaces.prefix = "" }) }
+  | KEYSPACES { Command (R.List_keyspaces { R.List_keyspaces.prefix = "" }, None) }
   | TABLES    { with_ks
                   (fun keyspace ->
                      R.List_tables { R.List_tables.keyspace }) }
@@ -120,37 +120,40 @@ count :
                                           key_range; }) }
 
 get :
-    GET ID range opt_multi_range opt_row_predicate
-       { with_ks
+    GET ID range opt_multi_range opt_row_predicate opt_redir
+       {
+         with_ks_unwrap
            (fun keyspace ->
               let column_range, max_columns = match $4 with
                   None -> Column_range.All_columns, None
                 | Some x -> x in
               let key_range = match fst $3 with
                   Range r -> Key_range.Key_range r
-                | List l -> Key_range.Keys l
-              in
+                | List l -> Key_range.Keys l in
+              let req =
                 R.Get_slice
                   { R.Get_slice.keyspace; table = $2;
-                    max_keys = snd $3;
-                    decode_timestamps = true;
-                    max_columns; key_range;
-                    predicate = $5;
-                    column_range; }) }
-  | GET KEYS ID opt_range
+                    max_keys = snd $3; decode_timestamps = true;
+                    max_columns; key_range; predicate = $5;
+                    column_range; }
+              in Command (req, $6))
+       }
+  | GET KEYS ID opt_range opt_redir
       {
-        with_ks
-           (fun keyspace ->
-              let key_range = match $4 with
-                  Some (Range r, _) -> Key_range.Key_range r
-                | Some (List l, _) -> Key_range.Keys l
-                | None -> all_keys in
-              let max_keys = match $4 with
-                  None -> None
-                | Some (_, x) -> x
-              in
-                R.Get_keys
-                  { R.Get_keys.keyspace; table = $3; max_keys; key_range; }) }
+        with_ks_unwrap
+          (fun keyspace ->
+             let key_range = match $4 with
+                 Some (Range r, _) -> Key_range.Key_range r
+               | Some (List l, _) -> Key_range.Keys l
+               | None -> all_keys in
+             let max_keys = match $4 with
+                 None -> None
+               | Some (_, x) -> x in
+             let req =
+               R.Get_keys
+                 { R.Get_keys.keyspace; table = $3; max_keys; key_range; }
+             in Command (req, $5))
+      }
 
 put :
     PUT ID LBRACKET ID RBRACKET LBRACKET bindings RBRACKET
@@ -265,3 +268,7 @@ id_list :
 opt_id :
     /* empty */  { None }
   | ID           { Some $1 }
+
+opt_redir :
+    /* empty */  { None }
+  | TO ID        { Some $2 }
