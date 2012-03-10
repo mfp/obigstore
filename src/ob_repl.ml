@@ -235,8 +235,13 @@ struct
      GET KEYS table[~/10]       Get up to 10 keys from table, in reverse order\n\
      GET KEYS table[k1:k2/10]   Get up to 10 keys from table between k1 and k2\n\
      GET KEYS table[k2~k1/10]   Same as above in reverse order\n\
+     GET KEYS table[/100] TO tablekeys.txt
+                           Write first (up to) 100 keys to 'tablekeys.txt'.\n\
 \n\
      GET table[key]             Get all columns for key in table\n\
+     GET table[/100][c1, c2] TO foo.json
+                           Output the values of the c1 and c2 columns for
+                           up to 100 keys to 'foo.json'.\n\
      GET table[key][c1,c2]      Get columns c1 and c2 from key in table\n\
      GET table[k1:k2/10]        Get all columns for up to 10 keys between k1 and k2\n\
      GET table[k2~k1/10]        Similar to above in reverse order\n\
@@ -244,7 +249,7 @@ struct
                            Get up to 4 columns taken from c1, c2, and the
                            range from c5 to c9, for up to 10 keys
                            between k1 and k2\n\
-     GET table[k1:k2/10][a,b] / x = \"foo\" || \"bar1\" < y <= \"bar9\"
+     GET table[k1:k2/10][a,b] / x = \"foo\" && \"bar1\" < y <= \"bar9\"
                            Get columns a and b for up to 10 keys between k1
                            and k2, whose x column has value 'foo' and
                            whose y column is comprised between 'bar1' and
