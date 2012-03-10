@@ -476,6 +476,15 @@ let copy_stream ic oc =
              copy_loop ()
   in copy_loop ()
 
+let file_exists_with_size file size =
+  try
+    let open Unix.LargeFile in
+    let st = stat file in
+      match st.st_kind with
+          Unix.S_REG -> st.st_size = size
+        | _ -> false
+  with Unix.Unix_error _ -> false
+
 let dump_local db dst =
   lwt dump = D.Raw_dump.dump db in
   lwt files = D.Raw_dump.list_files dump >|=
@@ -493,14 +502,19 @@ let dump_local db dst =
       (Obs_util.format_size 1.0 size) nfiles dstdir;
     Lwt_list.iter_s
       (fun (file, size) ->
-         match_lwt D.Raw_dump.open_file dump file with
-             None -> return ()
-           | Some ic ->
-               let dst = Filename.concat dstdir file in
-                 Lwt_io.with_file
-                   ~mode:Lwt_io.output
-                   ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
-                   dst (copy_stream ic))
+         let dst = Filename.concat dstdir file in
+           if file_exists_with_size dst size then begin
+             puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
+             return ()
+           end else begin
+             match_lwt D.Raw_dump.open_file dump file with
+                 None -> return ()
+               | Some ic ->
+                     Lwt_io.with_file
+                       ~mode:Lwt_io.output
+                       ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
+                       dst (copy_stream ic)
+           end)
       files >>
     let dt = Unix.gettimeofday () -. t0 in
       puts "Retrieved in %.2fs (%s/s)" dt (Obs_util.format_size (1.0 /. dt) size);
