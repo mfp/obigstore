@@ -2240,7 +2240,15 @@ struct
             | Some off -> Lwt_io.set_position ic off >> return (Some ic)
       with _ -> return None
 
-  let release d = return () (* FIXME: delete dir and files *)
+  let ign_unix_error f x =
+    try f x with Unix.Unix_error _ -> ()
+
+  let release d =
+    Array.iter
+      (fun fname -> ign_unix_error Unix.unlink (Filename.concat d.directory fname))
+      (Sys.readdir d.directory);
+    ign_unix_error Unix.rmdir d.directory;
+    return ()
 end
 
 let with_transaction ks f =
