@@ -30,6 +30,7 @@ let server = ref "127.0.0.1"
 let port = ref 12050
 let output = ref "-"
 let raw_dump_dstdir = ref None
+let verbose = ref false
 
 let usage_message = "Usage: ob_dump [-keyspace NAME | -full DIR] [options]"
 
@@ -44,6 +45,7 @@ let params =
       "-o", Arg.Set_string output, "FILE Dump to file FILE (default: '-')";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+      "-v", Arg.Set verbose, " Verbose mode.";
     ]
 
 let dump db ~keyspace ~only_tables och =
@@ -103,6 +105,6 @@ let () =
         | Some destdir ->
             let module DUMP =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
-            lwt _ = DUMP.dump_local ~destdir db in
+            lwt _ = DUMP.dump_local ~verbose:!verbose ~destdir db in
               return ()
   end

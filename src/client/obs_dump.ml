@@ -42,7 +42,7 @@ let file_exists_with_size file size =
 
 module Make(D : Obs_data_model.RAW_DUMP) =
 struct
-  let dump_local db dst =
+  let dump_local ~verbose db dst =
     lwt dump = D.dump db in
     lwt files = D.list_files dump >|=
                 List.sort (fun (n1, _) (n2, _) -> String.compare n1 n2) in
@@ -61,16 +61,19 @@ struct
         (fun (file, size) ->
            let dst = Filename.concat dstdir file in
              if file_exists_with_size dst size then begin
-               puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
+               if verbose then
+                 puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
                return ()
              end else begin
                match_lwt D.open_file dump file with
                    None -> return ()
                  | Some ic ->
-                       Lwt_io.with_file
-                         ~mode:Lwt_io.output
-                         ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
-                         dst (copy_stream ic)
+                     if verbose then
+                       puts "Retrieving %s (%s)." file (Obs_util.format_size 1.0 size);
+                     Lwt_io.with_file
+                       ~mode:Lwt_io.output
+                       ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
+                       dst (copy_stream ic)
              end)
         files >>
       let dt = Unix.gettimeofday () -. t0 in
@@ -78,5 +81,5 @@ struct
         D.release dump >>
         return dstdir
 
-  let dump_local ?destdir db = dump_local db destdir
+  let dump_local ?(verbose=false) ?destdir db = dump_local ~verbose db destdir
 end
