@@ -44,7 +44,8 @@ struct
   let rec accept_loop handle_connection ~debug ~server sock =
     begin try_lwt
       lwt (fd, addr) = Lwt_unix.accept sock in
-        if debug then eprintf "Got connection\n%!";
+        if debug then
+          eprintf "Got connection from %s\n%!" (string_of_addr addr);
         Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
         ignore begin try_lwt
           let ich = Lwt_io.of_fd Lwt_io.input fd in
