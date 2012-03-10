@@ -503,7 +503,7 @@ let dump_local db dst =
       files >>
     let dt = Unix.gettimeofday () -. t0 in
       puts "Retrieved in %.2fs (%s/s)" dt (Obs_util.format_size (1.0 /. dt) size);
-      return ()
+      D.Raw_dump.release dump
 
 let dump_local db dst =
   try_lwt
