@@ -29,8 +29,9 @@ let tables = ref []
 let server = ref "127.0.0.1"
 let port = ref 12050
 let output = ref "-"
+let raw_dump_dstdir = ref None
 
-let usage_message = "Usage: ob_dump -keyspace NAME [options]"
+let usage_message = "Usage: ob_dump [-keyspace NAME | -full DIR] [options]"
 
 let params =
   Arg.align
@@ -38,6 +39,8 @@ let params =
       "-keyspace", Arg.Set_string keyspace, "NAME Dump tables in keyspace NAME.";
       "-table", Arg.String (fun s -> tables := s :: !tables),
         "NAME Dump table NAME (default: all)";
+      "-full", Arg.String (fun s -> raw_dump_dstdir := Some s),
+        "DIRNAME Perform raw dump of whole database to given directory.";
       "-o", Arg.Set_string output, "FILE Dump to file FILE (default: '-')";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
@@ -73,25 +76,33 @@ let dump db ~keyspace ~only_tables och =
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
-  if !keyspace = "" then begin
-    Arg.usage params usage_message;
-    exit 1
+  begin match !keyspace, !raw_dump_dstdir with
+      "", None -> Arg.usage params usage_message; exit 1
+    | _ -> ()
   end;
   let only_tables = match List.rev !tables with
       [] -> None
     | l -> Some l
   in Lwt_unix.run begin
-    lwt output = match !output with
-        "-" -> return Lwt_io.stdout
-      | f -> Lwt_io.open_file
-               ~flags:[ Unix.O_CREAT; Unix.O_WRONLY; Unix.O_TRUNC; ]
-               ~perm:0o600 ~mode:Lwt_io.output f in
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
     let db = D.make ~data_address ich och in
-      try_lwt
-        dump db ~keyspace:!keyspace ?only_tables output
-      finally
-        Lwt_io.close output
+      match !raw_dump_dstdir with
+          None ->
+            lwt output = match !output with
+                "-" -> return Lwt_io.stdout
+              | f -> Lwt_io.open_file
+                       ~flags:[ Unix.O_CREAT; Unix.O_WRONLY; Unix.O_TRUNC; ]
+                       ~perm:0o600 ~mode:Lwt_io.output f
+            in
+              try_lwt
+                dump db ~keyspace:!keyspace ?only_tables output
+              finally
+                Lwt_io.close output
+        | Some destdir ->
+            let module DUMP =
+              Obs_dump.Make(struct include D include D.Raw_dump end) in
+            lwt _ = DUMP.dump_local ~destdir db in
+              return ()
   end
