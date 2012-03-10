@@ -230,7 +230,7 @@ struct
      COUNT table                Count keys in table\n\
      COUNT table[x:y]           Count keys in table between keys x and y\n\
 \n\
-     GET KEYS table             Get all keys in table\n\
+     GET KEYS table             Get all keys in table.\n\
      GET KEYS table[/10]        Get up to 10 keys from table\n\
      GET KEYS table[~/10]       Get up to 10 keys from table, in reverse order\n\
      GET KEYS table[k1:k2/10]   Get up to 10 keys from table between k1 and k2\n\
@@ -259,7 +259,11 @@ struct
                            Put columns c1 and c2 into given key in table\n\
 \n\
      DELETE table[key][col]     Delete column col for given key in table\n\
-     DELETE table[key]          Delete all columns for given key in table"
+     DELETE table[key]          Delete all columns for given key in table\n\
+\n\
+     DUMP                       Trigger server-side database dump.\n\
+     DUMP LOCAL                 Dump database in new (timestamped) directory.\n\
+     DUMP LOCAL TO dirname      Dump database to directory 'dirname'."
 
   let help_message = function
       `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" (cmd ^ ";") h
