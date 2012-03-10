@@ -58,8 +58,12 @@ struct
               eprintf "Closing connection from %s\n%!" (string_of_addr addr);
               return ()
           | e ->
-              eprintf "Error with connection: %s\n%!" (Printexc.to_string e);
-              return ()
+              let bt = match Printexc.get_backtrace () with
+                  "" -> "<no backtrace>"
+                | s -> s
+              in
+                eprintf "Error with connection: %s\n%s\n%!" (Printexc.to_string e) bt;
+                return ()
         end;
         return ()
     with e ->
