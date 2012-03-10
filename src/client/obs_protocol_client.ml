@@ -20,6 +20,7 @@
 open Lwt
 open Obs_data_model
 open Obs_request
+open Obs_protocol
 open Request
 
 module Make(P : Obs_protocol.PAYLOAD) =
@@ -432,12 +433,6 @@ struct
       P.read_notifications
 
   let data_protocol_version = (0, 0, 0)
-
-  let data_response_of_code = function
-      0 -> `OK
-    | 1 -> `Unknown_dump
-    | 2 -> `Unknown_file
-    | _ -> `Other
 
   module Raw_dump =
   struct

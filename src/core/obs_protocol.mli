@@ -119,3 +119,12 @@ sig
   val read_raw_dump_files : (string * Int64.t) list reader
   val read_raw_dump_file_digest : string option reader
 end
+
+type data_request = [ `Get_file | `Get_updates ]
+type data_response = [ `OK | `Unknown_dump | `Unknown_file ]
+
+val data_response_code : data_response -> int
+val data_response_of_code : int -> [ data_response | `Other ]
+
+val data_request_code : data_request -> int
+val data_request_of_code : int -> [ data_request | `Other ]

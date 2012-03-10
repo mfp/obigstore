@@ -176,3 +176,26 @@ sig
   val read_raw_dump_files : (string * Int64.t) list reader
   val read_raw_dump_file_digest : string option reader
 end
+
+type data_request = [ `Get_file | `Get_updates ]
+type data_response = [ `OK | `Unknown_dump | `Unknown_file ]
+
+let data_response_code = function
+    `OK -> 0
+  | `Unknown_dump -> 1
+  | `Unknown_file -> 2
+
+let data_response_of_code = function
+    0 -> `OK
+  | 1 -> `Unknown_dump
+  | 2 -> `Unknown_file
+  | _ -> `Other
+
+let data_request_of_code = function
+    0 -> `Get_file
+  | 1 -> `Get_updates
+  | _ -> `Other
+
+let data_request_code = function
+    `Get_file -> 0
+  | `Get_updates -> 1

@@ -573,13 +573,6 @@ struct
            List.iter (Hashtbl.remove server.subscriptions) empty_topics;
            return ()
 
-  type data_protocol_response_code = [ `OK | `Unknown_dump | `Unknown_file ]
-
-  let data_response_code = function
-      `OK -> 0
-    | `Unknown_dump -> 1
-    | `Unknown_file -> 2
-
   let send_response_code code och =
     Lwt_io.LE.write_int och (data_response_code code)
 
