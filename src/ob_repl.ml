@@ -24,6 +24,7 @@ open Obs_repl_common
 open Obs_data_model
 
 module Option = BatOption
+module Array = struct include BatArray include Array end
 
 exception Commit_exn
 exception Abort_exn
@@ -103,29 +104,74 @@ let is_id_char = function
     'A'..'Z' | 'a'..'z' | '0'..'9' | '_' -> true
     | _ -> false
 
-let all_characters_are_id s =
+let char_is_id = function
+    'A'..'Z' | 'a'..'z' | '0'..'9' | '_' -> true
+  | _ -> false
+
+let char_is_num = function
+    '0'..'9' -> true
+  | _ -> false
+
+let all_chars_satisfy pred s =
   let ok_so_far = ref true in
   let i = ref 0 in
   let len = String.length s in
     while !ok_so_far && !i < len do
-      ok_so_far := is_id_char (String.unsafe_get s !i);
+      ok_so_far := pred (String.unsafe_get s !i);
       incr i
     done;
     !ok_so_far
 
-let can_print_as_identifier = function
-    "" -> false
-  | s -> all_characters_are_id s
+external is_printable: char -> bool = "caml_is_printable"
+
+let hex_table =
+  Array.init 16 (fun n -> let s = Printf.sprintf "%X" n in s.[0])
+
+let escape_string s =
+  let len =
+    let n = ref 0 in
+      for i = 0 to String.length s - 1 do
+        n := !n + (match s.[i] with
+                       c when is_printable c -> 1
+                     | _ -> 4);
+      done;
+      !n in
+  let ret = String.create len in
+  let n = ref 0 in
+    for i = 0 to String.length s - 1 do
+      match s.[i] with
+          c when is_printable c -> ret.[!n] <- c;
+                                   incr n
+        | c -> ret.[!n] <- '\\';
+               ret.[!n+1] <- 'x';
+               ret.[!n+2] <- hex_table.(Char.code c / 16);
+               ret.[!n+3] <- hex_table.(Char.code c land 0xF);
+               n := !n + 4
+    done;
+    ret
+
+let pp_escaped fmt s =
+  Format.fprintf fmt "\"%s\"" (escape_string s)
 
 let pp_datum fmt = function
-    s when can_print_as_identifier s -> Format.fprintf fmt "%s" s
-  | s -> Format.fprintf fmt "%S" s
+    "" -> Format.fprintf fmt "\"\""
+  | s when all_chars_satisfy char_is_num s -> Format.fprintf fmt "%s" s
+  | s -> pp_escaped fmt s
+
+let pp_key fmt = function
+    "" -> Format.fprintf fmt "\"\""
+  | s ->
+      match s.[0] with
+          'A'..'Z' | 'a'..'z' | '_' ->
+              if all_chars_satisfy char_is_id s then Format.fprintf fmt "%s" s
+              else pp_escaped fmt s
+          | _ -> pp_escaped fmt s
 
 let rec pp_cols fmt = function
     [] -> ()
-  | [ { name; data } ] -> Format.fprintf fmt "%a: %a" pp_datum name pp_datum data
+  | [ { name; data } ] -> Format.fprintf fmt "%a: %a" pp_key name pp_datum data
   | { name; data } :: tl ->
-      Format.fprintf fmt "%a: %a,@ " pp_datum name pp_datum data;
+      Format.fprintf fmt "%a: %a,@ " pp_key name pp_datum data;
       pp_cols fmt tl
 
 let pprint_slice (last_key, key_data) =
@@ -134,7 +180,7 @@ let pprint_slice (last_key, key_data) =
   List.iter
     (fun kd ->
        Format.printf " @[<2>%a:@\n{@[<1> %a },@]@]@\n@."
-         pp_datum kd.key pp_cols kd.columns)
+         pp_key kd.key pp_cols kd.columns)
     key_data;
   Format.printf "}@\n";
   Format.printf "%s@." (String.make 78 '-');
