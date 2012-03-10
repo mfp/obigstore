@@ -565,7 +565,8 @@ struct
                          k :: l
                        else l)
                   topics l)
-             (H.find server.rev_subscriptions c.id)
+             (try H.find server.rev_subscriptions c.id
+              with Not_found -> Hashtbl.create 1)
              []
          in
            H.remove server.rev_subscriptions c.id;
