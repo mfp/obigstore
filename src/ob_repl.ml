@@ -478,7 +478,8 @@ let copy_stream ic oc =
 
 let dump_local db dst =
   lwt dump = D.Raw_dump.dump db in
-  lwt files = D.Raw_dump.list_files dump in
+  lwt files = D.Raw_dump.list_files dump >|=
+              List.sort (fun (n1, _) (n2, _) -> String.compare n1 n2) in
   lwt timestamp = D.Raw_dump.timestamp dump in
   let nfiles, size =
     List.fold_left (fun (n, s) (_, fsiz) -> n + 1, Int64.add s fsiz) (0, 0L) files in
