@@ -177,6 +177,7 @@ sig
   val read_raw_dump_file_digest : string option reader
 end
 
+type data_protocol_version = int * int * int
 type data_request = [ `Get_file | `Get_updates ]
 type data_response = [ `OK | `Unknown_dump | `Unknown_file ]
 
@@ -199,3 +200,16 @@ let data_request_of_code = function
 let data_request_code = function
     `Get_file -> 0
   | `Get_updates -> 1
+
+let data_protocol_version = (0, 0, 0)
+
+let data_conn_handshake ich och =
+  let (self_major, self_minor, self_bugfix) = data_protocol_version in
+  lwt () =
+    Lwt_io.LE.write_int och self_major >>
+    Lwt_io.LE.write_int och self_minor >>
+    Lwt_io.LE.write_int och self_bugfix in
+  lwt major = Lwt_io.LE.read_int ich in
+  lwt minor = Lwt_io.LE.read_int ich in
+  lwt bugfix = Lwt_io.LE.read_int ich in
+    return (major, minor, bugfix)

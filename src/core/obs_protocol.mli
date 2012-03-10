@@ -120,11 +120,17 @@ sig
   val read_raw_dump_file_digest : string option reader
 end
 
+type data_protocol_version = int * int * int
 type data_request = [ `Get_file | `Get_updates ]
 type data_response = [ `OK | `Unknown_dump | `Unknown_file ]
+
+val data_protocol_version : data_protocol_version
 
 val data_response_code : data_response -> int
 val data_response_of_code : int -> [ data_response | `Other ]
 
 val data_request_code : data_request -> int
 val data_request_of_code : int -> [ data_request | `Other ]
+
+val data_conn_handshake :
+  Lwt_io.input_channel -> Lwt_io.output_channel -> data_protocol_version Lwt.t

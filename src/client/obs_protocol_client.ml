@@ -451,14 +451,8 @@ struct
 
     let open_file d ?(offset=0L) fname =
       lwt ich, och = Lwt_io.open_connection d.db.data_address in
-      let (self_major, self_minor, self_bugfix) = data_protocol_version in
-      lwt () =
-        Lwt_io.LE.write_int och self_major >>
-        Lwt_io.LE.write_int och self_minor >>
-        Lwt_io.LE.write_int och self_bugfix in
-      lwt major = Lwt_io.LE.read_int ich in
-      lwt minor = Lwt_io.LE.read_int ich in
-      lwt bugfix = Lwt_io.LE.read_int ich in
+      lwt (major, minor, bugfix) = data_conn_handshake ich och in
+        Lwt_io.LE.write_int och (data_request_code `Get_file) >>
         Lwt_io.LE.write_int64 och d.id >>
         Lwt_io.LE.write_int64 och offset >>
         Lwt_io.LE.write_int och (String.length fname) >>

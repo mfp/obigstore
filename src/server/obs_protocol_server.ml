@@ -576,37 +576,35 @@ struct
   let send_response_code code och =
     Lwt_io.LE.write_int och (data_response_code code)
 
+  let handle_get_file ~debug server ich och =
+    lwt dump_id = Lwt_io.LE.read_int64 ich in
+    lwt offset = Lwt_io.LE.read_int64 ich in
+    lwt name_siz = Lwt_io.LE.read_int ich in
+    lwt name = Lwt_io.read ~count:name_siz ich in
+      try_lwt
+        let dump = Hashtbl.find server.raw_dumps dump_id in
+          match_lwt D.Raw_dump.open_file dump ~offset name with
+              None -> send_response_code `Unknown_file och
+            | Some ic ->
+                send_response_code `OK och >>
+                let buf = String.create 16384 in
+                let rec loop_copy_data () =
+                  match_lwt Lwt_io.read_into ic buf 0 16384 with
+                      0 -> return ()
+                    | n -> Lwt_io.write_from_exactly och buf 0 n >>
+                           loop_copy_data ()
+                in loop_copy_data () >>
+                   (* client gets End_of_file if we don't flush (i.e. the
+                    * conn is shutdown before the data is sent) *)
+                   Lwt_io.flush och
+      with Not_found -> send_response_code `Unknown_dump och
+
   let service_data_client server ?(debug=false) ich och =
     try_lwt
-      let (self_major, self_minor, self_bugfix) = data_protocol_version in
-      lwt () =
-        Lwt_io.LE.write_int och self_major >>
-        Lwt_io.LE.write_int och self_minor >>
-        Lwt_io.LE.write_int och self_bugfix in
-      lwt major = Lwt_io.LE.read_int ich in
-      lwt minor = Lwt_io.LE.read_int ich in
-      lwt bugfix = Lwt_io.LE.read_int ich in
-      lwt dump_id = Lwt_io.LE.read_int64 ich in
-      lwt offset = Lwt_io.LE.read_int64 ich in
-      lwt name_siz = Lwt_io.LE.read_int ich in
-      lwt name = Lwt_io.read ~count:name_siz ich in
-        try
-          let dump = Hashtbl.find server.raw_dumps dump_id in
-            match_lwt D.Raw_dump.open_file dump ~offset name with
-                None -> send_response_code `Unknown_file och
-              | Some ic ->
-                  send_response_code `OK och >>
-                  let buf = String.create 16384 in
-                  let rec loop_copy_data () =
-                    match_lwt Lwt_io.read_into ic buf 0 16384 with
-                        0 -> return ()
-                      | n -> Lwt_io.write_from_exactly och buf 0 n >>
-                             loop_copy_data ()
-                  in loop_copy_data () >>
-                     (* client gets End_of_file if we don't flush (i.e. the
-                      * conn is shutdown before the data is sent) *)
-                     Lwt_io.flush och
-        with Not_found -> send_response_code `Unknown_dump och
+      lwt (major, minor, bugfix) = data_conn_handshake ich och in
+        match_lwt Lwt_io.LE.read_int ich >|= data_request_of_code with
+            `Get_file -> handle_get_file ~debug server ich och
+          | _ -> return ()
     with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
       raise_lwt End_of_file
 
