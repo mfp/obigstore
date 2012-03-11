@@ -5,6 +5,7 @@ OBJECTS[] =
   obs_data_model
   obs_protocol
   obs_protocol_payload
+  obs_replication
   obs_request
   obs_string_util
   obs_weak_ref

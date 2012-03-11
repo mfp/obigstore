@@ -42,8 +42,7 @@ let file_exists_with_size file size =
 
 module Make(D : Obs_data_model.RAW_DUMP) =
 struct
-  let dump_local ~verbose db dst =
-    lwt dump = D.dump db in
+  let dump_local ~verbose dump dst =
     lwt files = D.list_files dump >|=
                 List.sort (fun (n1, _) (n2, _) -> String.compare n1 n2) in
     lwt timestamp = D.timestamp dump in
@@ -78,8 +77,7 @@ struct
         files >>
       let dt = Unix.gettimeofday () -. t0 in
         puts "Retrieved in %.2fs (%s/s)" dt (Obs_util.format_size (1.0 /. dt) size);
-        D.release dump >>
         return dstdir
 
-  let dump_local ?(verbose=false) ?destdir db = dump_local ~verbose db destdir
+  let dump_local ?(verbose=false) ?destdir dump = dump_local ~verbose dump destdir
 end

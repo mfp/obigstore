@@ -21,6 +21,16 @@
 include Obs_data_model.S
 include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
 
+module Replication :
+sig
+  include Obs_replication.REPLICATION_SERVER
+    with type db := db and type raw_dump := Raw_dump.raw_dump
+
+  include Obs_replication.REPLICATION_CLIENT
+    with type db := db and type raw_dump := Raw_dump.raw_dump
+     and type update := update
+end
+
 (** Open or create a database in the given directory.
   *
   * @param group_commit_period period for group commit in seconds

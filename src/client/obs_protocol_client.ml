@@ -17,6 +17,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+open Printf
 open Lwt
 open Obs_data_model
 open Obs_request
@@ -472,5 +473,81 @@ struct
       async_request d.db
         (Raw_dump_file_digest { Raw_dump_file_digest.id = d.id; file; })
         P.read_raw_dump_file_digest
+  end
+
+  module Replication =
+  struct
+    type ack = [ `ACK | `NACK ]
+    type update =
+        { slave_id : Int64.t; buf : string; off : int; len : int;
+          await_ack : (ack Lwt.t * ack Lwt.u);
+        }
+
+    type update_stream =
+        { stream_id : Int64.t; stream : update Lwt_stream.t }
+
+    let get_update_stream d =
+      let stream, push = Lwt_stream.create () in
+      lwt ich, och = Lwt_io.open_connection d.Raw_dump.db.data_address in
+      lwt (major, minor, bugfix) = data_conn_handshake ich och in
+      let get_buf =
+        let b = ref "" in
+          (fun n ->
+             if n > String.length !b then b := String.create n;
+             !b)
+      in
+        Lwt_io.LE.write_int och (data_request_code `Get_updates) >>
+        Lwt_io.LE.write_int64 och d.Raw_dump.id >>
+        let () =
+          ignore begin
+            try_lwt
+              let rec read_update () =
+                match_lwt Lwt_io.LE.read_int64 ich with
+                    -1L -> return ()
+                  | len ->
+                      let len = Int64.to_int len in
+                      let buf = get_buf len in
+                      let wait, wakeup = Lwt.task () in
+                        Lwt_io.read_into_exactly ich buf 0 len >>
+                        let update = { slave_id = d.Raw_dump.id; buf; off = 0;
+                                       len; await_ack = (wait, wakeup); }
+                        in
+                          push (Some update);
+                          begin match_lwt wait with
+                              `ACK -> Lwt_io.LE.write_int och 0
+                            | `NACK -> Lwt_io.LE.write_int och 2
+                          end >>
+                          Lwt_io.flush och >>
+                          read_update ()
+              in match_lwt Lwt_io.LE.read_int ich >|= data_response_of_code with
+                  `OK -> read_update ()
+                | _ -> push None;
+                       return ()
+            with exn ->
+              (* FIXME: better logging *)
+              let bt = Printexc.get_backtrace () in
+                eprintf
+                  "Exception in protocol client get_update_stream:\n%s\n%s%!"
+                  (Printexc.to_string exn) bt;
+                return ()
+          end in
+        let ret = { stream_id = d.Raw_dump.id; stream } in
+          return ret
+
+    let get_update s =
+      lwt x = Lwt_stream.get s.stream in
+        return x
+
+    let ack_update u =
+      (try Lwt.wakeup (snd u.await_ack) `ACK with _ -> ());
+      return ()
+
+    let nack_update u =
+      (try Lwt.wakeup (snd u.await_ack) `NACK with _ -> ());
+      return ()
+
+    let is_sync_update update = return false (* FIXME *)
+
+    let get_update_data u = return (u.buf, u.off, u.len)
   end
 end

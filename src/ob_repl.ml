@@ -609,7 +609,8 @@ let () =
                                                   include D
                                                   include D.Raw_dump
                                                 end ) in
-                lwt _ = DUMP.dump_local db ?destdir in
+                lwt raw_dump = D.Raw_dump.dump db in
+                lwt _ = DUMP.dump_local raw_dump ?destdir in
                   return ()
       with
         | Parsing.Parse_error ->

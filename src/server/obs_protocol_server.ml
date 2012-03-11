@@ -17,6 +17,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+open Printf
 open Lwt
 open Obs_data_model
 open Obs_protocol
@@ -28,6 +29,10 @@ module Make
   (D : sig
      include Obs_data_model.S
      include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+
+     module Replication : Obs_replication.REPLICATION_SERVER
+       with type db := db and type raw_dump := Raw_dump.raw_dump
+
      val use_thread_pool : db -> bool -> unit
    end)
   (P : PAYLOAD) =
@@ -596,11 +601,50 @@ struct
                 in loop_copy_data ()
       with Not_found -> send_response_code `Unknown_dump och
 
+  let handle_get_updates ~debug server ich och =
+    lwt dump_id = Lwt_io.LE.read_int64 ich in
+    try_lwt
+      let dump = Hashtbl.find server.raw_dumps dump_id in
+      lwt stream = D.Replication.get_update_stream dump in
+
+      let rec forward_updates () =
+        match_lwt D.Replication.get_update stream with
+            None -> Lwt_io.LE.write_int64 och (-1L)
+          | Some update ->
+              begin try_lwt
+                lwt buf, off, len = D.Replication.get_update_data update in
+                  if debug then
+                    eprintf "Sending update (%d bytes)\n%!" len;
+                  Lwt_io.LE.write_int64 och (Int64.of_int len) >>
+
+                  let rec copy_data () =
+                    Lwt_io.write_from_exactly och buf off len >>
+                    Lwt_io.flush och >>
+                    match_lwt Lwt_io.LE.read_int ich with
+                        0 -> return `ACK
+                      | 1 -> copy_data ()
+                      | 2 | _ -> return `NACK
+                  in
+                    begin match_lwt copy_data () with
+                        `ACK -> D.Replication.ack_update update
+                      | `NACK -> D.Replication.nack_update update
+                    end
+              with exn ->
+                D.Replication.nack_update update >>
+                raise_lwt exn
+              end >>
+              forward_updates ()
+      in
+        send_response_code `OK och >>
+        forward_updates ()
+    with Not_found -> send_response_code `Unknown_dump och
+
   let service_data_client server ?(debug=false) ich och =
     try_lwt
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
         match_lwt Lwt_io.LE.read_int ich >|= data_request_of_code with
             `Get_file -> handle_get_file ~debug server ich och
+          | `Get_updates -> handle_get_updates ~debug server ich och
           | _ -> return ()
     with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
       raise_lwt End_of_file

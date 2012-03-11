@@ -22,5 +22,5 @@
 module Make : functor(D : Obs_data_model.RAW_DUMP) ->
 sig
   (** @return directory the database was dumped to *)
-  val dump_local : ?verbose:bool -> ?destdir:string -> D.db -> string Lwt.t
+  val dump_local : ?verbose:bool -> ?destdir:string -> D.raw_dump -> string Lwt.t
 end

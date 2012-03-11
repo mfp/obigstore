@@ -105,6 +105,7 @@ let () =
         | Some destdir ->
             let module DUMP =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
-            lwt _ = DUMP.dump_local ~verbose:!verbose ~destdir db in
+            lwt raw_dump = D.Raw_dump.dump db in
+            lwt _ = DUMP.dump_local ~verbose:!verbose ~destdir raw_dump in
               return ()
   end

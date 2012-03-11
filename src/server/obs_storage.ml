@@ -47,6 +47,12 @@ let make_iter_pool db =
   Lwt_pool.create 100 (* FIXME: which limit? *)
     (fun () -> return (L.iterator db))
 
+module IM = Map.Make(struct
+                       type t = int
+                       let compare (x:int) y =
+                         if x < y then -1 else if x > y then 1 else 0
+                     end)
+
 module WRITEBATCH : sig
   type t
   type tx
@@ -54,6 +60,9 @@ module WRITEBATCH : sig
   val close : t -> unit Lwt.t
   val set_period : t -> float -> unit
   val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
+
+  (** [add_slave t slave_id f] *)
+  val add_slave : t -> int -> (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) -> unit
 
   val delete_substring : tx -> string -> int -> int -> unit
   val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
@@ -73,9 +82,33 @@ struct
         (* used to wait for last sync before close *)
         iter_pool : L.iterator Lwt_pool.t ref;
         (* will be overwritten after an update *)
+
+        serialized_update : Obs_bytea.t;
+        mutable push_update_tbl : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) IM.t;
+        (* the [unit Lwt.u] is used to wake up a thread waiting for
+         * confirmation that the update was persisted (for sync replication) *)
       }
 
   type tx = { t : t; mutable valid : bool; }
+
+  let push_to_slaves t =
+    let push_to_slave_funcs =
+      IM.fold (fun k v l -> (k, v) :: l) t.push_update_tbl []
+    in
+      Lwt_list.iter_p
+        (fun (slave_id, push) ->
+           let waiter, u = Lwt.task () in
+             (* in order to support async replication, we'd
+              * have to duplicate (only once) the
+              * serialized_update so that the original can be
+              * cleared safely while the copy is being sent *)
+             push t.serialized_update u;
+             match_lwt waiter with
+                 `ACK -> return ()
+               | `NACK ->
+                   t.push_update_tbl <- IM.remove slave_id t.push_update_tbl;
+                   return ())
+        push_to_slave_funcs
 
   let make db iter_pool ~flush_period =
     let t =
@@ -83,6 +116,8 @@ struct
         mutex = Lwt_mutex.create (); sync_wait = Lwt.wait ();
         flush_period; wait_last_sync = Lwt.wait ();
         iter_pool;
+        serialized_update = Obs_bytea.create 128;
+        push_update_tbl = IM.empty;
       }
     in
       ignore begin try_lwt
@@ -96,9 +131,11 @@ struct
           else begin
             Lwt_mutex.with_lock t.mutex
               (fun () ->
-                 lwt () = Lwt_preemptive.detach (L.Batch.write ~sync:true t.db) t.wb in
+                 lwt () = Lwt_preemptive.detach (L.Batch.write ~sync:true t.db) t.wb
+                 and () = push_to_slaves t in
                  let u = snd t.sync_wait in
                  let u' = snd t.wait_last_sync in
+                   Obs_bytea.clear t.serialized_update;
                    iter_pool := make_iter_pool t.db;
                    t.dirty <- false;
                    t.wb <- L.Batch.make ();
@@ -118,6 +155,9 @@ struct
         return ()
       end;
       t
+
+  let add_slave t id f =
+    t.push_update_tbl <- IM.add id f t.push_update_tbl
 
   let close t =
     t.closed <- true;
@@ -144,13 +184,27 @@ struct
     if not tx.valid then
       failwith "WRITEBATCH.delete_substring on expired transaction";
     tx.t.dirty <- true;
-    L.Batch.delete_substring tx.t.wb s off len
+    L.Batch.delete_substring tx.t.wb s off len;
+    if not (IM.is_empty tx.t.push_update_tbl) then begin
+      let u = tx.t.serialized_update in
+        Obs_bytea.add_byte u 0;
+        Obs_bytea.add_int32_le u len;
+        Obs_bytea.add_substring u s off len;
+    end
 
   let put_substring tx k o1 l1 v o2 l2 =
     if not tx.valid then
       failwith "WRITEBATCH.put_substring on expired transaction";
     tx.t.dirty <- true;
-    L.Batch.put_substring tx.t.wb k o1 l1 v o2 l2
+    L.Batch.put_substring tx.t.wb k o1 l1 v o2 l2;
+    if not (IM.is_empty tx.t.push_update_tbl) then begin
+      let u = tx.t.serialized_update in
+        Obs_bytea.add_byte u 1;
+        Obs_bytea.add_int32_le u l1;
+        Obs_bytea.add_substring u k o1 l1;
+        Obs_bytea.add_int32_le u l2;
+        Obs_bytea.add_substring u v o2 l2;
+    end
 end
 
 module Miniregion : sig
@@ -193,7 +247,10 @@ type db =
        * transactions whenever possible. After an update, the db_iter_pool is
        * replaced by a new one (so that only new iterators are used). *)
 
-      reopen : unit -> L.db;
+      reopen : ?new_slave:int * (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) ->
+               unit -> L.db;
+
+      mutable slaves : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) IM.t;
     }
 
 and keyspace =
@@ -275,9 +332,9 @@ let open_db
         keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
-        writebatch; db_iter_pool; reopen;
+        writebatch; db_iter_pool; reopen; slaves = IM.empty;
       }
-    and reopen () =
+    and reopen ?new_slave () =
       let lldb = L.open_db
                     ~write_buffer_size ~block_size ~max_open_files
                     ~comparator:Obs_datum_encoding.custom_comparator
@@ -286,6 +343,13 @@ let open_db
         db.db_iter_pool := make_iter_pool lldb;
         db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
                            ~flush_period:group_commit_period;
+        begin match new_slave with
+            None -> ()
+          | Some (id, f) ->
+              db.slaves <- IM.add id f db.slaves
+        end;
+        (* don't forget to register slaves in new writebatch! *)
+        IM.iter (WRITEBATCH.add_slave db.writebatch) db.slaves;
         lldb in
     let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
@@ -2148,12 +2212,22 @@ let cursor_of_string = Obs_backup.cursor_of_string
 let string_of_cursor = Obs_backup.string_of_cursor
 
 
+type update =
+    { up_buf : string; up_off : int; up_len : int;
+      up_signal_ack : [`ACK | `NACK] Lwt.u option;
+    }
+
+type update_stream = update Lwt_stream.t
+
 module Raw_dump =
 struct
   type raw_dump =
       {
+        id : int;
         timestamp : Int64.t;
         directory : string;
+        update_stream : update Lwt_stream.t;
+        push_update : update option -> unit;
       }
 
   let is_file fname =
@@ -2163,15 +2237,27 @@ struct
           | _ -> false
     with Unix.Unix_error _ -> false
 
+  let new_dump_id =
+    let n = ref 0 in
+      (fun () -> incr n; !n)
+
   let dump db =
     let dstdir = ref "" in
     let timestamp = ref 0L in
+    let id = new_dump_id () in
+    let update_stream, push_update = Lwt_stream.create () in
+    let push_update_bytea b u =
+      push_update
+        (Some { up_buf = Obs_bytea.unsafe_string b;
+                up_off = 0; up_len = Obs_bytea.length b;
+                up_signal_ack = Some u; })
+    in
       Miniregion.update_value db.db
         (fun lldb ->
            (* flush *)
            WRITEBATCH.close db.writebatch >>
            let () = L.close lldb in
-           let lldb = db.reopen () in
+           let lldb = db.reopen ~new_slave:(id, push_update_bytea) () in
              begin try_lwt
                timestamp := Int64.of_float (Unix.gettimeofday () *. 1e6);
                dstdir := Filename.concat db.basedir (sprintf "dump-%Ld" !timestamp);
@@ -2193,8 +2279,9 @@ struct
                return ()
              end >>
              return lldb) >>
-    let ret = { directory = !dstdir; timestamp = !timestamp; } in
-      return ret
+    let ret = { id; directory = !dstdir; timestamp = !timestamp;
+                update_stream; push_update; }
+    in return ret
 
   let timestamp d = return d.timestamp
 
@@ -2249,6 +2336,74 @@ struct
       (Sys.readdir d.directory);
     ign_unix_error Unix.rmdir d.directory;
     return ()
+end
+
+module Replication =
+struct
+  type _update = update
+  type update = _update
+  type _update_stream = update_stream
+  type update_stream = _update_stream
+
+  let get_update_stream d = return d.Raw_dump.update_stream
+  let get_update = Lwt_stream.get
+
+  let signal u x =
+    (try Option.may (fun u -> Lwt.wakeup u x) u.up_signal_ack with _ -> ());
+    return ()
+
+  let ack_update u = signal u `ACK
+  let nack_update u = signal u `NACK
+
+  let is_sync_update u = (* FIXME *) return false
+
+  let get_update_data u = return (u.up_buf, u.up_off, u.up_len)
+
+  let update_of_string s off len =
+    Some { up_buf = s; up_off = off; up_len = len; up_signal_ack = None; }
+
+  let read_int32_le s n =
+    let a = Char.code s.[n] in
+    let b = Char.code s.[n+1] in
+    let c = Char.code s.[n+2] in
+    let d = Char.code s.[n+3] in
+      a + (b lsl 8) + (c lsl 16) + (d lsl 24)
+
+  let apply_update db update =
+    Miniregion.use db.db begin fun _ ->
+      lwt wait_sync =
+         WRITEBATCH.perform db.writebatch begin fun b ->
+           let rec apply_update s n max =
+             if n >= max then ()
+             else begin
+               match s.[n] with
+                 | '\x01' -> (* add *)
+                   let klen = read_int32_le s (n + 1) in
+                   let vlen = read_int32_le s (n + 1 + 4 + klen) in
+                     (* TODO: instead of writing as usual and letting
+                      * WRITEBATCH serialize the change again (in case we have
+                      * slaves), write locally (need some ?push:bool option in
+                      * WRITEBATCH.put_substring and delete_substring) and
+                      * forward the entire update as is *)
+                     WRITEBATCH.put_substring b
+                       s (n + 1 + 4) klen
+                       s (n + 1 + 4 + klen + 4) vlen;
+                     apply_update s (n + 1 + 4 + klen + 4 + vlen) max
+                 | '\x00' -> (* delete *)
+                   let klen = read_int32_le s (n + 1) in
+                     WRITEBATCH.delete_substring b s (n + 1 + 4) klen;
+                     apply_update s (n + 1 + 4 + klen) max
+                 | _ -> (* unrecognized record, abort processing *)
+                     (* FIXME: error out or just log? *)
+                     ()
+             end
+           in apply_update
+                update.up_buf update.up_off
+                (update.up_off + update.up_len);
+              return ()
+         end
+      in wait_sync
+    end
 end
 
 let with_transaction ks f =

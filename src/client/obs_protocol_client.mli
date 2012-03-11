@@ -23,6 +23,9 @@ sig
   include Obs_data_model.S with type backup_cursor = string
   include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
 
+  module Replication : Obs_replication.REPLICATION_SERVER
+   with type db := db and type raw_dump := Raw_dump.raw_dump
+
   val make :
     data_address:Unix.sockaddr ->
     Lwt_io.input_channel -> Lwt_io.output_channel -> db

@@ -24,6 +24,10 @@ module Make
   (D : sig
      include Obs_data_model.S
      include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+
+     module Replication : Obs_replication.REPLICATION_SERVER
+       with type db := db and type raw_dump := Raw_dump.raw_dump
+
      val use_thread_pool : db -> bool -> unit
    end)
   (P : Obs_protocol.PAYLOAD) =
