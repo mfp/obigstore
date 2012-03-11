@@ -593,10 +593,7 @@ struct
                       0 -> return ()
                     | n -> Lwt_io.write_from_exactly och buf 0 n >>
                            loop_copy_data ()
-                in loop_copy_data () >>
-                   (* client gets End_of_file if we don't flush (i.e. the
-                    * conn is shutdown before the data is sent) *)
-                   Lwt_io.flush och
+                in loop_copy_data ()
       with Not_found -> send_response_code `Unknown_dump och
 
   let service_data_client server ?(debug=false) ich och =

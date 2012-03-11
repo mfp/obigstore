@@ -53,6 +53,7 @@ struct
             try_lwt
               handle_connection ~debug server { ich; och; addr }
             finally
+              (try_lwt Lwt_io.flush och with _ -> return ()) >>
               Lwt_io.abort och
         with
           | End_of_file ->
