@@ -1,6 +1,7 @@
 
 OBJECTS[] =
   obs_bytea
+  obs_conn
   obs_crc32c
   obs_data_model
   obs_protocol
