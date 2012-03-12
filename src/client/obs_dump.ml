@@ -59,7 +59,9 @@ struct
       Lwt_list.iter_s
         (fun (file, size) ->
            let dst = Filename.concat dstdir file in
-             if file_exists_with_size dst size then begin
+             (* kludge: we always want to update CURRENT, which stays the same
+              * size, so we add a predicate on the size *)
+             if file_exists_with_size dst size && size > 100_000L then begin
                if verbose then
                  puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
                return ()
