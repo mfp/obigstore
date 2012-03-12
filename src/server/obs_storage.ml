@@ -57,7 +57,12 @@ type slave =
     {
       slave_id : int;
       slave_push : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit);
+      mutable slave_mode : sync_mode;
+      slave_mode_target : sync_mode;
+      mutable slave_pending_updates : int;
     }
+
+and sync_mode = Async | Sync
 
 module WRITEBATCH : sig
   type t
@@ -100,24 +105,52 @@ struct
   type tx = { t : t; mutable valid : bool; }
 
   let push_to_slaves t =
-    let push_to_slave_funcs =
-      IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl []
-    in
+    let slaves = IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl [] in
+    let update_copy = lazy (Obs_bytea.copy t.serialized_update) in
       Lwt_list.iter_p
         (fun (slave_id, (unregister, slave)) ->
            let waiter, u = Lwt.task () in
-             (* in order to support async replication, we'd
-              * have to duplicate (only once) the
-              * serialized_update so that the original can be
-              * cleared safely while the copy is being sent *)
-             slave.slave_push t.serialized_update u;
-             match_lwt waiter with
-                 `ACK -> return ()
-               | `NACK ->
-                   t.slave_tbl <- IM.remove slave_id t.slave_tbl;
-                   unregister slave_id;
-                   return ())
-        push_to_slave_funcs
+             (* see if we have to switch from async to sync (slave caught up
+              * with update stream) *)
+             begin match slave.slave_mode, slave.slave_mode_target with
+                 Sync, _ | _, Async -> ()
+               | Async, Sync ->
+                   if slave.slave_pending_updates = 0 then
+                     slave.slave_mode <- Sync;
+             end;
+             slave.slave_pending_updates <- slave.slave_pending_updates + 1;
+             let wait_for_signal () =
+               try_lwt
+                 match_lwt waiter with
+                     `ACK -> return ()
+                   | `NACK ->
+                       t.slave_tbl <- IM.remove slave_id t.slave_tbl;
+                       unregister slave_id;
+                       return ()
+               finally
+                 slave.slave_pending_updates <- slave.slave_pending_updates - 1;
+                 return ()
+             in
+               match slave.slave_mode with
+                   Sync -> begin
+                     slave.slave_push t.serialized_update u;
+                     wait_for_signal ()
+                   end
+                 | Async -> begin
+                     (* in order to support async replication, we
+                      * have to duplicate (only once) the
+                      * serialized_update so that the original can be
+                      * cleared safely while the copy is being sent *)
+                     slave.slave_push (Lazy.force update_copy) u;
+                     ignore begin try_lwt
+                       wait_for_signal ()
+                     with exn ->
+                       (* FIXME: log? *)
+                       return ()
+                     end;
+                     return ()
+                   end)
+        slaves
 
   let make db iter_pool ~flush_period =
     let t =
@@ -2267,7 +2300,10 @@ struct
            WRITEBATCH.close db.writebatch >>
            let () = L.close lldb in
            let new_slave =
-             { slave_id = id; slave_push = push_update_bytea; } in
+             { slave_id = id; slave_push = push_update_bytea;
+               slave_mode = Async; slave_mode_target = Sync;
+               slave_pending_updates = 0;
+             } in
            let lldb = db.reopen ~new_slave () in
              begin try_lwt
                timestamp := Int64.of_float (Unix.gettimeofday () *. 1e6);
