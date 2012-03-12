@@ -487,6 +487,12 @@ struct
         { stream_id : Int64.t; stream : update Lwt_stream.t }
 
     let get_update_stream d =
+      (* [push] only holds a weak reference to the stream; if we have what
+       * amounts to
+       * [ignore (let rec get () = Lwt_stream.get stream >>= ... >> get ())]
+       * the whole thread and the stream itself might be collected(!) because
+       * there's no external "strong" reference to the latter.
+       * *)
       let stream, push = Lwt_stream.create () in
       lwt ich, och = Lwt_io.open_connection d.Raw_dump.db.data_address in
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
@@ -498,13 +504,19 @@ struct
       in
         Lwt_io.LE.write_int och (data_request_code `Get_updates) >>
         Lwt_io.LE.write_int64 och d.Raw_dump.id >>
+        let ret = { stream_id = d.Raw_dump.id; stream } in
         let () =
           ignore begin
             try_lwt
-              let rec read_update () =
+              let rec read_update ret =
                 match_lwt Lwt_io.LE.read_int64 ich with
                     -1L -> return ()
                   | len ->
+                      (* we need to keep a reference to the stream ([push] alone
+                       * doesn't suffice, as it only holds a weak ref) *)
+                      (* the following is just to make sure the reference is
+                       * not optiomized away *)
+                      ignore ret.stream;
                       let len = Int64.to_int len in
                       let buf = get_buf len in
                       let wait, wakeup = Lwt.task () in
@@ -518,9 +530,9 @@ struct
                             | `NACK -> Lwt_io.LE.write_int och 2
                           end >>
                           Lwt_io.flush och >>
-                          read_update ()
+                          read_update ret
               in match_lwt Lwt_io.LE.read_int ich >|= data_response_of_code with
-                  `OK -> read_update ()
+                  `OK -> read_update ret
                 | _ -> push None;
                        return ()
             with exn ->
@@ -530,9 +542,8 @@ struct
                   "Exception in protocol client get_update_stream:\n%s\n%s%!"
                   (Printexc.to_string exn) bt;
                 return ()
-          end in
-        let ret = { stream_id = d.Raw_dump.id; stream } in
-          return ret
+          end
+        in return ret
 
     let get_update s =
       lwt x = Lwt_stream.get s.stream in
