@@ -562,6 +562,8 @@ let get_phrase () =
       ()
   end
 
+exception Need_reconnect
+
 let rec inner_exec_loop db ks =
   begin try_lwt
     lwt phrase = get_phrase () in
@@ -605,6 +607,11 @@ let rec inner_exec_loop db ks =
         return ()
     | End_of_file | Abort_exn | Commit_exn as e -> raise_lwt e
     | Lwt_read_line.Interrupt -> exit 0
+    | Obs_protocol.Error (Obs_protocol.Exception End_of_file)
+    | Obs_protocol.Error (Obs_protocol.Closed) ->
+        if !tx_level > 0 then
+          print_endline "Lost connection: aborting transaction";
+        raise_lwt Need_reconnect
     | e ->
         printf "Got exception: %s\n%!" (Printexc.to_string e);
         return ()
@@ -622,20 +629,36 @@ let () =
   Lwt_unix.run begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
-    lwt ich, och = Lwt_io.open_connection addr in
-    let db = D.make ~data_address ich och in
-    lwt ks = D.register_keyspace db !keyspace in
-    let rec outer_loop () =
+
+    let get_db_and_ks () =
+      lwt ich, och = Lwt_io.open_connection addr in
+      let db = D.make ~data_address ich och in
+      lwt ks = D.register_keyspace db !keyspace in
+        return (db, ks) in
+
+    let rec outer_loop db ks =
       try_lwt
         inner_exec_loop db ks
       with
           End_of_file -> exit 0
         | Abort_exn | Commit_exn ->
             print_endline "Not inside a transaction";
-            inner_exec_loop db ks
-    in
+            outer_loop db ks
+        | Need_reconnect ->
+            let rec reconnect () =
+              try_lwt
+                print_endline "Reconnecting to server...";
+                get_db_and_ks ()
+              with exn ->
+                printf "Failed (%s).\n%!" (Printexc.to_string exn);
+                Lwt_unix.sleep 1.0 >>
+                reconnect () in
+            lwt db, ks = reconnect () in
+              outer_loop db ks in
+
+    lwt db, ks = get_db_and_ks () in
       curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
       puts "ob_repl";
       puts "Enter \".help\" for instructions.";
-      outer_loop ()
+      outer_loop db ks
   end
