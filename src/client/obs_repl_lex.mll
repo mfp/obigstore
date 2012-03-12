@@ -47,7 +47,7 @@
       "to", TO;
     ]
 
- let () = 
+ let () =
    List.iter (fun (k, v) -> Hashtbl.add keyword_table k v) keywords
 
 let unescape_string =
@@ -77,7 +77,7 @@ rule token = parse
   | '.' (['A'-'Z' 'a'-'z']+ as lxm)
                    { DIRECTIVE (String.lowercase lxm) }
   | ['0'-'9']+ as lxm { INT(int_of_string lxm) }
-  | ['A'-'Z' 'a'-'z'] ['A'-'Z' 'a'-'z' '0'-'9' '_' '.'] * as id 
+  | ['A'-'Z' 'a'-'z' '0'-'9' '_' '.'] * as id
         { try
             Hashtbl.find keyword_table (String.lowercase id)
           with Not_found -> ID id }

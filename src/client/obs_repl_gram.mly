@@ -73,11 +73,11 @@ phrase : /* empty */  { Nothing }
               { with_ks (fun keyspace ->
                            R.Lock { R.Lock.keyspace; names = $3; shared = true; }) }
   | STATS     { with_ks (fun keyspace -> R.Stats { R.Stats.keyspace; }) }
-  | LISTEN ID { with_ks (fun keyspace -> R.Listen { R.Listen.keyspace; topic = $2 }) }
-  | UNLISTEN ID
+  | LISTEN id { with_ks (fun keyspace -> R.Listen { R.Listen.keyspace; topic = $2 }) }
+  | UNLISTEN id
               { with_ks (fun keyspace ->
                            R.Unlisten { R.Unlisten.keyspace; topic = $2 }) }
-  | NOTIFY ID
+  | NOTIFY id
               { with_ks (fun keyspace ->
                            R.Notify { R.Notify.keyspace; topic = $2 }) }
   | AWAIT
@@ -85,8 +85,8 @@ phrase : /* empty */  { Nothing }
   | DUMP      { with_ks (fun keyspace -> R.Trigger_raw_dump
                                            { R.Trigger_raw_dump.record = false }) }
   | DUMP LOCAL { Dump_local None }
-  | DUMP LOCAL ID { Dump_local (Some $3) }
-  | DUMP LOCAL TO ID { Dump_local (Some $4) }
+  | DUMP LOCAL id { Dump_local (Some $3) }
+  | DUMP LOCAL TO id { Dump_local (Some $4) }
   | count     { $1 }
   | get       { $1 }
   | put       { $1 }
@@ -94,11 +94,11 @@ phrase : /* empty */  { Nothing }
   | directive { $1 }
 
 size :
-    SIZE ID   { with_ks
+    SIZE id   { with_ks
                   (fun keyspace ->
                      R.Table_size_on_disk
                        { R.Table_size_on_disk.keyspace; table = $2; }) }
-  | SIZE ID range_no_max
+  | SIZE id range_no_max
               { with_ks
                   (fun keyspace ->
                      R.Key_range_size_on_disk
@@ -110,7 +110,7 @@ range_no_max :
               { { Range.first = $2; up_to = $4; reverse = false; } }
 
 count :
-    COUNT ID opt_range
+    COUNT id opt_range
               { with_ks
                   (fun keyspace ->
                      let key_range = match $3 with
@@ -121,7 +121,7 @@ count :
                                           key_range; }) }
 
 get :
-    GET ID range opt_multi_range opt_row_predicate opt_redir
+    GET id range opt_multi_range opt_row_predicate opt_redir
        {
          with_ks_unwrap
            (fun keyspace ->
@@ -139,7 +139,7 @@ get :
                     column_range; }
               in Command (req, $6))
        }
-  | GET KEYS ID opt_range opt_redir
+  | GET KEYS id opt_range opt_redir
       {
         with_ks_unwrap
           (fun keyspace ->
@@ -157,7 +157,7 @@ get :
       }
 
 put :
-    PUT ID LBRACKET ID RBRACKET LBRACKET bindings RBRACKET
+    PUT id LBRACKET id RBRACKET LBRACKET bindings RBRACKET
         {
           with_ks
             (fun keyspace ->
@@ -173,17 +173,17 @@ bindings :
     binding                  { [ $1 ] }
   | bindings COMMA binding   { $1 @ [ $3 ] }
 
-binding: ID EQ ID            { ($1, $3) }
+binding: id EQ id            { ($1, $3) }
 
 delete :
-    DELETE ID LBRACKET ID RBRACKET LBRACKET id_list RBRACKET
+    DELETE id LBRACKET id RBRACKET LBRACKET id_list RBRACKET
       {
         with_ks
           (fun keyspace ->
              R.Delete_columns
                { R.Delete_columns.keyspace; table = $2;
                  key = $4; columns = $7; }) }
-  | DELETE ID LBRACKET ID RBRACKET
+  | DELETE id LBRACKET id RBRACKET
       {
         with_ks
           (fun keyspace ->
@@ -193,7 +193,7 @@ directive : DIRECTIVE directive_params { Directive ($1, $2) }
 
 directive_params :
     /* empty */         { [] }
-  | directive_params ID { $1 @ [ $2 ] }
+  | directive_params id { $1 @ [ $2 ] }
 
 opt_range :
   | range               { Some $1 }
@@ -213,7 +213,7 @@ multi_range :
                  { $1 @ [ $3] }
 
 multi_range_elm :
-    ID           { `Elm $1 }
+    id           { `Elm $1 }
   | opt_id RANGE opt_id
                  { `Range { Range.first = $1; up_to = $3; reverse = false; } }
   | opt_id REVRANGE opt_id
@@ -247,29 +247,33 @@ and_predicate :
 
 
 simple_predicate :
-      ID                { DM.Column_val ($1, DM.Any) }
-  |   ID LT ID          { DM.Column_val ($1, DM.LT $3) }
-  |   ID LE ID          { DM.Column_val ($1, DM.LE $3) }
-  |   ID EQ ID          { DM.Column_val ($1, DM.EQ $3) }
-  |   ID GE ID          { DM.Column_val ($1, DM.GE $3) }
-  |   ID GT ID          { DM.Column_val ($1, DM.GT $3) }
-  |   ID LT ID LT ID    { DM.Column_val ($3, DM.Between ($1, false, $5, false)) }
-  |   ID LE ID LT ID    { DM.Column_val ($3, DM.Between ($1, true, $5, false)) }
-  |   ID LT ID LE ID    { DM.Column_val ($3, DM.Between ($1, false, $5, true)) }
-  |   ID LE ID LE ID    { DM.Column_val ($3, DM.Between ($1, true, $5, true)) }
+      id                { DM.Column_val ($1, DM.Any) }
+  |   id LT id          { DM.Column_val ($1, DM.LT $3) }
+  |   id LE id          { DM.Column_val ($1, DM.LE $3) }
+  |   id EQ id          { DM.Column_val ($1, DM.EQ $3) }
+  |   id GE id          { DM.Column_val ($1, DM.GE $3) }
+  |   id GT id          { DM.Column_val ($1, DM.GT $3) }
+  |   id LT id LT id    { DM.Column_val ($3, DM.Between ($1, false, $5, false)) }
+  |   id LE id LT id    { DM.Column_val ($3, DM.Between ($1, true, $5, false)) }
+  |   id LT id LE id    { DM.Column_val ($3, DM.Between ($1, false, $5, true)) }
+  |   id LE id LE id    { DM.Column_val ($3, DM.Between ($1, true, $5, true)) }
 
 opt_cond :
     /* empty */  { None }
   | COND INT     { Some $2 }
 
 id_list :
-    ID                { [$1] }
-  | id_list COMMA ID  { $1 @ [$3] }
+    id                { [$1] }
+  | id_list COMMA id  { $1 @ [$3] }
 
 opt_id :
     /* empty */  { None }
-  | ID           { Some $1 }
+  | id           { Some $1 }
 
 opt_redir :
     /* empty */  { None }
-  | TO ID        { Some $2 }
+  | TO id        { Some $2 }
+
+id :
+    ID           { $1 }
+  | INT          { string_of_int $1 }
