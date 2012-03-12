@@ -562,6 +562,55 @@ let get_phrase () =
       ()
   end
 
+let rec inner_exec_loop db ks =
+  begin try_lwt
+    lwt phrase = get_phrase () in
+    let loop () = inner_exec_loop db ks in
+    let lexbuf = Lexing.from_string phrase in
+      match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
+          Command (req, None) ->
+            lwt () = execute ks db loop req in
+              phrase_history := phrase :: !phrase_history;
+              return ()
+        | Command (req, Some dst) ->
+            let oc = open_out dst in
+              try_lwt
+                let fmt =
+                  Format.make_formatter
+                    (Pervasives.output oc)
+                    (fun () -> Pervasives.flush oc) in
+                lwt () = execute ~fmt ks db loop req in
+                  phrase_history := phrase :: !phrase_history;
+                  return ()
+              finally
+                close_out oc;
+                return ()
+        | Directive (directive, args) ->
+            Directives.eval_directive directive args;
+            phrase_history := phrase :: !phrase_history;
+            return ()
+        | Nothing -> print_endline "Nothing"; return ()
+        | Error s -> printf "Error: %s\n%!" s; return ()
+        | Dump_local destdir ->
+            let module DUMP = Obs_dump.Make(struct
+                                              include D
+                                              include D.Raw_dump
+                                            end ) in
+            lwt raw_dump = D.Raw_dump.dump db in
+            lwt _ = DUMP.dump_local raw_dump ?destdir in
+              return ()
+  with
+    | Parsing.Parse_error ->
+        print_endline "Parse error";
+        return ()
+    | End_of_file | Abort_exn | Commit_exn as e -> raise_lwt e
+    | Lwt_read_line.Interrupt -> exit 0
+    | e ->
+        printf "Got exception: %s\n%!" (Printexc.to_string e);
+        return ()
+  end >>
+  inner_exec_loop db ks
+
 let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
   Printexc.record_backtrace true;
@@ -576,61 +625,14 @@ let () =
     lwt ich, och = Lwt_io.open_connection addr in
     let db = D.make ~data_address ich och in
     lwt ks = D.register_keyspace db !keyspace in
-    let rec loop () =
-      begin try_lwt
-        lwt phrase = get_phrase () in
-        let lexbuf = Lexing.from_string phrase in
-          match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
-              Command (req, None) ->
-                lwt () = execute ks db loop req in
-                  phrase_history := phrase :: !phrase_history;
-                  return ()
-            | Command (req, Some dst) ->
-                let oc = open_out dst in
-                  try_lwt
-                    let fmt =
-                      Format.make_formatter
-                        (Pervasives.output oc)
-                        (fun () -> Pervasives.flush oc) in
-                    lwt () = execute ~fmt ks db loop req in
-                      phrase_history := phrase :: !phrase_history;
-                      return ()
-                  finally
-                    close_out oc;
-                    return ()
-            | Directive (directive, args) ->
-                Directives.eval_directive directive args;
-                phrase_history := phrase :: !phrase_history;
-                return ()
-            | Nothing -> print_endline "Nothing"; return ()
-            | Error s -> printf "Error: %s\n%!" s; return ()
-            | Dump_local destdir ->
-                let module DUMP = Obs_dump.Make(struct
-                                                  include D
-                                                  include D.Raw_dump
-                                                end ) in
-                lwt raw_dump = D.Raw_dump.dump db in
-                lwt _ = DUMP.dump_local raw_dump ?destdir in
-                  return ()
-      with
-        | Parsing.Parse_error ->
-            print_endline "Parse error";
-            return ()
-        | End_of_file | Abort_exn | Commit_exn as e -> raise_lwt e
-        | Lwt_read_line.Interrupt -> exit 0
-        | e ->
-            printf "Got exception: %s\n%!" (Printexc.to_string e);
-            return ()
-      end >>
-      loop () in
     let rec outer_loop () =
       try_lwt
-        loop ()
+        inner_exec_loop db ks
       with
           End_of_file -> exit 0
         | Abort_exn | Commit_exn ->
             print_endline "Not inside a transaction";
-            outer_loop ()
+            inner_exec_loop db ks
     in
       curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
       puts "ob_repl";
