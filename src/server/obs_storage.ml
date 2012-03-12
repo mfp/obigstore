@@ -53,6 +53,12 @@ module IM = Map.Make(struct
                          if x < y then -1 else if x > y then 1 else 0
                      end)
 
+type slave =
+    {
+      slave_id : int;
+      slave_push : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit);
+    }
+
 module WRITEBATCH : sig
   type t
   type tx
@@ -61,10 +67,8 @@ module WRITEBATCH : sig
   val set_period : t -> float -> unit
   val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
 
-  (** [add_slave t ~unregister slave_id f] *)
-  val add_slave : t ->
-    unregister:(int -> unit) ->
-    int -> (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) -> unit
+  (** [add_slave t ~unregister slave] *)
+  val add_slave : t -> unregister:(int -> unit) -> slave -> unit
 
   val delete_substring : tx -> string -> int -> int -> unit
   val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
@@ -86,8 +90,7 @@ struct
         (* will be overwritten after an update *)
 
         serialized_update : Obs_bytea.t;
-        mutable push_update_tbl :
-          ((int -> unit) * (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit)) IM.t;
+        mutable slave_tbl : ((int -> unit) * slave) IM.t;
         (* the [int -> unit] function is used to unregister a slave from an
          * external registry *)
         (* the [Lwt.u] is used to wake up a thread waiting for
@@ -98,20 +101,20 @@ struct
 
   let push_to_slaves t =
     let push_to_slave_funcs =
-      IM.fold (fun k v l -> (k, v) :: l) t.push_update_tbl []
+      IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl []
     in
       Lwt_list.iter_p
-        (fun (slave_id, (unregister, push)) ->
+        (fun (slave_id, (unregister, slave)) ->
            let waiter, u = Lwt.task () in
              (* in order to support async replication, we'd
               * have to duplicate (only once) the
               * serialized_update so that the original can be
               * cleared safely while the copy is being sent *)
-             push t.serialized_update u;
+             slave.slave_push t.serialized_update u;
              match_lwt waiter with
                  `ACK -> return ()
                | `NACK ->
-                   t.push_update_tbl <- IM.remove slave_id t.push_update_tbl;
+                   t.slave_tbl <- IM.remove slave_id t.slave_tbl;
                    unregister slave_id;
                    return ())
         push_to_slave_funcs
@@ -123,7 +126,7 @@ struct
         flush_period; wait_last_sync = Lwt.wait ();
         iter_pool;
         serialized_update = Obs_bytea.create 128;
-        push_update_tbl = IM.empty;
+        slave_tbl = IM.empty;
       }
     in
       ignore begin try_lwt
@@ -162,8 +165,8 @@ struct
       end;
       t
 
-  let add_slave t ~unregister id f =
-    t.push_update_tbl <- IM.add id (unregister, f) t.push_update_tbl
+  let add_slave t ~unregister slave =
+    t.slave_tbl <- IM.add slave.slave_id (unregister, slave) t.slave_tbl
 
   let close t =
     t.closed <- true;
@@ -191,7 +194,7 @@ struct
       failwith "WRITEBATCH.delete_substring on expired transaction";
     tx.t.dirty <- true;
     L.Batch.delete_substring tx.t.wb s off len;
-    if not (IM.is_empty tx.t.push_update_tbl) then begin
+    if not (IM.is_empty tx.t.slave_tbl) then begin
       let u = tx.t.serialized_update in
         Obs_bytea.add_byte u 0;
         Obs_bytea.add_int32_le u len;
@@ -203,7 +206,7 @@ struct
       failwith "WRITEBATCH.put_substring on expired transaction";
     tx.t.dirty <- true;
     L.Batch.put_substring tx.t.wb k o1 l1 v o2 l2;
-    if not (IM.is_empty tx.t.push_update_tbl) then begin
+    if not (IM.is_empty tx.t.slave_tbl) then begin
       let u = tx.t.serialized_update in
         Obs_bytea.add_byte u 1;
         Obs_bytea.add_int32_le u l1;
@@ -253,10 +256,8 @@ type db =
        * transactions whenever possible. After an update, the db_iter_pool is
        * replaced by a new one (so that only new iterators are used). *)
 
-      reopen : ?new_slave:int * (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) ->
-               unit -> L.db;
-
-      mutable slaves : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) IM.t;
+      reopen : ?new_slave:slave -> unit -> L.db;
+      mutable slaves : slave IM.t;
     }
 
 and keyspace =
@@ -351,13 +352,13 @@ let open_db
         db.db_iter_pool := make_iter_pool lldb;
         db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
                            ~flush_period:group_commit_period;
-        begin match new_slave with
-            None -> ()
-          | Some (id, f) ->
-              db.slaves <- IM.add id f db.slaves
-        end;
+        Option.may
+          (fun slave -> db.slaves <- IM.add slave.slave_id slave db.slaves)
+          new_slave;
         (* don't forget to register slaves in new writebatch! *)
-        IM.iter (WRITEBATCH.add_slave ~unregister db.writebatch) db.slaves;
+        IM.iter
+          (fun id slave -> WRITEBATCH.add_slave ~unregister db.writebatch slave)
+          db.slaves;
         lldb in
     let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
@@ -2265,7 +2266,9 @@ struct
            (* flush *)
            WRITEBATCH.close db.writebatch >>
            let () = L.close lldb in
-           let lldb = db.reopen ~new_slave:(id, push_update_bytea) () in
+           let new_slave =
+             { slave_id = id; slave_push = push_update_bytea; } in
+           let lldb = db.reopen ~new_slave () in
              begin try_lwt
                timestamp := Int64.of_float (Unix.gettimeofday () *. 1e6);
                dstdir := Filename.concat db.basedir (sprintf "dump-%Ld" !timestamp);
