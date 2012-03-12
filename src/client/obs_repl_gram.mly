@@ -42,7 +42,7 @@ let col_range_of_multi_range = function
 %}
 
 %token <string> ID
-%token <int> INT
+%token <Big_int.big_int> INT
 %token <string> DIRECTIVE
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
@@ -260,7 +260,7 @@ simple_predicate :
 
 opt_cond :
     /* empty */  { None }
-  | COND INT     { Some $2 }
+  | COND INT     { Some (Big_int.int_of_big_int $2) }
 
 id_list :
     id                { [$1] }
@@ -276,4 +276,4 @@ opt_redir :
 
 id :
     ID           { $1 }
-  | INT          { string_of_int $1 }
+  | INT          { Big_int.string_of_big_int $1 }

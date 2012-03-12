@@ -76,7 +76,7 @@ rule token = parse
   | '='            { EQ }
   | '.' (['A'-'Z' 'a'-'z']+ as lxm)
                    { DIRECTIVE (String.lowercase lxm) }
-  | ['0'-'9']+ as lxm { INT(int_of_string lxm) }
+  | ['0'-'9']+ as lxm { INT(Big_int.big_int_of_string lxm) }
   | ['A'-'Z' 'a'-'z' '0'-'9' '_' '.'] * as id
         { try
             Hashtbl.find keyword_table (String.lowercase id)
