@@ -69,12 +69,15 @@ struct
                match_lwt D.open_file dump file with
                    None -> return ()
                  | Some ic ->
-                     if verbose then
-                       puts "Retrieving %s (%s)." file (Obs_util.format_size 1.0 size);
-                     Lwt_io.with_file
-                       ~mode:Lwt_io.output
-                       ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
-                       dst (copy_stream ic)
+                     try_lwt
+                       if verbose then
+                         puts "Retrieving %s (%s)." file (Obs_util.format_size 1.0 size);
+                       Lwt_io.with_file
+                         ~mode:Lwt_io.output
+                         ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
+                         dst (copy_stream ic)
+                     finally
+                       Lwt_io.abort ic
              end)
         files >>
       let dt = Unix.gettimeofday () -. t0 in
