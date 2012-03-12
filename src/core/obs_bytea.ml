@@ -29,6 +29,14 @@ let create n =
  let s = String.create n in
  {buffer = s; position = 0; length = n; initial_buffer = s}
 
+let copy b =
+  {
+    initial_buffer = String.create (String.length b.initial_buffer);
+    position = b.position;
+    length = b.position;
+    buffer = String.sub b.buffer 0 b.position;
+  }
+
 let contents b = String.sub b.buffer 0 b.position
 
 let sub b ofs len =

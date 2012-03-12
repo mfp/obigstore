@@ -3,6 +3,8 @@ type t = Extprot.Msg_buffer.t
 val create : int -> t
 val contents : t -> string
 
+val copy : t -> t
+
 val sub : t -> int -> int -> string
 val blit : t -> int -> string -> int -> int -> unit
 val nth : t -> int -> char
