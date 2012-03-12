@@ -61,8 +61,10 @@ module WRITEBATCH : sig
   val set_period : t -> float -> unit
   val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
 
-  (** [add_slave t slave_id f] *)
-  val add_slave : t -> int -> (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) -> unit
+  (** [add_slave t ~unregister slave_id f] *)
+  val add_slave : t ->
+    unregister:(int -> unit) ->
+    int -> (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) -> unit
 
   val delete_substring : tx -> string -> int -> int -> unit
   val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
@@ -84,8 +86,11 @@ struct
         (* will be overwritten after an update *)
 
         serialized_update : Obs_bytea.t;
-        mutable push_update_tbl : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit) IM.t;
-        (* the [unit Lwt.u] is used to wake up a thread waiting for
+        mutable push_update_tbl :
+          ((int -> unit) * (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit)) IM.t;
+        (* the [int -> unit] function is used to unregister a slave from an
+         * external registry *)
+        (* the [Lwt.u] is used to wake up a thread waiting for
          * confirmation that the update was persisted (for sync replication) *)
       }
 
@@ -96,7 +101,7 @@ struct
       IM.fold (fun k v l -> (k, v) :: l) t.push_update_tbl []
     in
       Lwt_list.iter_p
-        (fun (slave_id, push) ->
+        (fun (slave_id, (unregister, push)) ->
            let waiter, u = Lwt.task () in
              (* in order to support async replication, we'd
               * have to duplicate (only once) the
@@ -107,6 +112,7 @@ struct
                  `ACK -> return ()
                | `NACK ->
                    t.push_update_tbl <- IM.remove slave_id t.push_update_tbl;
+                   unregister slave_id;
                    return ())
         push_to_slave_funcs
 
@@ -156,8 +162,8 @@ struct
       end;
       t
 
-  let add_slave t id f =
-    t.push_update_tbl <- IM.add id f t.push_update_tbl
+  let add_slave t ~unregister id f =
+    t.push_update_tbl <- IM.add id (unregister, f) t.push_update_tbl
 
   let close t =
     t.closed <- true;
@@ -338,7 +344,9 @@ let open_db
       let lldb = L.open_db
                     ~write_buffer_size ~block_size ~max_open_files
                     ~comparator:Obs_datum_encoding.custom_comparator
-                    basedir
+                    basedir in
+      let unregister id =
+        db.slaves <- IM.remove id db.slaves
       in
         db.db_iter_pool := make_iter_pool lldb;
         db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
@@ -349,7 +357,7 @@ let open_db
               db.slaves <- IM.add id f db.slaves
         end;
         (* don't forget to register slaves in new writebatch! *)
-        IM.iter (WRITEBATCH.add_slave db.writebatch) db.slaves;
+        IM.iter (WRITEBATCH.add_slave ~unregister db.writebatch) db.slaves;
         lldb in
     let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
