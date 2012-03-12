@@ -487,6 +487,7 @@ struct
         { stream_id : Int64.t; stream : update Lwt_stream.t }
 
     let get_update_stream d =
+      lwt ich, och = Lwt_io.open_connection d.Raw_dump.db.data_address in
       (* [push] only holds a weak reference to the stream; if we have what
        * amounts to
        * [ignore (let rec get () = Lwt_stream.get stream >>= ... >> get ())]
@@ -494,7 +495,6 @@ struct
        * there's no external "strong" reference to the latter.
        * *)
       let stream, push = Lwt_stream.create () in
-      lwt ich, och = Lwt_io.open_connection d.Raw_dump.db.data_address in
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
       let get_buf =
         let b = ref "" in
@@ -541,7 +541,7 @@ struct
                 eprintf
                   "Exception in protocol client get_update_stream:\n%s\n%s%!"
                   (Printexc.to_string exn) bt;
-                return ()
+                Lwt_io.abort och
           end
         in return ret
 
