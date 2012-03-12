@@ -487,7 +487,8 @@ struct
         { stream_id : Int64.t; stream : update Lwt_stream.t }
 
     let get_update_stream d =
-      lwt ich, och = Lwt_io.open_connection d.Raw_dump.db.data_address in
+      lwt fd, ich, och = Obs_conn.open_connection d.Raw_dump.db.data_address in
+      let () = Lwt_unix.setsockopt fd Unix.TCP_NODELAY true in
       (* [push] only holds a weak reference to the stream; if we have what
        * amounts to
        * [ignore (let rec get () = Lwt_stream.get stream >>= ... >> get ())]

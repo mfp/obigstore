@@ -444,7 +444,8 @@ let () =
     let module C =
       struct
         let make_tmp_db () =
-          lwt ich, och = Lwt_io.open_connection addr in
+          lwt fd, ich, och = Obs_conn.open_connection addr in
+            Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
             return (CLIENT.make ~data_address ich och)
 
         let is_remote = true
