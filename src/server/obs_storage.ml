@@ -104,53 +104,53 @@ struct
 
   type tx = { t : t; mutable valid : bool; }
 
+  let do_push t update_copy (slave_id, (unregister, slave)) =
+    let waiter, u = Lwt.task () in
+      (* see if we have to switch from async to sync (slave caught up
+       * with update stream) *)
+      begin match slave.slave_mode, slave.slave_mode_target with
+          Sync, _ | _, Async -> ()
+        | Async, Sync ->
+            if slave.slave_pending_updates = 0 then
+              slave.slave_mode <- Sync;
+      end;
+      slave.slave_pending_updates <- slave.slave_pending_updates + 1;
+      let wait_for_signal () =
+        try_lwt
+          match_lwt waiter with
+              `ACK -> return ()
+            | `NACK ->
+                t.slave_tbl <- IM.remove slave_id t.slave_tbl;
+                unregister slave_id;
+                return ()
+        finally
+          slave.slave_pending_updates <- slave.slave_pending_updates - 1;
+          return ()
+      in
+        match slave.slave_mode with
+            Sync -> begin
+              slave.slave_push t.serialized_update u;
+              wait_for_signal ()
+            end
+          | Async -> begin
+              (* in order to support async replication, we
+               * have to duplicate (only once) the
+               * serialized_update so that the original can be
+               * cleared safely while the copy is being sent *)
+              slave.slave_push (Lazy.force update_copy) u;
+              ignore begin try_lwt
+                wait_for_signal ()
+              with exn ->
+                (* FIXME: log? *)
+                return ()
+              end;
+              return ()
+            end
+
   let push_to_slaves t =
     let slaves = IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl [] in
     let update_copy = lazy (Obs_bytea.copy t.serialized_update) in
-      Lwt_list.iter_p
-        (fun (slave_id, (unregister, slave)) ->
-           let waiter, u = Lwt.task () in
-             (* see if we have to switch from async to sync (slave caught up
-              * with update stream) *)
-             begin match slave.slave_mode, slave.slave_mode_target with
-                 Sync, _ | _, Async -> ()
-               | Async, Sync ->
-                   if slave.slave_pending_updates = 0 then
-                     slave.slave_mode <- Sync;
-             end;
-             slave.slave_pending_updates <- slave.slave_pending_updates + 1;
-             let wait_for_signal () =
-               try_lwt
-                 match_lwt waiter with
-                     `ACK -> return ()
-                   | `NACK ->
-                       t.slave_tbl <- IM.remove slave_id t.slave_tbl;
-                       unregister slave_id;
-                       return ()
-               finally
-                 slave.slave_pending_updates <- slave.slave_pending_updates - 1;
-                 return ()
-             in
-               match slave.slave_mode with
-                   Sync -> begin
-                     slave.slave_push t.serialized_update u;
-                     wait_for_signal ()
-                   end
-                 | Async -> begin
-                     (* in order to support async replication, we
-                      * have to duplicate (only once) the
-                      * serialized_update so that the original can be
-                      * cleared safely while the copy is being sent *)
-                     slave.slave_push (Lazy.force update_copy) u;
-                     ignore begin try_lwt
-                       wait_for_signal ()
-                     with exn ->
-                       (* FIXME: log? *)
-                       return ()
-                     end;
-                     return ()
-                   end)
-        slaves
+      Lwt_list.iter_p (do_push t update_copy) slaves
 
   let make db iter_pool ~flush_period =
     let t =
