@@ -510,7 +510,7 @@ struct
       Lwt_condition.wait c.wait_for_pending_reqs
     end
 
-  let setup_auto_yield t =
+  let setup_auto_yield t c =
     incr num_clients;
     if !num_clients >= 2 then begin
       D.use_thread_pool t.db true;
@@ -525,7 +525,7 @@ struct
              D.use_thread_pool db false;
              auto_yielder := dummy_auto_yield
            end)
-        t
+        c
 
   let make db =
     {
@@ -551,7 +551,7 @@ struct
         wait_for_pending_reqs = Lwt_condition.create ();
         async_req_region = Lwt_util.make_region max_async_reqs;
       }
-    in setup_auto_yield server;
+    in setup_auto_yield server c;
        try_lwt
          service c
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
