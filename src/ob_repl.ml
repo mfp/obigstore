@@ -570,14 +570,16 @@ let rec inner_exec_loop ?phrase db ks =
     lwt phrase = match phrase with
         None -> get_phrase ()
       | Some s -> return s in
-    let () = last_phrase := Some phrase in
+    let () =
+      last_phrase := Some phrase;
+      (* we add to the phrase history before parsing, so that the phrase can
+       * be corrected in case of syntax error *)
+      phrase_history := phrase :: !phrase_history;
+    in
     let loop () = inner_exec_loop db ks in
     let lexbuf = Lexing.from_string phrase in
       match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
-          Command (req, None) ->
-            lwt () = execute ks db loop req in
-              phrase_history := phrase :: !phrase_history;
-              return ()
+          Command (req, None) -> execute ks db loop req
         | Command (req, Some dst) ->
             let oc = open_out dst in
               try_lwt
@@ -586,14 +588,12 @@ let rec inner_exec_loop ?phrase db ks =
                     (Pervasives.output oc)
                     (fun () -> Pervasives.flush oc) in
                 lwt () = execute ~fmt ks db loop req in
-                  phrase_history := phrase :: !phrase_history;
                   return ()
               finally
                 close_out oc;
                 return ()
         | Directive (directive, args) ->
             Directives.eval_directive directive args;
-            phrase_history := phrase :: !phrase_history;
             return ()
         | Nothing -> print_endline "Nothing"; return ()
         | Error s -> printf "Error: %s\n%!" s; return ()
