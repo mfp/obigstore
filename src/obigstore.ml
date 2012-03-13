@@ -31,6 +31,7 @@ let write_buffer_size = ref (4 * 1024 * 1024)
 let block_size = ref 4096
 let max_open_files = ref 1000
 let master = ref None
+let assume_page_fault = ref false
 
 let params =
   Arg.align
@@ -44,6 +45,8 @@ let params =
       "-write-buffer-size", Arg.Set_int write_buffer_size, "N Write buffer size (default: 4MB)";
       "-block_size", Arg.Set_int block_size, "N Block size (default: 4KB)";
       "-max-open-files", Arg.Set_int max_open_files, "N Max open files (default: 1000)";
+      "-assume-page-fault", Arg.Set assume_page_fault,
+        " Assume working set doesn't fit in RAM and avoid blocking.";
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -54,10 +57,12 @@ let _ = Sys.set_signal Sys.sighup (Sys.Signal_handle (fun _ -> Gc.compact ()))
 
 let open_db dir =
   Obs_storage.open_db
-    ~group_commit_period:!gcommit_period dir
+    ~group_commit_period:!gcommit_period
     ~write_buffer_size:!write_buffer_size
     ~block_size:!block_size
     ~max_open_files:!max_open_files
+    ~assume_page_fault:!assume_page_fault
+    dir
 
 let run_slave ~dir ~address ~data_address host port =
   let module C =

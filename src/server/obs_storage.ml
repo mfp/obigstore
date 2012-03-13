@@ -291,6 +291,10 @@ type db =
 
       reopen : ?new_slave:slave -> unit -> L.db;
       mutable slaves : slave IM.t;
+
+      (* Mandates whether even "short requests" are to be detached when
+       * use_thread_pool is set. *)
+      assume_page_fault : bool;
     }
 
 and keyspace =
@@ -355,7 +359,9 @@ let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)
       ?(block_size = 4096)
       ?(max_open_files = 1000)
-      ?(group_commit_period = 0.002) basedir =
+      ?(group_commit_period = 0.002)
+      ?(assume_page_fault = false)
+      basedir =
   let lldb = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
              ~comparator:Obs_datum_encoding.custom_comparator basedir in
@@ -373,6 +379,7 @@ let open_db
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
         writebatch; db_iter_pool; reopen; slaves = IM.empty;
+        assume_page_fault;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -404,9 +411,23 @@ let reset_iter_pool t =
 
 let use_thread_pool db v = db.use_thread_pool <- v
 
+let expect_short_request_key = Lwt.new_key ()
+
 let detach_ks_op ks f x =
-  if ks.ks_db.use_thread_pool then Lwt_preemptive.detach f x
-  else return (f x)
+  if not ks.ks_db.use_thread_pool then
+    return (f x)
+  else begin
+    let must_detach = match Lwt.get expect_short_request_key with
+        Some true -> ks.ks_db.assume_page_fault
+      | _ -> true
+    in if must_detach then Lwt_preemptive.detach f x else return (f x)
+  end
+
+(* FIXME: determine suitable constant *)
+let max_keys_in_short_request = 128
+
+let short_request x f =
+  Lwt.with_value expect_short_request_key (Some x) f
 
 let list_keyspaces t =
   Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>
@@ -674,7 +695,7 @@ and commit_outermost_transaction ks tx =
         Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
         Miniregion.use ks.ks_db.db
           (fun lldb ->
-             detach_ks_op ks (L.Batch.write ~sync:true lldb) b >>
+             Lwt_preemptive.detach (L.Batch.write ~sync:true lldb) b >>
              reset_iter_pool ks.ks_db >>
              return ())
     end >>
@@ -1159,9 +1180,11 @@ let exist_keys tx table keys =
          keys)
 
 let exists_key tx table key =
-  exist_keys tx table [key] >>= function
-    | true :: _ -> return true
-    | _ -> return false
+  short_request true
+    (fun () ->
+       exist_keys tx table [key] >>= function
+         | true :: _ -> return true
+         | _ -> return false)
 
 let count_keys tx table range =
   let s = ref S.empty in
@@ -1867,11 +1890,15 @@ let get_slice_aux
       ~max_keys ~max_columns ~decode_timestamps
       key_range ?predicate column_range =
   match predicate, key_range with
-      _, Keys l -> get_slice_aux_discrete
-                     postproc_keydata get_keydata_key ~keep_columnless_keys tx table
-                     ~max_keys ~max_columns ~decode_timestamps
-                     l ?predicate column_range
-
+      _, Keys l ->
+        short_request
+          (max_keys < max_keys_in_short_request ||
+           List.length l < max_keys_in_short_request)
+          (fun () ->
+             get_slice_aux_discrete
+               postproc_keydata get_keydata_key ~keep_columnless_keys tx table
+               ~max_keys ~max_columns ~decode_timestamps
+               l ?predicate column_range)
     | None, Key_range range ->
         get_slice_aux_continuous_no_predicate
           postproc_keydata get_keydata_key ~keep_columnless_keys tx table
