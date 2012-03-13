@@ -562,11 +562,15 @@ let get_phrase () =
       ()
   end
 
-exception Need_reconnect
+exception Need_reconnect of string option
 
-let rec inner_exec_loop db ks =
+let rec inner_exec_loop ?phrase db ks =
+  let last_phrase = ref None in
   begin try_lwt
-    lwt phrase = get_phrase () in
+    lwt phrase = match phrase with
+        None -> get_phrase ()
+      | Some s -> return s in
+    let () = last_phrase := Some phrase in
     let loop () = inner_exec_loop db ks in
     let lexbuf = Lexing.from_string phrase in
       match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
@@ -609,9 +613,14 @@ let rec inner_exec_loop db ks =
     | Lwt_read_line.Interrupt -> exit 0
     | Obs_protocol.Error (Obs_protocol.Exception End_of_file)
     | Obs_protocol.Error (Obs_protocol.Closed) ->
-        if !tx_level > 0 then
+        if !tx_level > 0 then begin
           print_endline "Lost connection: aborting transaction";
-        raise_lwt Need_reconnect
+          (* we do not want the last phrase to be retried on reconnect since
+           * we aborted the tx *)
+          raise_lwt (Need_reconnect None)
+        end else begin
+          raise_lwt (Need_reconnect !last_phrase)
+        end
     | e ->
         printf "Got exception: %s\n%!" (Printexc.to_string e);
         return ()
@@ -636,25 +645,27 @@ let () =
       lwt ks = D.register_keyspace db !keyspace in
         return (db, ks) in
 
-    let rec outer_loop db ks =
+    let rec outer_loop ?phrase db ks =
       try_lwt
-        inner_exec_loop db ks
+        inner_exec_loop ?phrase db ks
       with
           End_of_file -> exit 0
         | Abort_exn | Commit_exn ->
             print_endline "Not inside a transaction";
             outer_loop db ks
-        | Need_reconnect ->
-            let rec reconnect () =
+        | Need_reconnect phrase ->
+            let rec reconnect retry_phrase =
               try_lwt
                 print_endline "Reconnecting to server...";
-                get_db_and_ks ()
+                lwt db, ks = get_db_and_ks () in
+                  return (retry_phrase, db, ks)
               with exn ->
                 printf "Failed (%s).\n%!" (Printexc.to_string exn);
                 Lwt_unix.sleep 1.0 >>
-                reconnect () in
-            lwt db, ks = reconnect () in
-              outer_loop db ks in
+                reconnect false in
+            lwt retry_phrase, db, ks = reconnect true in
+            let phrase = if retry_phrase then phrase else None in
+              outer_loop ?phrase db ks in
 
     lwt db, ks = get_db_and_ks () in
       curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
