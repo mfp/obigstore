@@ -87,7 +87,7 @@ struct
       time begin fun () ->
         for_lwt i = 1 to iters / batch_size do
           let rows = List.init batch_size (fun _ -> make_row ()) in
-            Lwt_list.iter_s (fun _ -> return ()) rows
+            Lwt_list.iter_p (fun _ -> Lwt_unix.sleep 0.) rows
         done
       end
     in return (insert_time -. overhead)
@@ -221,6 +221,13 @@ struct
              (iter_p_in_region ~size:100
                 (fun (k, v) -> D.put_columns ks table k [mk_col "value" v]))
              keys) in
+    lwt overhead1 =
+      time
+        (fun () ->
+           iter_p_in_region ~size:50
+             (iter_p_in_region ~size:100
+                (fun (k, v) -> ignore [mk_col "value" v]; Lwt_unix.sleep 0.))
+             keys) in
     lwt dt2 =
       time
         (fun () ->
@@ -228,8 +235,18 @@ struct
              (fun l ->
                 D.put_multi_columns ks (table ^ "_multi")
                   (List.map (fun (k, v) -> (k, [mk_col "value" v])) l))
+             keys) in
+    lwt overhead2 =
+      time
+        (fun () ->
+           iter_p_in_region ~size:50
+             (fun l ->
+                ignore (table ^ "_multi");
+                ignore (List.map (fun (k, v) -> (k, [mk_col "value" v])) l);
+                Lwt_unix.sleep 0.)
              keys)
-    in return (dt, dt2, nkeys)
+    in
+      return (dt -. overhead1, dt2 -. overhead2, nkeys)
 
   let bm_sequential_write ~iterations ~payload db =
     lwt (dt, dt_multi, nkeys) =
@@ -290,7 +307,19 @@ struct
           (iter_p_in_region ~size:50 do_read) keys
       else
         Lwt_list.iter_s (Lwt_list.iter_s do_read) keys in
-    let dt transaction = time (fun () -> transaction ks (fun _ -> read keys)) in
+    lwt overhead =
+      time
+        (fun () ->
+           if C.is_remote then
+             iter_p_in_region ~size:50
+               (iter_p_in_region ~size:50 (fun _ -> Lwt_unix.sleep 0.)) keys
+           else
+             Lwt_list.iter_s
+               (Lwt_list.iter_s (fun _ -> Lwt_unix.sleep 0.)) keys) in
+
+    let dt transaction =
+      lwt dt = time (fun () -> transaction ks (fun _ -> read keys)) in
+        return (dt -. overhead) in
 
     lwt dt_repeatable = dt D.repeatable_read_transaction in
     lwt dt_read_committed = dt D.read_committed_transaction in
