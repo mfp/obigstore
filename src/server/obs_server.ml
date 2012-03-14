@@ -61,7 +61,8 @@ struct
               (try_lwt Lwt_io.flush och with _ -> return ()) >>
               Lwt_io.abort och
         with
-          | End_of_file ->
+          | End_of_file
+          | Unix.Unix_error ((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
               eprintf "Closing connection from %s\n%!" (string_of_addr addr);
               return ()
           | e ->
