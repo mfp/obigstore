@@ -44,7 +44,7 @@ let params =
       "-commit-period", Arg.Set_float gcommit_period,
         "DT Group commit period (default: 0.010s)";
       "-write-buffer-size", Arg.Set_int write_buffer_size, "N Write buffer size (default: 4MB)";
-      "-block_size", Arg.Set_int block_size, "N Block size (default: 4KB)";
+      "-block-size", Arg.Set_int block_size, "N Block size (default: 4KB)";
       "-max-open-files", Arg.Set_int max_open_files, "N Max open files (default: 1000)";
       "-assume-page-fault", Arg.Set assume_page_fault,
         " Assume working set doesn't fit in RAM and avoid blocking.";
