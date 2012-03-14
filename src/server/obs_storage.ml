@@ -67,7 +67,11 @@ and sync_mode = Async | Sync
 module WRITEBATCH : sig
   type t
   type tx
-  val make : L.db -> L.iterator Lwt_pool.t ref -> flush_period:float -> t
+
+  val make :
+    L.db -> L.iterator Lwt_pool.t ref ->
+    fsync:bool -> flush_period:float -> t
+
   val close : t -> unit Lwt.t
   val set_period : t -> float -> unit
   val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
@@ -95,11 +99,14 @@ struct
         (* will be overwritten after an update *)
 
         serialized_update : Obs_bytea.t;
+
         mutable slave_tbl : ((int -> unit) * slave) IM.t;
         (* the [int -> unit] function is used to unregister a slave from an
          * external registry *)
         (* the [Lwt.u] is used to wake up a thread waiting for
          * confirmation that the update was persisted (for sync replication) *)
+
+        fsync : bool;
       }
 
   type tx = { t : t; mutable valid : bool; }
@@ -152,14 +159,14 @@ struct
     let update_copy = lazy (Obs_bytea.copy t.serialized_update) in
       Lwt_list.iter_p (do_push t update_copy) slaves
 
-  let make db iter_pool ~flush_period =
+  let make db iter_pool ~fsync ~flush_period =
     let t =
       { db; wb = L.Batch.make (); dirty = false; closed = false;
         mutex = Lwt_mutex.create (); sync_wait = Lwt.wait ();
         flush_period; wait_last_sync = Lwt.wait ();
         iter_pool;
         serialized_update = Obs_bytea.create 128;
-        slave_tbl = IM.empty;
+        slave_tbl = IM.empty; fsync;
       }
     in
       ignore begin try_lwt
@@ -173,7 +180,9 @@ struct
           else begin
             Lwt_mutex.with_lock t.mutex
               (fun () ->
-                 lwt () = Lwt_preemptive.detach (L.Batch.write ~sync:true t.db) t.wb
+                 lwt () =
+                   Lwt_preemptive.detach
+                     (L.Batch.write ~sync:t.fsync t.db) t.wb
                  and () = push_to_slaves t in
                  let u = snd t.sync_wait in
                  let u' = snd t.wait_last_sync in
@@ -295,6 +304,7 @@ type db =
       (* Mandates whether even "short requests" are to be detached when
        * use_thread_pool is set. *)
       assume_page_fault : bool;
+      fsync : bool;
     }
 
 and keyspace =
@@ -361,14 +371,16 @@ let open_db
       ?(max_open_files = 1000)
       ?(group_commit_period = 0.002)
       ?(assume_page_fault = false)
+      ?(unsafe_mode = false)
       basedir =
   let lldb = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
              ~comparator:Obs_datum_encoding.custom_comparator basedir in
   let group_commit_period = max group_commit_period 0.001 in
   let db_iter_pool = ref (make_iter_pool lldb) in
+  let fsync = not unsafe_mode in
   let writebatch =
-    WRITEBATCH.make lldb db_iter_pool ~flush_period:group_commit_period
+    WRITEBATCH.make lldb db_iter_pool ~fsync ~flush_period:group_commit_period
   in
     (* ensure we have a end_of_db record *)
     if not (L.mem lldb Obs_datum_encoding.end_of_db_key) then
@@ -379,7 +391,7 @@ let open_db
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
         writebatch; db_iter_pool; reopen; slaves = IM.empty;
-        assume_page_fault;
+        assume_page_fault; fsync = fsync;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -391,6 +403,7 @@ let open_db
       in
         db.db_iter_pool := make_iter_pool lldb;
         db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
+                           ~fsync:db.fsync
                            ~flush_period:group_commit_period;
         Option.may
           (fun slave -> db.slaves <- IM.add slave.slave_id slave db.slaves)
@@ -695,7 +708,8 @@ and commit_outermost_transaction ks tx =
         Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
         Miniregion.use ks.ks_db.db
           (fun lldb ->
-             Lwt_preemptive.detach (L.Batch.write ~sync:true lldb) b >>
+             Lwt_preemptive.detach
+               (L.Batch.write ~sync:ks.ks_db.fsync lldb) b >>
              reset_iter_pool ks.ks_db >>
              return ())
     end >>
@@ -2267,7 +2281,8 @@ let load tx data =
           tx.backup_writebatch_size <- 0;
           Miniregion.use tx.ks.ks_db.db
             (fun lldb ->
-               detach_ks_op tx.ks (L.Batch.write ~sync:true lldb) wb >>
+               detach_ks_op tx.ks
+                 (L.Batch.write ~sync:tx.ks.ks_db.fsync lldb) wb >>
                reset_iter_pool tx.ks.ks_db)
         end
       end >>

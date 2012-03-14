@@ -39,6 +39,8 @@ end
   * @param assume_page_fault when true, even "short" requests are run in a
   * separate thread when use_thread_pool is set (default: false)
   *
+  * @param unsafe_mode when true, do not fsync after writes (default: false)
+  *
   * @param write_buffer_size
   * "Amount of data to build up in memory (backed by an unsorted log
   * on disk) before converting to a sorted on-disk file.
@@ -66,6 +68,7 @@ val open_db :
   ?max_open_files:int ->
   ?group_commit_period:float ->
   ?assume_page_fault:bool ->
+  ?unsafe_mode:bool ->
   string -> db
 
 (** Flush transactions waiting for group commit and close the DB.  All further
