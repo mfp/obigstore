@@ -22,7 +22,16 @@ open Printf
 
 module D = Obs_storage
 module DM = Obs_data_model
-module List = struct include BatList include List end
+module List = struct include List include BatList end
+module String = struct include String include BatString end
+
+type benchmark =
+    Put_columns
+  | Random_write
+  | Seq_write
+  | Count
+  | Random_read
+  | Seq_read
 
 module Make
   (D : Obs_data_model.S)
@@ -297,31 +306,31 @@ struct
          nkeys dt_slices (truncate (float nkeys /. dt_slices));
       return ()
 
-  let run_if x f = if x then f () else return ()
+  let maybe_run_bm bms bm f = if List.mem bm bms then f () else return ()
 
   let run
         ~rounds ~iterations ~avg_cols ~batch_size
-        ~complex_payload
-        ~run_put ~run_seq_write
-        ~run_seq_read ~run_read_committed ~run_rand_read
+        ~complex_payload ~run_benchmarks
+        ~run_read_committed
         ~seq_iterations ~seq_payload =
     lwt db = C.make_tmp_db () in
+    let run bm f = maybe_run_bm run_benchmarks bm f in
       Test_00util.keep_tmp := false;
-      run_if run_put
+      run Put_columns
         (fun () -> run_put_colums_bm
                      ~payload:complex_payload
                      ~rounds ~iterations ~batch_size ~avg_cols db) >>
-      run_if run_seq_write
+      run Random_write
         (fun () -> bm_random_write
                      ~iterations:seq_iterations
                      ~payload:seq_payload db) >>
-      run_if run_seq_write
+      run Seq_write
         (fun () -> bm_sequential_write
                      ~iterations:seq_iterations
                      ~payload:seq_payload db) >>
-      run_if run_rand_read (fun () -> bm_count db) >>
-      run_if run_rand_read (fun () -> bm_random_read ~max_key:seq_iterations db) >>
-      run_if run_seq_read
+      run Count (fun () -> bm_count db) >>
+      run Random_read (fun () -> bm_random_read ~max_key:seq_iterations db) >>
+      run Seq_read
         (fun () ->
            Lwt_list.iter_s
              (fun max_columns ->
@@ -342,16 +351,14 @@ end
 let server = ref "127.0.0.1"
 let port = ref 12050
 let remote_test = ref false
-let run_put = ref true
-let run_seq_read = ref true
-let run_seq_write = ref true
-let run_random_read = ref true
 let db_dir = ref None
 let rounds = ref 10
 let iterations = ref 10000
 let batch_size = ref 1000
 let avg_cols = ref 10
 let complex_payload = ref 16
+
+let benchmarks = ref "PWwcRr"
 
 let payload = ref 32
 let write_iters = ref 100000
@@ -369,22 +376,15 @@ let params =
         post_separator
           "N Connect to server port N (default: 12050)"
 
-          "Mode:";
+          "Benchmarks:";
 
-      "-put-only",
-        Arg.Unit (fun () -> run_put := true;
-                            run_seq_read := false;
-                            run_random_read := false;
-                            run_seq_write := true;),
-        " Benchmark only put_columns (complex + simple, rand + seq).";
-      "-read-only",
-        Arg.Unit (fun () -> run_put := false;
-                            run_seq_read := true;
-                            run_random_read := true;
-                            run_seq_write := false;),
-        post_separator " Benchmark only sequential and random read."
+      "-benchmarks", Arg.Set_string benchmarks,
+        post_separator
+          "STRING Benchmarks to run (default: PWwcRr)"
 
-          "Multi-column row insertion:";
+          "    put cols(P), rand write(W), seq write(w), count(c),\n     \
+              rand read(R), seq read(r)\n\n \
+           Multi-column row insertion:";
 
       "-complex-write-rounds", Arg.Set_int rounds,
         "N Run N put_columns rounds (default: 10).";
@@ -422,6 +422,18 @@ module BM_Obs_storage =
        let is_remote = false
      end)
 
+let benchmarks_of_bm_string () =
+  List.filter_map
+    (function
+         'P' -> Some Put_columns
+       | 'W' -> Some Random_write
+       | 'w' -> Some Seq_write
+       | 'c' -> Some Count
+       | 'R' -> Some Random_read
+       | 'r' -> Some Seq_read
+       | _ -> None)
+    (String.explode !benchmarks)
+
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
@@ -431,11 +443,8 @@ let () =
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
          ~complex_payload:!complex_payload
          ~batch_size:!batch_size
-         ~run_put:!run_put
-         ~run_seq_write:!run_seq_write
-         ~run_seq_read:!run_seq_read
-         ~run_rand_read:!run_random_read
          ~run_read_committed:true
+         ~run_benchmarks:(benchmarks_of_bm_string ())
          ~seq_payload:!payload
          ~seq_iterations:!write_iters)
   else begin
@@ -456,11 +465,8 @@ let () =
            ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
            ~complex_payload:!complex_payload
            ~batch_size:!batch_size
-           ~run_put:!run_put
-           ~run_seq_read:!run_seq_read
-           ~run_seq_write:!run_seq_write
-           ~run_rand_read:!run_random_read
            ~run_read_committed:false
+           ~run_benchmarks:(benchmarks_of_bm_string ())
            ~seq_payload:!payload
            ~seq_iterations:!write_iters)
   end
