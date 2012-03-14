@@ -647,6 +647,8 @@ struct
                             | 1 | _ -> D.Replication.nack_update update
               with exn ->
                 D.Replication.nack_update update >>
+                (* release no longer needed dump resources (e.g. files) *)
+                D.Raw_dump.release dump >>
                 raise_lwt exn
               end >>
               forward_updates ()
