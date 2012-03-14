@@ -41,7 +41,7 @@ let params =
       "-master", Arg.String (fun s -> master := Some s),
         "HOST:PORT Replicate database reachable on HOST:PORT.";
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
-      "-group-commit-period", Arg.Set_float gcommit_period,
+      "-commit-period", Arg.Set_float gcommit_period,
         "DT Group commit period (default: 0.010s)";
       "-write-buffer-size", Arg.Set_int write_buffer_size, "N Write buffer size (default: 4MB)";
       "-block_size", Arg.Set_int block_size, "N Block size (default: 4KB)";
