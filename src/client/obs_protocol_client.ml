@@ -110,7 +110,11 @@ struct
       return s
 
   let rec get_response_loop t =
-    lwt request_id, len, crc = Obs_protocol.read_header t.ich in
+    lwt request_id, len, crc =
+      match_lwt Obs_protocol.read_header t.ich with
+          Obs_protocol.Header x -> return x
+        | Obs_protocol.Corrupted_header ->
+            raise_lwt (Obs_protocol.Error Obs_protocol.Corrupted_frame) in
     let pos = Lwt_io.position t.ich in
     let receiver = try_find t.pending_reqs request_id in
       match receiver with

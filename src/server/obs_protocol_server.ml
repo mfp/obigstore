@@ -137,7 +137,14 @@ struct
 
   let rec service c =
     !auto_yielder () >>
-    lwt request_id, len, crc = read_header c.ich in
+    lwt request_id, len, crc =
+      match_lwt read_header c.ich with
+          Header x -> return x
+        | Corrupted_header ->
+            (* we can't even trust the request_id, so all that's left is
+             * dropping the connection *)
+            raise_lwt (Error Corrupted_frame)
+    in
       match_lwt read_request c ~request_id len crc with
           None -> service c
         | Some r ->

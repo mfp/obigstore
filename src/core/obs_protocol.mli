@@ -32,6 +32,11 @@ type error =
   | Exception of exn
 
 type request_id = string
+type crc = string
+
+type header =
+    Header of (request_id * int * crc)
+  | Corrupted_header
 
 exception Error of error
 
@@ -41,7 +46,7 @@ val is_sync_req : string -> bool
 
 val skip : Lwt_io.input_channel -> int -> unit Lwt.t
 
-val read_header : Lwt_io.input_channel -> (string * int * string) Lwt.t
+val read_header : Lwt_io.input_channel -> header Lwt.t
 
 val write_msg :
   ?flush:bool ->

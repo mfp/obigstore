@@ -29,6 +29,11 @@ type error =
   | Other of int | Exception of exn
 
 type request_id = string
+type crc = string
+
+type header =
+    Header of (string * int * string)
+  | Corrupted_header
 
 exception Error of error
 
@@ -75,7 +80,7 @@ let read_header ich =
   Lwt_io.read_into_exactly ich head 0 16 >>
   let crc = String.sub head 12 4 in
     if Obs_crc32c.substring head 0 12 <> crc then
-      raise_lwt (Error Corrupted_frame)
+      return Corrupted_header
     else begin
       let req_id =
         if Obs_string_util.cmp_substrings sync_req_id 0 8 head 0 8 = 0 then
@@ -88,9 +93,10 @@ let read_header ich =
       let v2 = get head 10 in
       let v3 = get head 11 in
         (* FIXME: check overflow (x86 only, not x86-64) *)
-        return (req_id,
-                v0 lor (v1 lsl 8) lor (v2 lsl 16) lor (v3 lsl 24),
-                crc)
+        return (Header
+                  (req_id,
+                   v0 lor (v1 lsl 8) lor (v2 lsl 16) lor (v3 lsl 24),
+                   crc))
     end
 
 let write_msg ?(flush=false) och req_id msg =
