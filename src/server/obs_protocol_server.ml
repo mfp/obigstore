@@ -25,6 +25,8 @@ open Obs_request
 
 let data_protocol_version = (0, 0, 0)
 
+type replication_wait = Await_reception | Await_commit
+
 module Make
   (D : sig
      include Obs_data_model.S
@@ -90,6 +92,7 @@ struct
           (keyspace_name, subs_stream * mutable_string_set) Hashtbl.t H.t;
         raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
         mutable raw_dump_seqno : Int64.t;
+        replication_wait : replication_wait;
       }
 
   type client_state =
@@ -534,13 +537,14 @@ struct
            end)
         c
 
-  let make db =
+  let make ?(replication_wait = Await_commit) db =
     {
       db;
       subscriptions = Hashtbl.create 13;
       rev_subscriptions = H.create 13;
       raw_dump_seqno = 0L;
       raw_dumps = Hashtbl.create 13;
+      replication_wait;
     }
 
   let client_id = ref 0
@@ -632,9 +636,15 @@ struct
                       | 1 | _ -> copy_data ()
                   in
                     copy_data () >>
-                    match_lwt Lwt_io.LE.read_int ich with
-                        0 -> D.Replication.ack_update update
-                      | 1 | _ -> D.Replication.nack_update update
+                    match server.replication_wait with
+                        Await_reception ->
+                          D.Replication.ack_update update >>
+                          lwt _ = Lwt_io.LE.read_int ich in
+                            return ()
+                      | Await_commit ->
+                          match_lwt Lwt_io.LE.read_int ich with
+                              0 -> D.Replication.ack_update update
+                            | 1 | _ -> D.Replication.nack_update update
               with exn ->
                 D.Replication.nack_update update >>
                 raise_lwt exn

@@ -88,8 +88,10 @@ struct
       Lwt_unix.listen sock backlog;
       sock
 
-  let rec run_plain_server ?(debug=false) db ~address ~data_address =
-    let server = S.make db in
+  let rec run_server
+        ?(replication_wait = Obs_protocol_server.Await_commit)
+        ?(debug=false) db ~address ~data_address =
+    let server = S.make ~replication_wait db in
       Lwt.join
         [ accept_loop handle_connection ~debug ~server (make_sock address);
           accept_loop handle_data_connection ~debug ~server (make_sock data_address);

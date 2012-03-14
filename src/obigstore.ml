@@ -33,6 +33,10 @@ let max_open_files = ref 1000
 let master = ref None
 let assume_page_fault = ref false
 let unsafe_mode = ref false
+let replication_wait = ref Obs_protocol_server.Await_commit
+
+let set_await_recv () =
+  replication_wait := Obs_protocol_server.Await_commit
 
 let params =
   Arg.align
@@ -50,6 +54,8 @@ let params =
         " Assume working set doesn't fit in RAM and avoid blocking.";
       "-no-fsync", Arg.Set unsafe_mode,
         " Don't fsync after writes (may loss data on system crash).";
+      "-await-recv", Arg.Unit set_await_recv,
+        " Await mere reception (not commit) from replicas.";
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -112,8 +118,7 @@ let run_slave ~dir ~address ~data_address host port =
                 (Printexc.to_string exn) bt;
               return ()
           end;
-          S.run_plain_server ~debug:!debug db
-            ~address ~data_address
+          S.run_server ~debug:!debug db ~address ~data_address
     end
 
 let () =
@@ -134,7 +139,8 @@ let () =
           match !master with
               None ->
                 let db = open_db dir in
-                  Lwt_unix.run (S.run_plain_server ~debug:!debug db
+                  Lwt_unix.run (S.run_server ~debug:!debug db
+                                  ~replication_wait:!replication_wait
                                   ~address ~data_address)
             | Some master ->
                 let host, port =
