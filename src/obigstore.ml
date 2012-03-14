@@ -32,6 +32,7 @@ let block_size = ref 4096
 let max_open_files = ref 1000
 let master = ref None
 let assume_page_fault = ref false
+let unsafe_mode = ref false
 
 let params =
   Arg.align
@@ -47,6 +48,8 @@ let params =
       "-max-open-files", Arg.Set_int max_open_files, "N Max open files (default: 1000)";
       "-assume-page-fault", Arg.Set assume_page_fault,
         " Assume working set doesn't fit in RAM and avoid blocking.";
+      "-no-fsync", Arg.Set unsafe_mode,
+        " Don't fsync after writes (may loss data on system crash).";
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -62,6 +65,7 @@ let open_db dir =
     ~block_size:!block_size
     ~max_open_files:!max_open_files
     ~assume_page_fault:!assume_page_fault
+    ~unsafe_mode:!unsafe_mode
     dir
 
 let run_slave ~dir ~address ~data_address host port =
