@@ -48,14 +48,28 @@ struct
       f () >>
       return (Unix.gettimeofday () -. t0)
 
-  let mk_payload len k =
-    if len <= 32 then Digest.to_hex (Digest.string k)
-    else
-      let b = Buffer.create 13 in
-        while Buffer.length b < len do
-          Buffer.add_string b (string_of_int (Random.int 0x3FFFFFF))
-        done;
-        Buffer.sub b 0 len
+  let rng = Cryptokit.Random.pseudo_rng
+              (Digest.to_hex (Digest.string ""))
+
+  let random_string_maker () =
+    let buf = Cryptokit.transform_string (Cryptokit.Hexa.encode ())
+                (Cryptokit.Random.string rng 500_000) in
+    let ptr = ref 0 in
+    let off = ref 0 in
+      (fun n ->
+         if n > String.length buf - !ptr then begin
+           (* we shift the stream so that we don't get the same strings given
+            * the same sequence of lengths *)
+           incr off;
+           ptr := !off;
+         end;
+         let s = String.sub buf !ptr n in
+           ptr := !ptr + n;
+           s)
+
+  let random_payload = random_string_maker ()
+  (* let random_payload len = String.make len '0' *)
+  let random_key = random_string_maker ()
 
   let bm_put_columns ?(iters=10000) ?(batch_size=1000) make_row ks ~table =
     lwt insert_time =
@@ -80,12 +94,10 @@ struct
 
   let make_row_dummy ?(avg_cols=10) ~payload () =
     let c = if avg_cols > 1 then 1 + Random.int (avg_cols*2) else 1 in
-    let k = sprintf "%d%d" (Random.int 0x3FFFFFF) (Random.int 0x3FFFFFF) in
-      (k,
+      (random_key 20,
        List.init c
          (fun i ->
-            let data = mk_payload payload (sprintf "%s-%d" k i) in
-              mk_col ~name:(sprintf "col%d" i) data))
+            mk_col ~name:("col" ^ string_of_int i) (random_payload payload)))
 
   let row_data_size (key, cols) =
     String.length key +
@@ -201,7 +213,7 @@ struct
            List.init chunksize
              (fun j ->
                 let k = mk_key (i * chunksize + j) in
-                  (k, mk_payload payload k))) in
+                  (k, random_payload payload))) in
     lwt dt =
       time
         (fun () ->
@@ -232,7 +244,7 @@ struct
 
   let bm_random_write ~iterations ~payload db =
     lwt (dt, dt_multi, nkeys) =
-      bm_simple_write_aux (fun _ -> string_of_int (Random.int iterations))
+      bm_simple_write_aux (fun _ -> random_key 20)
         ~iterations ~payload db "random_write"
     in
       print_newline ();
