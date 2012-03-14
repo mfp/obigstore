@@ -51,6 +51,7 @@ struct
         if debug then
           eprintf "Got connection from %s\n%!" (string_of_addr addr);
         Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
+        Lwt_unix.setsockopt fd Unix.SO_KEEPALIVE true;
         ignore begin try_lwt
           let ich = Lwt_io.of_fd Lwt_io.input fd in
           let och = Lwt_io.of_fd Lwt_io.output fd in

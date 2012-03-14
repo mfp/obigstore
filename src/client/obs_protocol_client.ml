@@ -488,7 +488,10 @@ struct
 
     let get_update_stream d =
       lwt fd, ich, och = Obs_conn.open_connection d.Raw_dump.db.data_address in
-      let () = Lwt_unix.setsockopt fd Unix.TCP_NODELAY true in
+      let () =
+        Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
+        Lwt_unix.setsockopt fd Unix.SO_KEEPALIVE true;
+      in
       (* [push] only holds a weak reference to the stream; if we have what
        * amounts to
        * [ignore (let rec get () = Lwt_stream.get stream >>= ... >> get ())]
