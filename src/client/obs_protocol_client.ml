@@ -530,7 +530,9 @@ struct
                       let wait, wakeup = Lwt.task () in
                         Lwt_io.read_into_exactly ich buf 0 len >>
                         let update = { slave_id = d.Raw_dump.id; buf; off = 0;
-                                       len; await_ack = (wait, wakeup); }
+                                       len; await_ack = (wait, wakeup); } in
+                        lwt () =
+                          Lwt_io.LE.write_int och 0 >> Lwt_io.flush och
                         in
                           push (Some update);
                           begin match_lwt wait with

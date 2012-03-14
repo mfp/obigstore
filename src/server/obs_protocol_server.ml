@@ -628,14 +628,13 @@ struct
                     Lwt_io.write_from_exactly och buf off len >>
                     Lwt_io.flush och >>
                     match_lwt Lwt_io.LE.read_int ich with
-                        0 -> return `ACK
-                      | 1 -> copy_data ()
-                      | 2 | _ -> return `NACK
+                        0 -> return ()
+                      | 1 | _ -> copy_data ()
                   in
-                    begin match_lwt copy_data () with
-                        `ACK -> D.Replication.ack_update update
-                      | `NACK -> D.Replication.nack_update update
-                    end
+                    copy_data () >>
+                    match_lwt Lwt_io.LE.read_int ich with
+                        0 -> D.Replication.ack_update update
+                      | 1 | _ -> D.Replication.nack_update update
               with exn ->
                 D.Replication.nack_update update >>
                 raise_lwt exn
