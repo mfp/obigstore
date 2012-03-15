@@ -139,3 +139,6 @@ val data_request_of_code : int -> [ data_request | `Other ]
 
 val data_conn_handshake :
   Lwt_io.input_channel -> Lwt_io.output_channel -> data_protocol_version Lwt.t
+
+val read_exactly :
+  Lwt_io.input_channel -> int -> string Lwt.t

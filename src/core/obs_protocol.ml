@@ -219,3 +219,8 @@ let data_conn_handshake ich och =
   lwt minor = Lwt_io.LE.read_int ich in
   lwt bugfix = Lwt_io.LE.read_int ich in
     return (major, minor, bugfix)
+
+let read_exactly ich n =
+  let s = String.create n in
+    Lwt_io.read_into_exactly ich s 0 n >>
+    return s
