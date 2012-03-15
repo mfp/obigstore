@@ -612,9 +612,19 @@ struct
                 in loop_copy_data ()
       with Not_found -> send_response_code `Unknown_dump och
 
+  let rec write_and_update_crc crc och buf off len =
+    if len <= 0 then return ()
+    else begin
+      lwt n = Lwt_io.write_from och buf off len in
+        Obs_crc32c.update crc buf off len;
+        write_and_update_crc crc och buf (off + n) (len - n)
+    end
+
   let handle_get_updates ~debug server ich och =
     lwt dump_id = Lwt_io.LE.read_int64 ich in
     try_lwt
+      let crc = Obs_crc32c.create () in
+      let header = Obs_bytea.create 12 in
       let dump = Hashtbl.find server.raw_dumps dump_id in
       lwt stream = D.Replication.get_update_stream dump in
 
@@ -623,18 +633,27 @@ struct
             None -> Lwt_io.LE.write_int64 och (-1L)
           | Some update ->
               begin try_lwt
+                Obs_bytea.clear header;
+                Obs_crc32c.reset crc;
                 lwt buf, off, len = D.Replication.get_update_data update in
                   if debug then
                     eprintf "Sending update (%d bytes)\n%!" len;
-                  Lwt_io.LE.write_int64 och (Int64.of_int len) >>
+                  Obs_bytea.add_int64_le header (Int64.of_int len);
+                  Obs_crc32c.update_unsafe crc (Obs_bytea.unsafe_string header) 0 8;
+                  Obs_bytea.add_string header (Obs_crc32c.unsafe_result crc);
+
+                  Lwt_io.write_from_exactly och
+                    (Obs_bytea.unsafe_string header) 0 12 >>
 
                   let rec copy_data () =
-                    Lwt_io.write_from_exactly och buf off len >>
+                    write_and_update_crc crc och buf off len >>
+                    Lwt_io.write och (Obs_crc32c.unsafe_result crc) >>
                     Lwt_io.flush och >>
                     match_lwt Lwt_io.LE.read_int ich with
                         0 -> return ()
                       | 1 | _ -> copy_data ()
                   in
+                    Obs_crc32c.reset crc;
                     copy_data () >>
                     match server.replication_wait with
                         Await_reception ->

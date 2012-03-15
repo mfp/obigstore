@@ -24,6 +24,8 @@ open Obs_request
 open Obs_protocol
 open Request
 
+exception Corrupted_data_header
+
 module Make(P : Obs_protocol.PAYLOAD) =
 struct
   let byte s n = Char.code s.[n]
@@ -513,6 +515,8 @@ struct
         Lwt_io.LE.write_int och (data_request_code `Get_updates) >>
         Lwt_io.LE.write_int64 och d.Raw_dump.id >>
         let ret = { stream_id = d.Raw_dump.id; stream } in
+        let crc = Obs_crc32c.create () in
+        let bbuf = Obs_bytea.create 8 in
         let () =
           ignore begin
             try_lwt
@@ -525,12 +529,28 @@ struct
                       (* the following is just to make sure the reference is
                        * not optiomized away *)
                       ignore ret.stream;
+                      Obs_crc32c.reset crc;
+                      Obs_bytea.clear bbuf;
+                      lwt header_crc = read_exactly ich 4 in
+                      let header_crc' =
+                        Obs_bytea.add_int64_le bbuf len;
+                        Obs_crc32c.update_unsafe crc
+                          (Obs_bytea.unsafe_string bbuf) 0 8;
+                        Obs_crc32c.unsafe_result crc in
+
+                      if header_crc <> header_crc' then
+                        raise_lwt Corrupted_data_header
+                      else
+
                       let len = Int64.to_int len in
                       let buf = get_buf len in
                       let wait, wakeup = Lwt.task () in
                         Lwt_io.read_into_exactly ich buf 0 len >>
+                        lwt rem_crc = read_exactly ich 4 in
                         let update = { slave_id = d.Raw_dump.id; buf; off = 0;
                                        len; await_ack = (wait, wakeup); } in
+                        (* TODO: compute CRC32C, check that it matches
+                         * rem_crc, send 1 and read again if mismatch *)
                         lwt () =
                           Lwt_io.LE.write_int och 0 >> Lwt_io.flush och
                         in
