@@ -19,6 +19,8 @@
 
 (** Definitions and convenience functions for remote obigstore protocol. *)
 
+exception Corrupted_data_header
+
 type error =
     Internal_error
   | Closed
@@ -142,3 +144,14 @@ val data_conn_handshake :
 
 val read_exactly :
   Lwt_io.input_channel -> int -> string Lwt.t
+
+val crc32c_of_int_le : int -> string
+
+val write_checksummed_int32_le : Lwt_io.output_channel -> int -> unit Lwt.t
+val write_checksummed_int64_le : Lwt_io.output_channel -> Int64.t -> unit Lwt.t
+
+(** @return None if the checksum fails *)
+val read_checksummed_int : Lwt_io.input_channel -> int option Lwt.t
+
+(** @return None if the checksum fails *)
+val read_checksummed_int64_le : Lwt_io.input_channel -> Int64.t option Lwt.t

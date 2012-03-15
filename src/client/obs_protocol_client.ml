@@ -24,7 +24,7 @@ open Obs_request
 open Obs_protocol
 open Request
 
-exception Corrupted_data_header
+module Option = BatOption
 
 module Make(P : Obs_protocol.PAYLOAD) =
 struct
@@ -441,6 +441,13 @@ struct
 
   let data_protocol_version = (0, 0, 0)
 
+  let write_data_req och req =
+    let len = Obs_bytea.length req in
+    let buf = Obs_bytea.unsafe_string req in
+      write_checksummed_int32_le och len >>
+      Lwt_io.write_from_exactly och buf 0 len >>
+      Lwt_io.write och (Obs_crc32c.substring buf 0 len)
+
   module Raw_dump =
   struct
     type raw_dump = { db : db; id : Int64.t; timestamp : Int64.t; }
@@ -459,14 +466,18 @@ struct
     let open_file d ?(offset=0L) fname =
       lwt ich, och = Lwt_io.open_connection d.db.data_address in
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
-        Lwt_io.LE.write_int och (data_request_code `Get_file) >>
-        Lwt_io.LE.write_int64 och d.id >>
-        Lwt_io.LE.write_int64 och offset >>
-        Lwt_io.LE.write_int och (String.length fname) >>
-        Lwt_io.write_from_exactly och fname 0 (String.length fname) >>
-        match_lwt Lwt_io.read_int ich >|= data_response_of_code with
-            `Other | `Unknown_dump | `Unknown_file -> return None
-          | `OK -> return (Some ich)
+      let req = Obs_bytea.create 32 in
+        Obs_bytea.add_int32_le req (data_request_code `Get_file);
+        Obs_bytea.add_int64_le req d.id;
+        Obs_bytea.add_int64_le req offset;
+        Obs_bytea.add_int32_le req (String.length fname);
+        Obs_bytea.add_string req fname;
+        write_data_req och req >>
+        Lwt_io.flush och >>
+        match_lwt read_checksummed_int ich >|= Option.map data_response_of_code with
+            None -> raise_lwt Corrupted_data_header
+          | Some (`Other | `Unknown_dump | `Unknown_file) -> return None
+          | Some `OK -> return (Some ich)
 
     let timestamp d = return d.timestamp
 
@@ -510,37 +521,25 @@ struct
         let b = ref "" in
           (fun n ->
              if n > String.length !b then b := String.create n;
-             !b)
-      in
-        Lwt_io.LE.write_int och (data_request_code `Get_updates) >>
-        Lwt_io.LE.write_int64 och d.Raw_dump.id >>
+             !b) in
+      let req = Obs_bytea.create 12 in
+        Obs_bytea.add_int32_le req (data_request_code `Get_updates);
+        Obs_bytea.add_int64_le req d.Raw_dump.id;
+        write_data_req och req >>
         let ret = { stream_id = d.Raw_dump.id; stream } in
-        let crc = Obs_crc32c.create () in
-        let bbuf = Obs_bytea.create 8 in
         let () =
           ignore begin
             try_lwt
               let rec read_update ret =
-                match_lwt Lwt_io.LE.read_int64 ich with
-                    -1L -> return ()
-                  | len ->
+                match_lwt read_checksummed_int64_le ich with
+                    None -> raise_lwt Corrupted_data_header
+                  | Some -1L -> return ()
+                  | Some len ->
                       (* we need to keep a reference to the stream ([push] alone
                        * doesn't suffice, as it only holds a weak ref) *)
                       (* the following is just to make sure the reference is
                        * not optiomized away *)
                       ignore ret.stream;
-                      Obs_crc32c.reset crc;
-                      Obs_bytea.clear bbuf;
-                      lwt header_crc = read_exactly ich 4 in
-                      let header_crc' =
-                        Obs_bytea.add_int64_le bbuf len;
-                        Obs_crc32c.update_unsafe crc
-                          (Obs_bytea.unsafe_string bbuf) 0 8;
-                        Obs_crc32c.unsafe_result crc in
-
-                      if header_crc <> header_crc' then
-                        raise_lwt Corrupted_data_header
-                      else
 
                       let len = Int64.to_int len in
                       let buf = get_buf len in
@@ -552,19 +551,23 @@ struct
                         (* TODO: compute CRC32C, check that it matches
                          * rem_crc, send 1 and read again if mismatch *)
                         lwt () =
-                          Lwt_io.LE.write_int och 0 >> Lwt_io.flush och
+                          write_checksummed_int32_le och 0 >> Lwt_io.flush och
                         in
                           push (Some update);
                           begin match_lwt wait with
-                              `ACK -> Lwt_io.LE.write_int och 0
-                            | `NACK -> Lwt_io.LE.write_int och 2
+                              `ACK -> write_checksummed_int32_le och 0
+                            | `NACK -> write_checksummed_int32_le och 2
                           end >>
                           Lwt_io.flush och >>
                           read_update ret
-              in match_lwt Lwt_io.LE.read_int ich >|= data_response_of_code with
-                  `OK -> read_update ret
-                | _ -> push None;
-                       return ()
+              in
+                match_lwt read_checksummed_int ich >|=
+                          Option.map data_response_of_code
+                with
+                    Some `OK -> read_update ret
+                  | None -> raise_lwt Corrupted_data_header
+                  | _ -> push None;
+                         return ()
             with exn ->
               (* FIXME: better logging *)
               let bt = Printexc.get_backtrace () in

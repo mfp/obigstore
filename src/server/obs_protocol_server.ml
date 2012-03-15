@@ -590,13 +590,13 @@ struct
            return ()
 
   let send_response_code code och =
-    Lwt_io.LE.write_int och (data_response_code code)
+    write_checksummed_int32_le och (data_response_code code)
 
-  let handle_get_file ~debug server ich och =
-    lwt dump_id = Lwt_io.LE.read_int64 ich in
-    lwt offset = Lwt_io.LE.read_int64 ich in
-    lwt name_siz = Lwt_io.LE.read_int ich in
-    lwt name = Lwt_io.read ~count:name_siz ich in
+  let handle_get_file ~debug server req_ch ich och =
+    lwt dump_id = Lwt_io.LE.read_int64 req_ch in
+    lwt offset = Lwt_io.LE.read_int64 req_ch in
+    lwt name_siz = Lwt_io.LE.read_int req_ch in
+    lwt name = Obs_protocol.read_exactly req_ch name_siz in
       try_lwt
         let dump = Hashtbl.find server.raw_dumps dump_id in
           match_lwt D.Raw_dump.open_file dump ~offset name with
@@ -620,50 +620,44 @@ struct
         write_and_update_crc crc och buf (off + n) (len - n)
     end
 
-  let handle_get_updates ~debug server ich och =
-    lwt dump_id = Lwt_io.LE.read_int64 ich in
+  let handle_get_updates ~debug server req_ch ich och =
+    lwt dump_id = Lwt_io.LE.read_int64 req_ch in
     try_lwt
       let crc = Obs_crc32c.create () in
-      let header = Obs_bytea.create 12 in
       let dump = Hashtbl.find server.raw_dumps dump_id in
       lwt stream = D.Replication.get_update_stream dump in
 
       let rec forward_updates () =
         match_lwt D.Replication.get_update stream with
-            None -> Lwt_io.LE.write_int64 och (-1L)
+            None -> write_checksummed_int64_le och (-1L)
           | Some update ->
               begin try_lwt
-                Obs_bytea.clear header;
-                Obs_crc32c.reset crc;
                 lwt buf, off, len = D.Replication.get_update_data update in
                   if debug then
                     eprintf "Sending update (%d bytes)\n%!" len;
-                  Obs_bytea.add_int64_le header (Int64.of_int len);
-                  Obs_crc32c.update_unsafe crc (Obs_bytea.unsafe_string header) 0 8;
-                  Obs_bytea.add_string header (Obs_crc32c.unsafe_result crc);
-
-                  Lwt_io.write_from_exactly och
-                    (Obs_bytea.unsafe_string header) 0 12 >>
+                  write_checksummed_int64_le och (Int64.of_int len) >>
 
                   let rec copy_data () =
                     write_and_update_crc crc och buf off len >>
                     Lwt_io.write och (Obs_crc32c.unsafe_result crc) >>
                     Lwt_io.flush och >>
-                    match_lwt Lwt_io.LE.read_int ich with
-                        0 -> return ()
-                      | 1 | _ -> copy_data ()
+                    match_lwt read_checksummed_int ich with
+                        None -> raise_lwt Corrupted_data_header
+                      | Some 0 -> return ()
+                      | Some (1 | _) -> copy_data ()
                   in
                     Obs_crc32c.reset crc;
                     copy_data () >>
                     match server.replication_wait with
                         Await_reception ->
                           D.Replication.ack_update update >>
-                          lwt _ = Lwt_io.LE.read_int ich in
+                          lwt _ = read_checksummed_int ich in
                             return ()
                       | Await_commit ->
-                          match_lwt Lwt_io.LE.read_int ich with
-                              0 -> D.Replication.ack_update update
-                            | 1 | _ -> D.Replication.nack_update update
+                          match_lwt read_checksummed_int ich with
+                              Some 0 -> D.Replication.ack_update update
+                            | Some (1 | _) -> D.Replication.nack_update update
+                            | None -> raise_lwt Corrupted_data_header
               with exn ->
                 D.Replication.nack_update update >>
                 (* release no longer needed dump resources (e.g. files) *)
@@ -679,12 +673,19 @@ struct
   let service_data_client server ?(debug=false) ich och =
     try_lwt
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
-        match_lwt Lwt_io.LE.read_int ich >|= data_request_of_code with
-            `Get_file -> handle_get_file ~debug server ich och
-          | `Get_updates -> handle_get_updates ~debug server ich och
-          | _ -> return ()
-    with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
-      raise_lwt End_of_file
+      match_lwt read_checksummed_int ich with
+          None -> raise_lwt Corrupted_data_header
+        | Some req_len ->
+            lwt req = Obs_protocol.read_exactly ich req_len in
+            lwt req_crc = Obs_protocol.read_exactly ich 4 in
+              if Obs_crc32c.string req <> req_crc then raise Corrupted_data_header;
+              let req_ch = Lwt_io.of_string Lwt_io.input req in
+                match_lwt Lwt_io.LE.read_int req_ch >|= data_request_of_code with
+                    `Get_file -> handle_get_file ~debug server req_ch ich och
+                  | `Get_updates -> handle_get_updates ~debug server req_ch ich och
+                  | _ -> return ()
+        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
+          raise_lwt End_of_file
 
 end
 

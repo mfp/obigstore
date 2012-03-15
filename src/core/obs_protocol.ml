@@ -35,6 +35,8 @@ type header =
     Header of (string * int * string)
   | Corrupted_header
 
+exception Corrupted_data_header
+
 exception Error of error
 
 let string_of_error = function
@@ -224,3 +226,33 @@ let read_exactly ich n =
   let s = String.create n in
     Lwt_io.read_into_exactly ich s 0 n >>
     return s
+
+let crc32c_of_int_le n =
+  let b = Obs_bytea.create 4 in
+    Obs_bytea.add_int32_le b n;
+    Obs_crc32c.substring (Obs_bytea.unsafe_string b) 0 4
+
+let crc32c_of_int64_le n =
+  let b = Obs_bytea.create 8 in
+    Obs_bytea.add_int64_le b n;
+    Obs_crc32c.substring (Obs_bytea.unsafe_string b) 0 8
+
+let write_checksummed_int32_le och n =
+  Lwt_io.LE.write_int och n >>
+  Lwt_io.write och (crc32c_of_int_le n)
+
+let write_checksummed_int64_le och n =
+  Lwt_io.LE.write_int64 och n >>
+  Lwt_io.write och (crc32c_of_int64_le n)
+
+let read_checksummed_int ich =
+  lwt n = Lwt_io.LE.read_int ich in
+  lwt crc = read_exactly ich 4 in
+    if crc32c_of_int_le n <> crc then return None
+    else return (Some n)
+
+let read_checksummed_int64_le ich =
+  lwt n = Lwt_io.LE.read_int64 ich in
+  lwt crc = read_exactly ich 4 in
+    if crc32c_of_int64_le n <> crc then return None
+    else return (Some n)
