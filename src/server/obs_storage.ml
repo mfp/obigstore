@@ -81,6 +81,11 @@ module WRITEBATCH : sig
 
   val delete_substring : tx -> string -> int -> int -> unit
   val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
+  val put : tx -> string -> string -> unit
+
+  (* indicate that a 'reload keyspace' record is to be added to the
+   * serialized update *)
+  val need_keyspace_reload : tx -> unit
 end =
 struct
   type t =
@@ -107,6 +112,8 @@ struct
          * confirmation that the update was persisted (for sync replication) *)
 
         fsync : bool;
+        mutable need_keyspace_reload : bool;
+        (* whether to add a 'reload keyspace' record to the serialized update *)
       }
 
   type tx = { t : t; mutable valid : bool; }
@@ -167,6 +174,7 @@ struct
         iter_pool;
         serialized_update = Obs_bytea.create 128;
         slave_tbl = IM.empty; fsync;
+        need_keyspace_reload = false;
       }
     in
       ignore begin try_lwt
@@ -180,6 +188,9 @@ struct
           else begin
             Lwt_mutex.with_lock t.mutex
               (fun () ->
+                 (* need a "reload keyspace" record if needed *)
+                 if t.need_keyspace_reload then
+                   Obs_bytea.add_byte t.serialized_update 0xFF;
                  lwt () =
                    Lwt_preemptive.detach
                      (L.Batch.write ~sync:t.fsync t.db) t.wb
@@ -187,6 +198,7 @@ struct
                  let u = snd t.sync_wait in
                  let u' = snd t.wait_last_sync in
                    Obs_bytea.clear t.serialized_update;
+                   t.need_keyspace_reload <- false;
                    iter_pool := make_iter_pool t.db;
                    t.dirty <- false;
                    t.wb <- L.Batch.make ();
@@ -256,6 +268,12 @@ struct
         Obs_bytea.add_int32_le u l2;
         Obs_bytea.add_substring u v o2 l2;
     end
+
+  let need_keyspace_reload tx =
+    tx.t.need_keyspace_reload <- true
+
+  let put tx k v =
+    put_substring tx k 0 (String.length k) v 0 (String.length v)
 end
 
 module Miniregion : sig
@@ -310,8 +328,8 @@ type db =
 and keyspace =
   {
     ks_db : db; ks_name : string; ks_id : int;
-    ks_tables : (string, int) Hashtbl.t;
-    ks_rev_tables : (int, string) Hashtbl.t;
+    mutable ks_tables : (string, int) Hashtbl.t;
+    mutable ks_rev_tables : (int, string) Hashtbl.t;
     ks_locks : LOCKS.t;
   }
 
@@ -357,6 +375,24 @@ let read_keyspaces db lldb =
       lldb
       Obs_datum_encoding.keyspace_table_prefix;
     h
+
+let reload_keyspaces t lldb =
+  let new_keyspaces = read_keyspaces t lldb in
+    (* we have to update the existing keyspaces in-place (otherwise new tables
+     * would not appear until the client gets a new keyspace with
+     * register_keyspace or get_keyspace) *)
+    Hashtbl.iter
+      (fun name ks ->
+         try
+           let old_ks = Hashtbl.find t.keyspaces name in
+             (* we must assume that ks_name and ks_id are unchanged;
+              * anything else would mean very bad news *)
+             old_ks.ks_tables <- ks.ks_tables;
+             old_ks.ks_rev_tables <- ks.ks_rev_tables
+         with Not_found ->
+           (* entirely new keyspace *)
+           Hashtbl.add t.keyspaces name ks)
+      new_keyspaces
 
 let close_db t =
   Miniregion.use t.db
@@ -452,19 +488,27 @@ let register_keyspace t ks_name =
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
-      Miniregion.use t.db
-        (fun lldb ->
-           L.put ~sync:true lldb (Obs_datum_encoding.keyspace_table_key ks_name)
-             (string_of_int ks_id);
-           let ks =
-             { ks_db = t; ks_id; ks_name;
-               ks_tables = Hashtbl.create 13;
-               ks_rev_tables = Hashtbl.create 13;
-               ks_locks = LOCKS.create 31;
-             }
-           in
-             Hashtbl.add t.keyspaces ks_name ks;
-             return ks)
+    lwt wait_sync =
+      WRITEBATCH.perform t.writebatch begin fun b ->
+        WRITEBATCH.put b
+          (Obs_datum_encoding.keyspace_table_key ks_name)
+          (string_of_int ks_id);
+        WRITEBATCH.need_keyspace_reload b;
+        return ()
+      end in
+    lwt () = wait_sync in
+    let ks =
+      { ks_db = t; ks_id; ks_name;
+        ks_tables = Hashtbl.create 13;
+        ks_rev_tables = Hashtbl.create 13;
+        ks_locks = LOCKS.create 31;
+      }
+    in
+      Hashtbl.add t.keyspaces ks_name ks;
+      return ks
+
+let register_keyspace t ks_name =
+  Miniregion.use t.db (fun lldb -> register_keyspace t ks_name)
 
 let get_keyspace t ks_name =
   return begin try
@@ -636,23 +680,25 @@ type transaction =
 
 let tx_key = Lwt.new_key ()
 
-let register_new_table_and_add_to_writebatch_aux put_substring ks wb table_name =
+let register_new_table_and_add_to_writebatch_aux put ks wb table_name =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
   let table = last + 1 in
   let k = Obs_datum_encoding.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
   let v = string_of_int table in
-    put_substring wb
-      k 0 (String.length k) v 0 (String.length v);
+    put wb k v;
     Hashtbl.add ks.ks_tables table_name table;
     Hashtbl.add ks.ks_rev_tables table table_name;
     table
 
 let register_new_table_and_add_to_writebatch =
-  register_new_table_and_add_to_writebatch_aux L.Batch.put_substring
+  register_new_table_and_add_to_writebatch_aux L.Batch.put
 
 let register_new_table_and_add_to_writebatch' =
-  register_new_table_and_add_to_writebatch_aux WRITEBATCH.put_substring
+  register_new_table_and_add_to_writebatch_aux
+    (fun wb k v ->
+       WRITEBATCH.put wb k v;
+       WRITEBATCH.need_keyspace_reload wb)
 
 let rec transaction_aux with_iter_pool ks f =
   match Lwt.get tx_key with
@@ -2459,7 +2505,8 @@ struct
       a + (b lsl 8) + (c lsl 16) + (d lsl 24)
 
   let apply_update db update =
-    Miniregion.use db.db begin fun _ ->
+    Miniregion.use db.db begin fun lldb ->
+      let must_reload = ref false in
       lwt wait_sync =
          WRITEBATCH.perform db.writebatch begin fun b ->
            let rec apply_update s n max =
@@ -2482,6 +2529,9 @@ struct
                    let klen = read_int32_le s (n + 1) in
                      WRITEBATCH.delete_substring b s (n + 1 + 4) klen;
                      apply_update s (n + 1 + 4 + klen) max
+                 | '\xFF' -> (* reload keyspaces *)
+                     must_reload := true;
+                     apply_update s (n + 1) max
                  | _ -> (* unrecognized record, abort processing *)
                      (* FIXME: error out or just log? *)
                      ()
@@ -2490,8 +2540,10 @@ struct
                 update.up_buf update.up_off
                 (update.up_off + update.up_len);
               return ()
-         end
-      in wait_sync
+         end in
+      lwt () = wait_sync in
+        if !must_reload then reload_keyspaces db lldb;
+        return ()
     end
 end
 
