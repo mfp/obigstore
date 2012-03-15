@@ -349,18 +349,6 @@ update_crc32c(uint32_t crc, const uint8_t *buf, size_t size)
 }
 
 CAMLprim value
-obigstore_crc32c_string(value s)
-{
- CAMLparam1(s);
- CAMLlocal1(ret);
-
- ret = caml_alloc_string(4);
- uint32_t *p = (uint32_t *) String_val(ret);
- *p = update_crc32c(0, &Byte_u(s, 0), string_length(s));
- CAMLreturn(ret);
-}
-
-CAMLprim value
 obigstore_crc32c_update(value t, value s, value off, value len)
 {
  uint32_t *p = (uint32_t *)String_val(t);
@@ -379,6 +367,21 @@ obigstore_crc32c_ensure_lsb(value t)
  #endif
 
  return Val_unit;
+}
+
+CAMLprim value
+obigstore_crc32c_string(value s)
+{
+ CAMLparam1(s);
+ CAMLlocal1(ret);
+
+ ret = caml_alloc_string(4);
+ uint32_t *p = (uint32_t *) String_val(ret);
+ *p = update_crc32c(0, &Byte_u(s, 0), string_length(s));
+ #ifndef IS_LITTLE_ENDIAN
+ obigstore_crc32c_ensure_lsb(ret);
+ #endif
+ CAMLreturn(ret);
 }
 
 
