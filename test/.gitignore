@@ -1,3 +1,6 @@
 /benchmark
 /test
 /toplevel
+/bm_makedata
+/bm_read
+/bm_write
