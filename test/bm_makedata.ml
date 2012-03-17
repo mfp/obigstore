@@ -20,8 +20,6 @@
 open Printf
 open Lwt
 
-module C = Cryptokit
-
 let num_pairs = ref None
 let key_size = ref 16
 let value_size = ref 32
@@ -36,7 +34,18 @@ let params = Arg.align
       " Generate output with keys in lexicographic order.";
   ]
 
-let to_hex s = C.(transform_string (Hexa.encode ()) s)
+let hex_tbl = "0123456789abcdef"
+
+let to_hex s =
+  let r = String.create (String.length s * 2) in
+  let off = ref 0 in
+    for i = 0 to String.length s - 1 do
+      let c = Char.code (String.unsafe_get s i) in
+        String.unsafe_set r !off (String.unsafe_get hex_tbl (c lsr 4));
+        String.unsafe_set r (!off + 1) (String.unsafe_get hex_tbl (c land 0xF));
+        off := !off + 2
+    done;
+    r
 
 let zero_pad n s =
   let len = String.length s in
@@ -46,6 +55,26 @@ let zero_pad n s =
 let output_string s =
   Lwt_io.LE.write_int Lwt_io.stdout (String.length s) >>
   Lwt_io.write Lwt_io.stdout s
+
+type rng = { mutable seed : string; }
+
+let cast_digest (x : Digest.t) : string = Obj.magic x
+
+let random_string rng n =
+  if n <= 16 then begin
+    let x = cast_digest (Digest.string rng.seed) in
+      rng.seed <- x;
+      if n = 16 then x else String.sub x 0 n
+  end else begin
+    let s = String.create n in
+    let rec fill_buf = function
+        m when m <= 0 -> s
+      | m -> let x = cast_digest (Digest.string rng.seed) in
+               rng.seed <- x;
+               String.blit x 0 s (n - m) (if m < 16 then m else 16);
+               fill_buf (m - 16)
+    in fill_buf n
+  end
 
 let () =
   Arg.parse params
@@ -58,15 +87,15 @@ let () =
        | Some _ -> raise (Arg.Bad s))
     usage_message;
   Lwt_unix.run begin
-    let rng = C.Random.pseudo_rng "0123456789deadbeef" in
+    let rng = { seed = "0123456789deadbeef" } in
     let num_pairs = match !num_pairs with
         None -> Arg.usage params usage_message; exit 1
       | Some n -> n
     in
       for_lwt i = 1 to num_pairs do
-        let k = if !random then to_hex (C.Random.string rng (!key_size / 2))
+        let k = if !random then to_hex (random_string rng (!key_size / 2))
                 else zero_pad !value_size (string_of_int i) in
-        let v = to_hex (C.Random.string rng (!value_size / 2)) in
+        let v = to_hex (random_string rng (!value_size / 2)) in
           output_string k >>
           output_string v
       done >>
