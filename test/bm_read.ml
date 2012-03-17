@@ -34,6 +34,8 @@ let keyspace = ref "obs-benchmark"
 let table = ref "bm_write"
 let concurrency = ref 2048
 let multi = ref 1
+let range = ref false
+let time = ref 60.
 
 let max_key = ref None
 
@@ -44,9 +46,11 @@ let params = Arg.align
    "-keyspace", Arg.Set_string keyspace,
      "NAME keyspace to use (default 'obs-benchmark')";
    "-table", Arg.Set_string table, "NAME table to use (default 'bm_write')";
+   "-range", Arg.Set range, " Read ranges.";
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent reads (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Read in N (power of 2) batches (default: 1).";
+   "-time", Arg.Set_float time, "N Run for N seconds (default: 60).";
   ]
 
 let usage_message = "Usage: bm_read N [options]"
@@ -128,6 +132,35 @@ let rec read_values_multi ks =
     end;
   done
 
+let rec read_values_seq ?first ks =
+  while not !benchmark_over && !in_flight < 16 do
+    ignore begin
+      incr in_flight;
+      try_lwt
+        lwt last_key, l =
+          C.get_slice ks !table ~max_keys:512
+            (DM.Key_range { DM.first; up_to = None; reverse = false; })
+            DM.All_columns
+        in
+          (* last one will return fewer than 512, so we "resync" in order for
+           * report to work *)
+          finished := (!finished + List.length l) land (-510);
+          report ();
+          let first = match last_key with
+              None -> None (* restart *)
+            | Some k -> Some (k ^ "\x00")
+          in
+            read_values_seq ?first ks;
+            return ()
+      with _ ->
+        incr errors;
+        return ()
+      finally
+        decr in_flight;
+        return ()
+    end
+  done
+
 let () =
   Arg.parse params
     (fun s -> match !max_key with
@@ -154,12 +187,12 @@ let () =
         else return ()
     in
       t0 := Unix.gettimeofday ();
-      ignore (Lwt_unix.sleep 50. >> return (benchmark_over := true));
-      begin if !multi > 1 then begin
-        concurrency := min !concurrency 256;
-        read_values_multi ks
-      end else
-        read_values ks
+      ignore (Lwt_unix.sleep !time >> return (benchmark_over := true));
+      if !range then read_values_seq ks
+      else if !multi <= 1 then read_values ks
+      else begin
+          concurrency := min !concurrency 256;
+          read_values_multi ks
       end;
       wait_until_finished ()
   end
