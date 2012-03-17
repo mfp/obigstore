@@ -33,6 +33,7 @@ let keyspace = ref "obs-benchmark"
 let table = ref "bm_write"
 let concurrency = ref 2048
 let multi = ref 1
+let columns = ref 1
 
 let params = Arg.align
   [
@@ -41,6 +42,7 @@ let params = Arg.align
    "-keyspace", Arg.Set_string keyspace,
      "NAME keyspace to use (default 'obs-benchmark')";
    "-table", Arg.Set_string table, "NAME table to use (default 'bm_write')";
+   "-columns", Arg.Set_int columns, "N Write N columns per key (default: 1).";
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
@@ -112,15 +114,16 @@ let rec write_values ks =
 
 let wrap_some x = Some x
 
+let try_read_pair ch =
+  try_lwt read_pair ch >|= wrap_some with End_of_file -> return None
+
 let read_multi_values () =
   Lwt_io.atomic
     (fun ch ->
        let rec read_n_values ch acc = function
            0 -> return (!multi, acc)
          | n ->
-             match_lwt
-               try_lwt read_pair ch >|= wrap_some with End_of_file -> return None
-             with
+             match_lwt try_read_pair ch with
                  None -> return ((!multi - n), acc)
                | Some (k, v) ->
                    read_n_values ch ((k, [mk_col ~name:"v" v]) :: acc) (n - 1)
@@ -151,6 +154,74 @@ let rec write_values_multi ks =
     done
   with Exit -> return ()
 
+let rec read_columns ch ?(acc=[]) = function
+    0 -> return acc
+  | n -> match_lwt try_read_pair ch with
+        None -> return acc
+      | Some (name, v) -> read_columns ch ~acc:(mk_col ~name v :: acc) (n - 1)
+
+let read_complex_value ch =
+  lwt k = read_string ch in
+  lwt cols = read_columns ch !columns in
+    return (k, cols)
+
+let read_complex_values ch =
+  let rec read_complex_multi ch acc = function
+      0 -> return acc
+    | n ->
+        match_lwt
+          try_lwt read_complex_value ch >|= wrap_some with _ -> return None
+        with
+            None -> return acc
+          | Some x -> read_complex_multi ch (x :: acc) (n - 1)
+  in read_complex_multi ch [] !columns
+
+let rec write_complex_values ks =
+  try_lwt
+    while_lwt !in_flight < !concurrency do
+      lwt k, cols = Lwt_io.atomic read_complex_value Lwt_io.stdin in
+        ignore begin
+          incr in_flight;
+          try_lwt
+            lwt () = C.put_columns ks !table k cols in
+              incr finished;
+              report ();
+              write_complex_values ks
+          with _ ->
+            incr errors;
+            return ()
+          finally
+            decr in_flight;
+            return ()
+        end;
+        return ()
+    done
+  with End_of_file -> return ()
+
+let rec write_complex_values_multi ks =
+  try_lwt
+    while_lwt !in_flight < !concurrency do
+      match_lwt Lwt_io.atomic read_complex_values Lwt_io.stdin with
+          [] -> raise_lwt End_of_file
+        | l ->
+            ignore begin
+              incr in_flight;
+              try_lwt
+                lwt () = C.put_multi_columns ks !table l in
+                  finished := !finished + List.length l;
+                  report ();
+                  write_complex_values_multi ks
+              with _ ->
+                incr errors;
+                return ()
+              finally
+                decr in_flight;
+                return ()
+            end;
+            return ()
+    done
+  with End_of_file -> return ()
+
 let () =
   Arg.parse params ignore usage_message;
   Lwt_unix.run begin
@@ -165,7 +236,12 @@ let () =
         else return ()
     in
       t0 := Unix.gettimeofday ();
-      begin if !multi > 1 then begin
+      begin if !columns > 1 && !multi > 1 then begin
+        concurrency := min !concurrency 256;
+        write_complex_values_multi ks
+      end else if !columns > 1 then
+        write_complex_values ks
+      else if !multi > 1 then begin
         report_delta := 65536 * 2 - 1;
         concurrency := min !concurrency 256;
         write_values_multi ks
