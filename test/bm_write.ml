@@ -80,12 +80,18 @@ let t0 = ref 0.
 
 let report_delta = ref 16383
 
+let one_gb = 1024 * 1024 * 1024
+
 let report () =
-  if !finished land !report_delta = 0 then begin
+  if !finished > 16384 && !finished land (- !finished) = !finished ||
+     !finished land (one_gb - 1) = 0
+  then begin
     let t = Unix.gettimeofday () in
     let dt = t -. !t0 in
-      printf "%-9d  %d\n%!" !prev_finished
-        (truncate (float (!finished - !prev_finished) /. dt));
+    let rate = float (!finished - !prev_finished) /. dt in
+      printf "%-9d  %-6d  " !prev_finished (truncate rate);
+      if !columns > 1 then printf "%d" (truncate (rate *. float !columns));
+      printf "\n%!";
       prev_finished := !finished;
       t0 := t
   end
