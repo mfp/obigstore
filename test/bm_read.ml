@@ -36,6 +36,7 @@ let concurrency = ref 2048
 let multi = ref 1
 let range = ref false
 let time = ref 60.
+let report_delta = ref (65536 * 4 - 1)
 
 let max_key = ref None
 
@@ -51,6 +52,7 @@ let params = Arg.align
      "N maximum number of concurrent reads (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Read in N (power of 2) batches (default: 1).";
    "-time", Arg.Set_float time, "N Run for N seconds (default: 60).";
+   "-report-delta", Arg.Set_int report_delta, "N Report every N read values.";
   ]
 
 let usage_message = "Usage: bm_read N [options]"
@@ -69,7 +71,10 @@ let benchmark_over = ref false
 let prev_finished = ref 0
 let t0 = ref 0.
 
-let report_delta = ref (65536 * 4 - 1)
+let round_to_pow_of_two n =
+  let rec round m =
+    if m > n then m else round (2 * m)
+  in round 2
 
 let report () =
   if !finished land !report_delta = 0 then begin
@@ -176,6 +181,8 @@ let () =
     exit 1
   end;
   Lwt_unix.run begin
+    Random.self_init ();
+    report_delta := round_to_pow_of_two !report_delta - 1;
     let address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt db = make_client ~address ~data_address in
