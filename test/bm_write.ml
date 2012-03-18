@@ -78,13 +78,11 @@ let read_key_value () = Lwt_io.atomic read_pair Lwt_io.stdin
 let prev_finished = ref 0
 let t0 = ref 0.
 
-let report_delta = ref 16383
-
-let one_gb = 1024 * 1024 * 1024
+let report_delta = 1024 * 1024
 
 let report () =
   if !finished > 16384 && !finished land (- !finished) = !finished ||
-     !finished land (one_gb - 1) = 0
+     !finished land (report_delta - 1) = 0
   then begin
     let t = Unix.gettimeofday () in
     let dt = t -. !t0 in
@@ -248,7 +246,6 @@ let () =
       end else if !columns > 1 then
         write_complex_values ks
       else if !multi > 1 then begin
-        report_delta := 65536 * 2 - 1;
         concurrency := min !concurrency 256;
         write_values_multi ks
       end else
