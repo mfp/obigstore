@@ -94,7 +94,7 @@ let () =
     in
       for_lwt i = 1 to num_pairs do
         let k = if !random then to_hex (random_string rng (!key_size / 2))
-                else zero_pad !value_size (string_of_int i) in
+                else zero_pad !key_size (string_of_int i) in
         let v = to_hex (random_string rng (!value_size / 2)) in
           output_string k >>
           output_string v
