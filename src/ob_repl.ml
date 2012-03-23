@@ -369,7 +369,8 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       D.Raw_dump.dump db >>=
       ret (fun _ -> printf "Raw dump saved\n%!")
   | List_keyspaces _ -> D.list_keyspaces db >>= ret (print_list (sprintf "%S"))
-  | List_tables _ -> D.list_tables ks >>= ret (print_list (sprintf "%S"))
+  | List_tables _ ->
+      (D.list_tables ks :> string list Lwt.t) >>= ret (print_list (sprintf "%S"))
   | Table_size_on_disk { Table_size_on_disk.table; _ } ->
       D.table_size_on_disk ks table >>= ret (printf "%Ld\n%!")
   | Key_range_size_on_disk { Key_range_size_on_disk.table; range; _ } ->

@@ -276,7 +276,8 @@ struct
   let async_request_ks ks req f = async_request ks.ks_db req f
 
   let list_tables ks =
-    sync_request_ks ks (List_tables { List_tables.keyspace = ks.ks_id; }) P.read_table_list
+    sync_request_ks ks (List_tables { List_tables.keyspace = ks.ks_id; })
+    P.read_table_list >|= List.map table_of_string
 
   let table_size_on_disk ks table =
     sync_request_ks ks

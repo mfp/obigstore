@@ -253,7 +253,7 @@ struct
     | List_tables { List_tables.keyspace } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.list_tables ks >>=
+             (D.list_tables ks :> string list Lwt.t) >>=
              P.return_table_list ?buf c.och ~request_id)
     | Table_size_on_disk { Table_size_on_disk.keyspace; table; } ->
         with_keyspace c keyspace ~request_id

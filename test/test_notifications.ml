@@ -109,6 +109,8 @@ let column_without_timestamp (name, data) =
 let put ks tbl key l =
   CLIENT.put_columns ks tbl key (List.map column_without_timestamp l)
 
+let table_tbl = DM.table_of_string "tbl"
+
 let test_notification_follows_commit () =
   let server = make_server () in
      with_conn server
@@ -121,7 +123,7 @@ let test_notification_follows_commit () =
                let t, u = Lwt.wait () in
                ignore begin
                  CLIENT.await_notifications ks >>
-                 match_lwt CLIENT.get_column ks "tbl" "a" "k" with
+                 match_lwt CLIENT.get_column ks table_tbl "a" "k" with
                      Some ("v", _) -> Lwt.wakeup u `OK; return ()
                    | Some _ -> Lwt.wakeup u `Wrong_data; return ()
                    | None -> Lwt.wakeup u `No_data; return ()
@@ -129,7 +131,7 @@ let test_notification_follows_commit () =
                CLIENT.read_committed_transaction ks'
                  (fun ks' ->
                     CLIENT.notify ks' "foo" >>
-                    put ks' "tbl" "a" ["k", "v"]) >>
+                    put ks' table_tbl "a" ["k", "v"]) >>
                match_lwt t with
                    `OK -> return ()
                  | `No_data ->

@@ -82,7 +82,7 @@ let () =
       "", None -> Arg.usage params usage_message; exit 1
     | _ -> ()
   end;
-  let only_tables = match List.rev !tables with
+  let only_tables = match List.rev_map Obs_data_model.table_of_string !tables with
       [] -> None
     | l -> Some l
   in Lwt_unix.run begin

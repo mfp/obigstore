@@ -2,8 +2,6 @@
 type opt 'a = None | Some 'a
   options "ocaml.type_equals" = "option"
 
-type table = string
-
 type keyspace = int
 
 type max_keys = opt<int>
@@ -12,6 +10,9 @@ type decode_timestamps = bool
 
 type key = string
 type column_name = string
+
+type table = string
+  options "ocaml.type" = "Obs_data_model.table, Obs_data_model.table_of_string, Obs_data_model.string_of_table"
 
 type range = 
     { 

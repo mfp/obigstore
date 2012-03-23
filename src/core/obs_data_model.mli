@@ -19,10 +19,10 @@
 
 (** {2 Type definitions} *)
 
-type table = string
+type table = private string
 
-let table_of_string x = x
-let string_of_table x = x
+val string_of_table : table -> string
+val table_of_string : string -> table
 
 type key = string
 

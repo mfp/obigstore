@@ -328,8 +328,8 @@ type db =
 and keyspace =
   {
     ks_db : db; ks_name : string; ks_id : int;
-    mutable ks_tables : (string, int) Hashtbl.t;
-    mutable ks_rev_tables : (int, string) Hashtbl.t;
+    mutable ks_tables : (table, int) Hashtbl.t;
+    mutable ks_rev_tables : (int, table) Hashtbl.t;
     ks_locks : LOCKS.t;
   }
 
@@ -347,7 +347,7 @@ let read_keyspace_tables lldb keyspace =
          match T.decode_ks_table_key k with
              None -> false
            | Some (ks, table) when ks <> keyspace -> false
-           | Some (_, table) -> Hashtbl.add h table (int_of_string v);
+           | Some (_, table) -> Hashtbl.add h (table_of_string table) (int_of_string v);
                                 true)
       lldb
       (T.ks_table_table_prefix_for_ks keyspace);
@@ -531,6 +531,9 @@ let it_seek ks it s off len =
   Obs_load_stats.record_seeks ks.ks_db.load_stats 1;
   IT.seek it s off len
 
+let cmp_table t1 t2 =
+  String.compare (string_of_table t1) (string_of_table t2)
+
 let list_tables ks =
   let table_r = ref (-1) in
 
@@ -574,10 +577,10 @@ let list_tables ks =
     Miniregion.use ks.ks_db.db
       (fun lldb ->
          let it = L.iterator lldb in
-           detach_ks_op ks (collect_tables it) [] >|= List.sort String.compare)
+           detach_ks_op ks (collect_tables it) [] >|= List.sort cmp_table)
 
-let table_size_on_disk ks table_name =
-  match find_maybe ks.ks_tables table_name with
+let table_size_on_disk ks table =
+  match find_maybe ks.ks_tables table with
       None -> return 0L
     | Some table ->
         let _from =
@@ -592,8 +595,8 @@ let table_size_on_disk ks table_name =
             (fun lldb ->
                detach_ks_op ks (L.get_approximate_size lldb _from) _to)
 
-let key_range_size_on_disk ks ?first ?up_to table_name =
-  match find_maybe ks.ks_tables table_name with
+let key_range_size_on_disk ks ?first ?up_to table =
+  match find_maybe ks.ks_tables table with
       None -> return 0L
     | Some table ->
         let _from =
@@ -633,9 +636,9 @@ struct
     in s
 end
 
-module M =
+module EXTMAP(ORD : Map.OrderedType) =
 struct
-  include Map.Make(String)
+  include Map.Make(ORD)
 
   let find_default x k m = try find k m with Not_found -> x
 
@@ -661,12 +664,19 @@ struct
   let modify_if_found f k m = try add k (f (find k m)) m with Not_found -> m
 end
 
+module M = EXTMAP(String)
+
+module TM = EXTMAP(struct
+                     type t = table
+                     let compare = cmp_table
+                   end)
+
 type transaction =
     {
-      mutable deleted_keys : S.t M.t; (* table -> key set *)
-      mutable added_keys : S.t M.t; (* table -> key set *)
-      mutable added : string M.t M.t M.t; (* table -> key -> column -> value *)
-      mutable deleted : S.t M.t M.t; (* table -> key -> column set *)
+      mutable deleted_keys : S.t TM.t; (* table -> key set *)
+      mutable added_keys : S.t TM.t; (* table -> key set *)
+      mutable added : string M.t M.t TM.t; (* table -> key -> column -> value *)
+      mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
       repeatable_read : bool;
       iter_pool : L.iterator Lwt_pool.t ref;
       ks : keyspace;
@@ -680,16 +690,17 @@ type transaction =
 
 let tx_key = Lwt.new_key ()
 
-let register_new_table_and_add_to_writebatch_aux put ks wb table_name =
+let register_new_table_and_add_to_writebatch_aux put ks wb table =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
-  let table = last + 1 in
-  let k = Obs_datum_encoding.Keyspace_tables.ks_table_table_key ks.ks_name table_name in
-  let v = string_of_int table in
+  let table_id = last + 1 in
+  let k = Obs_datum_encoding.Keyspace_tables.ks_table_table_key
+            ks.ks_name (string_of_table table) in
+  let v = string_of_int table_id in
     put wb k v;
-    Hashtbl.add ks.ks_tables table_name table;
-    Hashtbl.add ks.ks_rev_tables table table_name;
-    table
+    Hashtbl.add ks.ks_tables table table_id;
+    Hashtbl.add ks.ks_rev_tables table_id table;
+    table_id
 
 let register_new_table_and_add_to_writebatch =
   register_new_table_and_add_to_writebatch_aux L.Batch.put
@@ -705,8 +716,8 @@ let rec transaction_aux with_iter_pool ks f =
     | None ->
         with_iter_pool ks.ks_db None begin fun ~iter_pool ~repeatable_read ->
           let rec tx =
-            { added_keys = M.empty; deleted_keys = M.empty;
-              added = M.empty; deleted = M.empty;
+            { added_keys = TM.empty; deleted_keys = TM.empty;
+              added = TM.empty; deleted = TM.empty;
               repeatable_read; iter_pool; ks;
               backup_writebatch = lazy (L.Batch.make ());
               backup_writebatch_size = 0;
@@ -740,7 +751,7 @@ and commit_outermost_transaction ks tx =
    *   load)
    * * no columns have been added / deleted *)
   if not (Lazy.lazy_is_val tx.backup_writebatch) &&
-     M.is_empty tx.deleted && M.is_empty tx.added
+     TM.is_empty tx.deleted && TM.is_empty tx.added
   then return ()
 
   else begin
@@ -770,9 +781,9 @@ and commit_outermost_transaction ks tx =
       WRITEBATCH.perform tx.ks.ks_db.writebatch begin fun b ->
         (* TODO: should iterate in Lwt monad so we can yield every once in a
          * while *)
-        M.iter
-          (fun table_name m ->
-             match find_maybe ks.ks_tables table_name with
+        TM.iter
+          (fun table m ->
+             match find_maybe ks.ks_tables table with
                  Some table ->
                    M.iter
                      (fun key s ->
@@ -790,13 +801,13 @@ and commit_outermost_transaction ks tx =
                      m
                | None -> (* unknown table *) ())
           tx.deleted;
-        M.iter
-          (fun table_name m ->
-             let table = match find_maybe ks.ks_tables table_name with
+        TM.iter
+          (fun table m ->
+             let table = match find_maybe ks.ks_tables table with
                  Some t -> t
                | None ->
                    (* must add table to keyspace table list *)
-                   register_new_table_and_add_to_writebatch' ks b table_name
+                   register_new_table_and_add_to_writebatch' ks b table
              in M.iter
                (fun key m ->
                   M.iter
@@ -879,7 +890,7 @@ let is_same_value v buf len =
   String.length v = !len && Obs_string_util.strneq v 0 !buf 0 !len
 
 let is_column_deleted tx table =
-  let deleted_col_table = tx.deleted |> M.find_default M.empty table in
+  let deleted_col_table = tx.deleted |> TM.find_default M.empty table in
     begin fun ~key_buf ~key_len ~column_buf ~column_len ->
       (* TODO: use substring sets to avoid allocation *)
       if M.is_empty deleted_col_table then
@@ -901,17 +912,18 @@ let is_column_deleted tx table =
 
 (* In [let f = exists_key tx table in ... f key], [f key] returns true iff
  * there's some column with the given key in the table named [table]. *)
-let with_exists_key tx table_name f =
+let with_exists_key tx table f =
   let datum_key = Obs_bytea.create 13 in
   let buf = ref "" in
   let key_buf = ref "" and key_len = ref 0 in
   let column_buf = ref "" and column_len = ref 0 in
   let key_buf_r = Some key_buf and key_len_r = Some key_len in
   let column_buf_r = Some column_buf and column_len_r = Some column_len in
-  let is_column_deleted = is_column_deleted tx table_name in
+  let is_column_deleted = is_column_deleted tx table in
   let table_r = ref (-1) in
 
-  let exists_f it = begin fun key -> match find_maybe tx.ks.ks_tables table_name with
+  let exists_f it = begin fun key ->
+    match find_maybe tx.ks.ks_tables table with
         Some table ->
           Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
             ~table ~key ~column:"" ~timestamp:Int64.min_int;
@@ -937,7 +949,7 @@ let with_exists_key tx table_name f =
               end
           end
       | None ->
-          (* we couldn't translate the table_name to a table_id *)
+          (* we couldn't translate the table to a table_id *)
           false
     end
   in
@@ -1161,11 +1173,11 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
            detach_ks_op tx.ks
              (fun () ->
                 let s = S.of_list l in
-                let s = S.diff s (M.find_default S.empty table tx.deleted_keys) in
+                let s = S.diff s (TM.find_default S.empty table tx.deleted_keys) in
                 let s =
                   S.filter
                     (fun k ->
-                       S.mem k (M.find_default S.empty table tx.added_keys) ||
+                       S.mem k (TM.find_default S.empty table tx.added_keys) ||
                        exists_key k)
                     s
                 in map_f s)
@@ -1173,14 +1185,14 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
 
   | Key_range { first; up_to; reverse; } ->
       (* we recover all the keys added in the transaction *)
-      let s = M.find_default S.empty table tx.added_keys in
+      let s = TM.find_default S.empty table tx.added_keys in
       let s =
         let first, up_to = if reverse then (up_to, first) else (first, up_to) in
           S.subset ?first ?up_to s in
       (* now s contains the added keys in the wanted range *)
 
       let is_key_deleted =
-        let s = M.find_default S.empty table tx.deleted_keys in
+        let s = TM.find_default S.empty table tx.deleted_keys in
           if S.is_empty s then
             (fun buf len -> false)
           else
@@ -1233,8 +1245,8 @@ let exist_keys tx table keys =
          (fun keys ->
             List.map
               (fun key ->
-                 S.mem key (M.find_default S.empty table tx.added_keys) ||
-                 (not (S.mem key (M.find_default S.empty table tx.deleted_keys)) &&
+                 S.mem key (TM.find_default S.empty table tx.added_keys) ||
+                 (not (S.mem key (TM.find_default S.empty table tx.deleted_keys)) &&
                   exists_key key))
               keys)
          keys)
@@ -1415,7 +1427,7 @@ let get_slice_aux_discrete
   let l = key_range in
   let l =
     List.filter
-      (fun k -> not (S.mem k (M.find_default S.empty table tx.deleted_keys)))
+      (fun k -> not (S.mem k (TM.find_default S.empty table tx.deleted_keys)))
       (List.sort String.compare l) in
   let reverse = match column_range with
       Column_range_union [Column_range { reverse; _ }] -> reverse
@@ -1484,7 +1496,7 @@ let get_slice_aux_discrete
              (* we take the columns needed for the predicate directly from the
               * tx data and inject it them into fold_over_data *)
              let cols_in_mem_map =
-               M.find_default M.empty table tx.added |>
+               TM.find_default M.empty table tx.added |>
                M.find_default M.empty key in
              let pred_cols_in_mem, pred_cols_in_mem_set =
                M.fold
@@ -1511,7 +1523,7 @@ let get_slice_aux_discrete
                       col :: cols
                   end)
                (tx.added |>
-                M.find_default M.empty table |> M.find_default M.empty key)
+                TM.find_default M.empty table |> M.find_default M.empty key)
                [] in
 
            (* rev_cols2 is G-to-S, want S-to-G if ~reverse *)
@@ -1650,7 +1662,7 @@ let get_slice_aux_continuous_no_predicate
          in (key, if reverse then rev cols else cols) :: l)
       (let first, up_to =
          if reverse then (up_to, first) else (first, up_to)
-       in M.submap ?first ?up_to (M.find_default M.empty table tx.added))
+       in M.submap ?first ?up_to (TM.find_default M.empty table tx.added))
       []
 
   in
@@ -1744,7 +1756,7 @@ let get_slice_aux_continuous_with_predicate
           * directly from tx data *)
           let new_key = String.sub key_buf 0 key_len in
           let cols_in_mem_map =
-            M.find_default M.empty table tx.added |>
+            TM.find_default M.empty table tx.added |>
             M.find_default M.empty new_key in
           let pred_cols_in_mem, pred_cols_in_mem_set =
             M.fold
@@ -1841,7 +1853,7 @@ let get_slice_aux_continuous_with_predicate
         (* take predicate columns from tx data and add them to pred_cols *)
         let last_key = Obs_bytea.contents prev_key in
         let pred_cols =
-          let m = M.find_default M.empty table tx.added |>
+          let m = TM.find_default M.empty table tx.added |>
                   M.find_default M.empty last_key
           in
             M.fold
@@ -1887,7 +1899,7 @@ let get_slice_aux_continuous_with_predicate
            else l)
       (let first, up_to =
          if reverse then (up_to, first) else (first, up_to)
-       in M.submap ?first ?up_to (M.find_default M.empty table tx.added))
+       in M.submap ?first ?up_to (TM.find_default M.empty table tx.added))
       []
 
   in
@@ -2119,10 +2131,10 @@ let get_column tx table key column_name =
     | _ -> return None
 
 let put_columns tx table key columns =
-  tx.added_keys <- M.modify (S.add key) S.empty table tx.added_keys;
-  tx.deleted_keys <- M.modify_if_found (S.remove key) table tx.deleted_keys;
+  tx.added_keys <- TM.modify (S.add key) S.empty table tx.added_keys;
+  tx.deleted_keys <- TM.modify_if_found (S.remove key) table tx.deleted_keys;
   tx.deleted <-
-    M.modify_if_found
+    TM.modify_if_found
       (fun m ->
          if M.is_empty m then m
          else
@@ -2132,7 +2144,7 @@ let put_columns tx table key columns =
              key m)
       table tx.deleted;
   tx.added <-
-    M.modify
+    TM.modify
       (fun m ->
          (M.modify
             (fun m ->
@@ -2199,17 +2211,17 @@ let put_multi_columns_no_tx ks table data =
 
 let delete_columns tx table key cols =
   tx.added <-
-    M.modify_if_found
+    TM.modify_if_found
       (fun m ->
          (M.modify
              (fun m -> List.fold_left (fun m c -> M.remove c m) m cols)
              M.empty key m))
       table tx.added;
-  if M.is_empty (M.find_default M.empty table tx.added |>
+  if M.is_empty (TM.find_default M.empty table tx.added |>
                  M.find_default M.empty key) then
-    tx.added_keys <- M.modify_if_found (S.remove key) table tx.added_keys;
+    tx.added_keys <- TM.modify_if_found (S.remove key) table tx.added_keys;
   tx.deleted <-
-    M.modify
+    TM.modify
       (fun m ->
          M.modify
            (fun s -> List.fold_left (fun s c -> S.add c s) s cols)
@@ -2227,7 +2239,7 @@ let delete_key tx table key =
         lwt () = delete_columns tx table key
                    (List.map (fun c -> c.name) columns)
         in
-          tx.deleted_keys <- M.modify (S.add key) S.empty table tx.deleted_keys;
+          tx.deleted_keys <- TM.modify (S.add key) S.empty table tx.deleted_keys;
           return ()
 
 let dump tx ?(format = 0) ?only_tables ?offset () =

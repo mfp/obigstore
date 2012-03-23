@@ -33,6 +33,8 @@ type benchmark =
   | Random_read
   | Seq_read
 
+let table_dummy = DM.table_of_string "dummy"
+
 module Make
   (D : Obs_data_model.S)
   (C : sig
@@ -118,8 +120,8 @@ struct
       for_lwt i = 0 to rounds - 1 do
         lwt dt =
           bm_put_columns ~iters:iterations ~batch_size
-                          (make_row_dummy ~avg_cols ~payload) ks ~table:"dummy" in
-        lwt size_on_disk = D.table_size_on_disk ks "dummy" in
+                          (make_row_dummy ~avg_cols ~payload) ks ~table:table_dummy in
+        lwt size_on_disk = D.table_size_on_disk ks table_dummy in
           printf "%7d -> %7d    %8.5fs  (%.0f/s)   ~%Ld bytes\n%!"
              (i * iterations) ((i + 1) * iterations) dt (float iterations /. dt)
              size_on_disk;
@@ -133,7 +135,7 @@ struct
         1000.  in
       let avg_row_size = compute_avg_size row_data_size in
       let avg_row_size' = compute_avg_size row_data_size_with_colnames in
-      lwt size_on_disk = D.table_size_on_disk ks "dummy" in
+      lwt size_on_disk = D.table_size_on_disk ks table_dummy in
       let total_data_size = avg_row_size *. float rounds *. float iterations in
       let total_data_size' = avg_row_size' *. float rounds *. float iterations in
         printf "\nTable size: %9Ld bytes\n\
@@ -157,7 +159,7 @@ struct
 
     let rec read_from tx first =
       lwt (last_key, l) =
-        D.get_slice tx "dummy" ~max_keys ~max_columns
+        D.get_slice tx table_dummy ~max_keys ~max_columns
           (DM.Key_range { DM.first; up_to = None; reverse = false; })
           DM.All_columns in
       let len = List.length l in
@@ -233,7 +235,7 @@ struct
         (fun () ->
            iter_p_in_region ~size:50
              (fun l ->
-                D.put_multi_columns ks (table ^ "_multi")
+                D.put_multi_columns ks (DM.table_of_string (DM.string_of_table table ^ "_multi"))
                   (List.map (fun (k, v) -> (k, [mk_col "value" v])) l))
              keys) in
     lwt overhead2 =
@@ -241,7 +243,7 @@ struct
         (fun () ->
            iter_p_in_region ~size:50
              (fun l ->
-                ignore (table ^ "_multi");
+                ignore (DM.table_of_string (DM.string_of_table table ^ "_multi"));
                 ignore (List.map (fun (k, v) -> (k, [mk_col "value" v])) l);
                 Lwt_unix.sleep 0.)
              keys)
@@ -250,7 +252,8 @@ struct
 
   let bm_sequential_write ~iterations ~payload db =
     lwt (dt, dt_multi, nkeys) =
-      bm_simple_write_aux string_of_int ~iterations ~payload db "sequential_write"
+      bm_simple_write_aux string_of_int ~iterations ~payload db
+        (DM.table_of_string "sequential_write")
     in
       print_newline ();
       printf "Seq write: %d keys in %8.5fs (%d/s)\n%!"
@@ -262,7 +265,7 @@ struct
   let bm_random_write ~iterations ~payload db =
     lwt (dt, dt_multi, nkeys) =
       bm_simple_write_aux (fun _ -> random_key 20)
-        ~iterations ~payload db "random_write"
+        ~iterations ~payload db (DM.table_of_string "random_write")
     in
       print_newline ();
       printf "Rand write: %d keys in %8.5fs (%d/s)\n%!"
@@ -273,7 +276,7 @@ struct
 
   let bm_count db =
     lwt ks = D.register_keyspace db "simple" in
-    let table = "sequential_write" in
+    let table = DM.table_of_string "sequential_write" in
     let nkeys = ref 0L in
     lwt dt =
       time (fun () ->
@@ -290,7 +293,7 @@ struct
 
   let bm_random_read ~max_key db =
     lwt ks = D.register_keyspace db "simple" in
-    let table = "sequential_write" in
+    let table = DM.table_of_string "sequential_write" in
     let nkeys = max_key in
     let keys =
       List.init (nkeys / 100)

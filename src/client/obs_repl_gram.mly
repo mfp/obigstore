@@ -94,11 +94,12 @@ phrase : /* empty */  { Nothing }
   | directive { $1 }
 
 size :
-    SIZE id   { with_ks
+    SIZE table
+              { with_ks
                   (fun keyspace ->
                      R.Table_size_on_disk
                        { R.Table_size_on_disk.keyspace; table = $2; }) }
-  | SIZE id range_no_max
+  | SIZE table range_no_max
               { with_ks
                   (fun keyspace ->
                      R.Key_range_size_on_disk
@@ -110,7 +111,7 @@ range_no_max :
               { { Range.first = $2; up_to = $4; reverse = false; } }
 
 count :
-    COUNT id opt_range
+    COUNT table opt_range
               { with_ks
                   (fun keyspace ->
                      let key_range = match $3 with
@@ -121,7 +122,7 @@ count :
                                           key_range; }) }
 
 get :
-    GET id range opt_multi_range opt_row_predicate opt_redir
+    GET table range opt_multi_range opt_row_predicate opt_redir
        {
          with_ks_unwrap
            (fun keyspace ->
@@ -139,7 +140,7 @@ get :
                     column_range; }
               in Command (req, $6))
        }
-  | GET KEYS id opt_range opt_redir
+  | GET KEYS table opt_range opt_redir
       {
         with_ks_unwrap
           (fun keyspace ->
@@ -157,7 +158,7 @@ get :
       }
 
 put :
-    PUT id LBRACKET id RBRACKET LBRACKET bindings RBRACKET
+    PUT table LBRACKET id RBRACKET LBRACKET bindings RBRACKET
         {
           with_ks
             (fun keyspace ->
@@ -176,14 +177,14 @@ bindings :
 binding: id EQ id            { ($1, $3) }
 
 delete :
-    DELETE id LBRACKET id RBRACKET LBRACKET id_list RBRACKET
+    DELETE table LBRACKET id RBRACKET LBRACKET id_list RBRACKET
       {
         with_ks
           (fun keyspace ->
              R.Delete_columns
                { R.Delete_columns.keyspace; table = $2;
                  key = $4; columns = $7; }) }
-  | DELETE id LBRACKET id RBRACKET
+  | DELETE table LBRACKET id RBRACKET
       {
         with_ks
           (fun keyspace ->
@@ -277,3 +278,6 @@ opt_redir :
 id :
     ID           { $1 }
   | INT          { Big_int.string_of_big_int $1 }
+
+table:
+    ID           { DM.table_of_string $1 }

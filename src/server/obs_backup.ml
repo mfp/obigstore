@@ -66,6 +66,8 @@ struct
       read_string s t;
       !s
 
+  let get_table t = table_of_string (get_string t)
+
   let get_timestamp t =
     let s = ref "" in
       read_raw_string s t 8;
@@ -86,14 +88,14 @@ let string_of_cursor c =
     Obs_bytea.add_string b s
   in
     Obs_bytea.add_vint b (List.length c.bc_remaining_tables);
-    List.iter (add_string b) c.bc_remaining_tables;
+    List.iter (add_string b) (c.bc_remaining_tables :> string list);
     add_string b c.bc_key;
     add_string b c.bc_column;
     Obs_bytea.contents b
 
 let cursor_of_string c =
     let src = DEC.make c in
-    let bc_remaining_tables = DEC.get_list DEC.get_string src in
+    let bc_remaining_tables = DEC.get_list DEC.get_table src in
     let bc_key = DEC.get_string src in
     let bc_column = DEC.get_string src in
       Some { bc_remaining_tables; bc_key; bc_column; }
@@ -128,8 +130,8 @@ struct
 
   let add_datum dst table it
         ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf ~value_buf =
-    Obs_bytea.add_vint dst (String.length table);
-    Obs_bytea.add_string dst table;
+    Obs_bytea.add_vint dst (String.length (table : table :> string));
+    Obs_bytea.add_string dst (table :> string);
     Obs_bytea.add_vint dst key_len;
     Obs_bytea.add_substring dst key_buf 0 key_len;
     Obs_bytea.add_vint dst column_len;
@@ -149,7 +151,7 @@ struct
     let datum_key = Obs_bytea.create 13 in
 
     let load_datum src =
-      let table = DEC.get_string src in
+      let table = DEC.get_table src in
       let key = DEC.get_string src in
       let column = DEC.get_string src in
       let timestamp = DEC.get_timestamp src in
