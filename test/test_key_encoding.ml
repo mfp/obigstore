@@ -21,6 +21,8 @@ open Printf
 open Test_00util
 open OUnit
 
+module List = BatList
+
 module K = Obs_key_encoding
 
 let check_roundtrip codec x =
@@ -86,6 +88,11 @@ let test_bool () =
     List.iter (check_roundtrip K.bool) v;
     check_order_preservation K.bool v
 
+let test_byte () =
+  let v = List.init 256 (fun n -> n) in
+    List.iter (check_roundtrip K.byte) v;
+    check_order_preservation K.byte v
+
 let positive_int64_vector =
     [ 0L; 1L; Int64.max_int; 42L; ]
 
@@ -138,6 +145,32 @@ let test_tuple5 () =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
 
+let test_choice2 () =
+  let codec = K.choice2 "a" K.stringz "b" K.stringz in
+  let l = [`A ""; `B ""; `A "\001"; `B "\001"; `A "foo"; ] in
+    List.iter (check_roundtrip codec) l;
+    check_order_preservation codec l
+
+let test_choice3 () =
+  let codec = K.choice3 "a" K.stringz "b" K.stringz "c" K.byte in
+  let l = [`A ""; `B ""; `A "\001"; `C 0; `B "\001"; `A "foo"; `C 1] in
+    List.iter (check_roundtrip codec) l;
+    check_order_preservation codec l
+
+let test_choice4 () =
+  let codec = K.choice4 "a" K.stringz "b" K.stringz "c" K.byte "d" K.byte in
+  let l = [`A ""; `B ""; `A "\001"; `C 0; `B "\001"; `A "foo"; `C 1; `D 1] in
+    List.iter (check_roundtrip codec) l;
+    check_order_preservation codec l
+
+let test_choice5 () =
+  let codec = K.choice5 "a" K.stringz "b" K.stringz "c" K.byte "d" K.byte "e" K.byte in
+  let l = [`A ""; `B ""; `A "\001"; `C 0; `B "\001"; `A "foo"; `C 1; `D 1;
+           `E 0; `E 1; `C 0 ]
+  in
+    List.iter (check_roundtrip codec) l;
+    check_order_preservation codec l
+
 let test_custom () =
   let encode s = Scanf.sscanf s "%Ld-%Ld-%s" (fun a b c -> (a, b, c)) in
   let decode (a, b, c) = Printf.sprintf "%Ld-%Ld-%s" a b c in
@@ -160,6 +193,7 @@ let test_custom () =
 
 let tests =
   [ "stringz" >:: test_stringz;
+    "byte" >:: test_byte;
     "bool" >:: test_bool;
     "self_delimited_string" >:: test_self_delimited_string;
     "positive_int64" >:: test_positive_int64;
@@ -169,6 +203,10 @@ let tests =
     "tuple4" >:: test_tuple4;
     "tuple5" >:: test_tuple5;
     "custom" >:: test_custom;
+    "choice2" >:: test_choice2;
+    "choice3" >:: test_choice3;
+    "choice4" >:: test_choice4;
+    "choice5" >:: test_choice5;
   ]
 
 let () =

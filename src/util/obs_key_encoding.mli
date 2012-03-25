@@ -31,6 +31,7 @@ type error =
     Unsatisfied_constraint of string
   | Incomplete_fragment of string
   | Bad_encoding of string
+  | Unknown_tag of int
 
 exception Error of error * string
 
@@ -70,6 +71,7 @@ val stringz_unsafe : (string, self_delimited) codec
 
 val positive_int64 : (Int64.t, self_delimited) codec
 
+val byte : (int, self_delimited) codec
 val bool : (bool, self_delimited) codec
 
 (** Similar to {!positive_int64}, but with inverted order relative to the
@@ -95,6 +97,32 @@ val tuple5 :
   ('a, self_delimited) codec -> ('b, self_delimited) codec ->
   ('c, self_delimited) codec -> ('d, self_delimited) codec ->
   ('e, 'p) codec -> ('a * 'b * 'c * 'd * 'e, 'p) codec
+
+val choice2 :
+  string -> ('a, self_delimited) codec ->
+  string -> ('b, 'p) codec ->
+  ([`A of 'a | `B of 'b], 'p) codec
+
+val choice3 :
+  string -> ('a, self_delimited) codec ->
+  string -> ('b, self_delimited) codec ->
+  string -> ('c, 'p) codec ->
+  ([`A of 'a | `B of 'b | `C of 'c], 'p) codec
+
+val choice4 :
+  string -> ('a, self_delimited) codec ->
+  string -> ('b, self_delimited) codec ->
+  string -> ('c, self_delimited) codec ->
+  string -> ('d, 'p) codec ->
+  ([`A of 'a | `B of 'b | `C of 'c | `D of 'd], 'p) codec
+
+val choice5 :
+  string -> ('a, self_delimited) codec ->
+  string -> ('b, self_delimited) codec ->
+  string -> ('c, self_delimited) codec ->
+  string -> ('d, self_delimited) codec ->
+  string -> ('e, 'p) codec ->
+  ([`A of 'a | `B of 'b | `C of 'c | `D of 'd | `E of 'e], 'p) codec
 
 val custom :
   ('a, 'p) codec ->

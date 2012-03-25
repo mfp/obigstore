@@ -29,6 +29,7 @@ type error =
     Unsatisfied_constraint of string
   | Incomplete_fragment of string
   | Bad_encoding of string
+  | Unknown_tag of int
 
 exception Error of error * string
 
@@ -36,6 +37,7 @@ let string_of_error = function
     Unsatisfied_constraint s -> sprintf "Unsatisfied_constraint %S" s
   | Incomplete_fragment s -> sprintf "Incomplete_fragment %S" s
   | Bad_encoding s -> sprintf "Bad_encoding %S" s
+  | Unknown_tag n -> sprintf "Unknown_tag %d" n
 
 let () =
   Printexc.register_printer
@@ -165,6 +167,16 @@ let stringz =
   in
     { encode; decode; pp; }
 
+let byte =
+  let encode b x = Obs_bytea.add_byte b x in
+  let decode s off len scratch n =
+    check_off_len "bool" s off len;
+    if len < 1 then invalid_off_len ~fname:"byte" s off len;
+    n := off + 1;
+    Char.code s.[off]
+  in
+    { encode; decode; pp = string_of_int; }
+
 let bool =
   let encode b x = Obs_bytea.add_byte b (if x then 1 else 0) in
   let decode s off len scratch n =
@@ -289,6 +301,103 @@ let tuple5 c1 c2 c3 c4 c5 =
 
   let pp (x, y, z, zx, zy) =
     sprintf "(%s, %s, %s, %s, %s)" (c1.pp x) (c2.pp y) (c3.pp z) (c4.pp zx) (c5.pp zy)
+
+  in { encode; decode; pp; }
+
+let decode_choice choices s off len scratch n =
+  let tag = byte.decode s off len scratch n in
+  let len = len - (!n - off) in
+    if tag < 0 || tag >= Array.length choices then
+      error (sprintf "choice%d.decode" (Array.length choices)) (Unknown_tag tag);
+    choices.(tag) s !n len scratch n
+
+let choice2 lbl1 c1 lbl2 c2 =
+  let encode b = function
+      `A x -> byte.encode b 0; c1.encode b x
+    | `B x -> byte.encode b 1; c2.encode b x in
+
+  let decode =
+    decode_choice
+      [|
+        (fun s off len scratch n -> let x = c1.decode s off len scratch n in `A x);
+        (fun s off len scratch n -> let x = c2.decode s off len scratch n in `B x);
+      |] in
+
+  let pp = function
+      `A x -> sprintf "%s:%s" lbl1 (c1.pp x)
+    | `B x -> sprintf "%s:%s" lbl2 (c2.pp x)
+
+  in { encode; decode; pp; }
+
+let choice3 lbl1 c1 lbl2 c2 lbl3 c3 =
+  let encode b = function
+      `A x -> byte.encode b 0; c1.encode b x
+    | `B x -> byte.encode b 1; c2.encode b x
+    | `C x -> byte.encode b 2; c3.encode b x in
+
+  let decode =
+    decode_choice
+      [|
+        (fun s off len scratch n -> let x = c1.decode s off len scratch n in `A x);
+        (fun s off len scratch n -> let x = c2.decode s off len scratch n in `B x);
+        (fun s off len scratch n -> let x = c3.decode s off len scratch n in `C x);
+      |] in
+
+  let pp = function
+      `A x -> sprintf "%s:%s" lbl1 (c1.pp x)
+    | `B x -> sprintf "%s:%s" lbl2 (c2.pp x)
+    | `C x -> sprintf "%s:%s" lbl3 (c3.pp x)
+
+  in { encode; decode; pp; }
+
+let choice4 lbl1 c1 lbl2 c2 lbl3 c3 lbl4 c4 =
+  let encode b = function
+      `A x -> byte.encode b 0; c1.encode b x
+    | `B x -> byte.encode b 1; c2.encode b x
+    | `C x -> byte.encode b 2; c3.encode b x
+    | `D x -> byte.encode b 3; c4.encode b x in
+
+  let decode =
+    decode_choice
+      [|
+        (fun s off len scratch n -> let x = c1.decode s off len scratch n in `A x);
+        (fun s off len scratch n -> let x = c2.decode s off len scratch n in `B x);
+        (fun s off len scratch n -> let x = c3.decode s off len scratch n in `C x);
+        (fun s off len scratch n -> let x = c4.decode s off len scratch n in `D x);
+      |] in
+
+  let pp = function
+      `A x -> sprintf "%s:%s" lbl1 (c1.pp x)
+    | `B x -> sprintf "%s:%s" lbl2 (c2.pp x)
+    | `C x -> sprintf "%s:%s" lbl3 (c3.pp x)
+    | `D x -> sprintf "%s:%s" lbl4 (c4.pp x)
+
+  in { encode; decode; pp; }
+
+let choice5 lbl1 c1 lbl2 c2 lbl3 c3 lbl4 c4 lbl5 c5 =
+  let encode b = function
+      `A x -> byte.encode b 0; c1.encode b x
+    | `B x -> byte.encode b 1; c2.encode b x
+    | `C x -> byte.encode b 2; c3.encode b x
+    | `D x -> byte.encode b 3; c4.encode b x
+    | `E x -> byte.encode b 4; c5.encode b x in
+
+  let decode =
+    decode_choice
+      [|
+        (fun s off len scratch n -> let x = c1.decode s off len scratch n in `A x);
+        (fun s off len scratch n -> let x = c2.decode s off len scratch n in `B x);
+        (fun s off len scratch n -> let x = c3.decode s off len scratch n in `C x);
+        (fun s off len scratch n -> let x = c4.decode s off len scratch n in `D x);
+        (fun s off len scratch n -> let x = c5.decode s off len scratch n in `E x);
+      |] in
+
+  let pp = function
+      `A x -> sprintf "%s:%s" lbl1 (c1.pp x)
+    | `B x -> sprintf "%s:%s" lbl2 (c2.pp x)
+    | `C x -> sprintf "%s:%s" lbl3 (c3.pp x)
+    | `D x -> sprintf "%s:%s" lbl4 (c4.pp x)
+    | `E x -> sprintf "%s:%s" lbl5 (c5.pp x)
 
   in { encode; decode; pp; }
 
