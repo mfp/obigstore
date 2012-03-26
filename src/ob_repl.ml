@@ -157,26 +157,27 @@ let escape_string s =
 let pp_escaped fmt s =
   Format.fprintf fmt "\"%s\"" (escape_string s)
 
-let pp_datum fmt = function
+let pp_datum ~strict fmt = function
     "" -> Format.fprintf fmt "\"\""
-  | s when all_chars_satisfy char_is_num s -> Format.fprintf fmt "%s" s
+  | s when not strict && all_chars_satisfy char_is_num s -> Format.fprintf fmt "%s" s
   | s -> pp_escaped fmt s
 
-let pp_key fmt = function
+let pp_key ~strict fmt = function
     "" -> Format.fprintf fmt "\"\""
   | s ->
       match s.[0] with
-          'A'..'Z' | 'a'..'z' | '_' ->
+          'A'..'Z' | 'a'..'z' | '_' when not strict ->
               if all_chars_satisfy char_is_id s then Format.fprintf fmt "%s" s
               else pp_escaped fmt s
           | _ -> pp_escaped fmt s
 
-let rec pp_cols fmt = function
+let rec pp_cols ~strict fmt = function
     [] -> ()
-  | [ { name; data } ] -> Format.fprintf fmt "%a: %a" pp_key name pp_datum data
+  | [ { name; data } ] -> Format.fprintf fmt "%a: %a"
+                            (pp_key ~strict) name (pp_datum ~strict) data
   | { name; data } :: tl ->
-      Format.fprintf fmt "%a: %a,@ " pp_key name pp_datum data;
-      pp_cols fmt tl
+      Format.fprintf fmt "%a: %a,@ " (pp_key ~strict) name (pp_datum ~strict) data;
+      pp_cols ~strict fmt tl
 
 let rec pp_lines f fmt = function
     [] -> ()
@@ -184,14 +185,14 @@ let rec pp_lines f fmt = function
       Format.fprintf fmt "%a@." f x;
       pp_lines f fmt tl
 
-let pprint_slice fmt (last_key, key_data) =
+let pprint_slice ~strict fmt (last_key, key_data) =
   if fmt == Format.std_formatter then
     Format.printf "%s@." (String.make 78 '-');
   Format.fprintf fmt "{@\n";
   List.iter
     (fun kd ->
        Format.fprintf fmt " @[<2>%a:@\n{@[<1> %a },@]@]@\n@."
-         pp_key kd.key pp_cols kd.columns)
+         (pp_key ~strict) kd.key (pp_cols ~strict) kd.columns)
     key_data;
   Format.fprintf fmt "}@\n@.";
   if fmt == Format.std_formatter then
@@ -199,7 +200,7 @@ let pprint_slice fmt (last_key, key_data) =
   Format.printf "Last_key: %a@."
     (fun fmt k -> match k with
          None -> Format.printf "<none>"
-       | Some k -> pp_datum fmt k)
+       | Some k -> pp_datum ~strict:false fmt k)
     last_key
 
 module Directives =
@@ -355,6 +356,8 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
   let open Request in
   let ret f v = return (fun () -> f v) in
   let ret_nothing () = return (fun () -> ()) in
+  (* if not writing to stdout, we use "strict" JSON with everything quoted *)
+  let strict = fmt != Format.std_formatter in
 
   if !debug_requests then Format.printf "Request:@\n%a@." Request.pp r;
 
@@ -402,7 +405,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       lwt keys = D.get_keys ks table ?max_keys key_range in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));
-        ret (pp_lines pp_datum fmt) keys
+        ret (pp_lines (pp_datum ~strict) fmt) keys
   | Count_keys { Count_keys.table; key_range; } ->
       D.count_keys ks table key_range >>= ret (printf "%Ld\n%!")
   | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range;
@@ -416,7 +419,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int nkeys));
         Timing.cnt_cols := Int64.(add !Timing.cnt_cols (of_int ncols));
-        ret (pprint_slice fmt) slice
+        ret (pprint_slice ~strict fmt) slice
   | Put_columns { Put_columns.table; data } ->
       let keys = List.length data in
       let columns = List.fold_left (fun s (_, l) -> List.length l + s) 0 data in
