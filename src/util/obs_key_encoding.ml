@@ -149,6 +149,13 @@ let expand_min4 c (x, y, z, a) =
 let expand_min5 c (x, y, z, a, b) =
   expand c (cons_ x (cons_ y (cons_ z (cons_ a (cons_ b min_)))))
 
+(* alternative style *)
+let expand f c = expand c f
+let part = cons_
+let ( @@ ) f x = f x
+let max_suffix = max_
+let min_suffix = min_
+
 let error where e = raise (Error (e, "Obs_key_encoding." ^ where))
 
 let invalid_off_len ~fname s off len =

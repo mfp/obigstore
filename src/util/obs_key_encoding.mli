@@ -198,6 +198,38 @@ val upper1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
 
 (** {4 Prefix expansion} *)
 
+(** {5 CPS-style interface} *)
+
+(** [expand] is used to expand a given prefix to the full length of the value
+  * according to the provided codec, by appending a suffix with either the
+  * maximum or the minimum values for each part; e.g.,
+  *
+  * {[
+  *    expand
+  *      (part 1 @@ part "foo" @@ max_suffix)
+  *      (tuple4 byte stringz byte byte) = (1, "foo", 255, 255)
+  *
+  *    expand (part 1 @@@ min_suffix) (byte *** positive_int64) = (1, 0L)
+  * ]}
+  * *)
+val expand : (('a, 'b, 'c) codec -> 'a) -> ('a, 'b, 'c) codec -> 'b
+
+(** {! Refer to {!expand}. *)
+val ( @@ ) : ('a -> 'b) -> 'a -> 'b
+
+(** {! Refer to {!expand}. *)
+val part :
+  'a -> (('b, 'c, 'd) codec -> 'e) ->
+  ('f, 'g, ('h, 'b, 'a, 'c, 'i, 'd) cons) codec -> 'h * 'e
+
+(** {! Refer to {!expand}. *)
+val max_suffix : ('a, 'a, 'b) codec -> 'a
+
+(** {! Refer to {!expand}. *)
+val min_suffix : ('a, 'a, 'b) codec -> 'a
+
+(** {5 Direct-style interface} *)
+
 (** [expand_max1 c x] takes takes a prefix [x] and expands it up to [c]'s
   * arity by appending the maximum values as defined by the codec.
   *

@@ -374,7 +374,11 @@ let test_expand_max () =
         [
           (!!1, !!2, !!3, m, m), (!!1, !!2, !!3);
           (!!1, !!255, !!3, m, m), (!!1, !!255, !!3);
-        ] in
+        ];
+      let c5 = tuple5 c c c c c in
+        assert_equal ~printer:(K.pp c5)
+          (!!1, !!2, m, m, m)
+          (expand (part !!1 @@ part !!2 @@ max_suffix) c5) in
   let check_strings c =
     let m = K.max c in
       check expand_max1 (c *** c)
@@ -415,7 +419,12 @@ let test_expand_min () =
         [
           (!!1, !!2, !!3, m, m), (!!1, !!2, !!3);
           (!!1, !!255, !!3, m, m), (!!1, !!255, !!3);
-        ] in
+        ];
+      let c5 = tuple5 c c c c c in
+        assert_equal ~printer:(K.pp c5)
+          (!!1, !!2, !!0, !!0, !!0)
+          (expand (part !!1 @@ part !!2 @@ min_suffix) c5)
+  in
   let check_strings c =
     let m = K.min c in
       check expand_min1 (c *** c)
