@@ -120,34 +120,34 @@ let upper3 c x = lift (skip (skip upper1)) c x
 let upper2 c x = lift (skip upper1) c x
 let upper1 c x = lift upper1 c x
 
-let cons_ f x c =
+let cons_ x f c =
   let c1, c2 = split c in
     (c1.inject x, f c2)
 
 let max_ c = c.inject c.max
 let min_ c = c.inject c.min
 
-let expand f c = c.extract (f c)
+let expand c f = c.extract (f c)
 
-let expand_max1 c x = expand (cons_ max_ x) c
-let expand_max2 c (x, y) = expand (cons_ (cons_ max_ y) x) c
-let expand_max3 c (x, y, z) = expand (cons_ (cons_ (cons_ max_ z) y) x) c
+let expand_max1 c x = expand c (cons_ x max_)
+let expand_max2 c (x, y) = expand c (cons_ x (cons_ y max_))
+let expand_max3 c (x, y, z) = expand c (cons_ x (cons_ y (cons_ z max_)))
 
 let expand_max4 c (x, y, z, a) =
-  expand (cons_ (cons_ (cons_ (cons_ max_ a) z) y) x) c
+  expand c (cons_ x (cons_ y (cons_ z (cons_ a max_))))
 
 let expand_max5 c (x, y, z, a, b) =
-  expand (cons_ (cons_ (cons_ (cons_ (cons_ max_ b) a) z) y) x) c
+  expand c (cons_ x (cons_ y (cons_ z (cons_ a (cons_ b max_)))))
 
-let expand_min1 c x = expand (cons_ min_ x) c
-let expand_min2 c (x, y) = expand (cons_ (cons_ min_ y) x) c
-let expand_min3 c (x, y, z) = expand (cons_ (cons_ (cons_ min_ z) y) x) c
+let expand_min1 c x = expand c (cons_ x min_)
+let expand_min2 c (x, y) = expand c (cons_ x (cons_ y min_))
+let expand_min3 c (x, y, z) = expand c (cons_ x (cons_ y (cons_ z min_)))
 
 let expand_min4 c (x, y, z, a) =
-  expand (cons_ (cons_ (cons_ (cons_ min_ a) z) y) x) c
+  expand c (cons_ x (cons_ y (cons_ z (cons_ a min_))))
 
 let expand_min5 c (x, y, z, a, b) =
-  expand (cons_ (cons_ (cons_ (cons_ (cons_ min_ b) a) z) y) x) c
+  expand c (cons_ x (cons_ y (cons_ z (cons_ a (cons_ b min_)))))
 
 let error where e = raise (Error (e, "Obs_key_encoding." ^ where))
 
