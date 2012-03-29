@@ -191,6 +191,168 @@ let test_custom () =
                 compare (a1, Int64.neg b1, c1) (a2, Int64.neg b2, c2))
       codec l
 
+open K
+
+let test_min () =
+  let check c expected =
+    assert_equal ~printer:(K.pp c) expected (min c) in
+  let check_ints c min =
+    check c min;
+    check (c *** c) (min, min);
+    check (c *** c *** c) (min, (min, min));
+    check (tuple3 c c c) (min, min, min) in
+  let check_strings c =
+    check c "";
+    check (c *** c) ("", "");
+    check (c *** c *** c) ("", ("", ""));
+    check (tuple3 c c c) ("", "", "")
+  in
+    check bool false;
+    check bool false;
+    check_ints byte 0;
+    check_ints positive_int64 Int64.zero;
+    check_ints positive_int64_complement Int64.zero;
+    check_strings self_delimited_string;
+    check_strings stringz;
+    check_strings stringz_unsafe
+
+let test_max () =
+  let check c expected =
+    assert_equal ~printer:(pp c) expected (max c) in
+  let check_ints c m =
+    check c m;
+    check (c *** c) (m, m);
+    check (c *** c *** c) (m, (m, m));
+    check (tuple3 c c c) (m, m, m) in
+  let check_strings c m =
+    check c m;
+    check (c *** c) (m, m);
+    check (c *** c *** c) (m, (m, m));
+    check (tuple3 c c c) (m, m, m);
+  in
+    check bool true;
+    check bool true;
+    check_ints byte 255;
+    check_ints positive_int64 Int64.max_int;
+    check_ints positive_int64_complement Int64.max_int;
+    check_strings self_delimited_string (max stringz);
+    check_strings stringz (max stringz);
+    check_strings stringz_unsafe (max stringz)
+
+let test_lower () =
+  let check c l =
+    List.iter
+      (fun (f, expected, orig) ->
+         assert_equal ~printer:(K.pp c) expected (f c orig))
+      l in
+  let check_ints c (!!) =
+    check (c *** c)
+      [
+        lower1, (!!0, !!0), (!!0, !!1);
+        lower1, (!!0, !!0), (!!0, !!255);
+        lower1, (!!42, !!0), (!!42, !!255);
+      ];
+    check (tuple3 c c c)
+      [
+        lower1, (!!1, !!0, !!0), (!!1, !!2, !!3);
+        lower1, (!!1, !!0, !!0), (!!1, !!255, !!0);
+        lower2, (!!1, !!2, !!0), (!!1, !!2, !!3);
+        lower2, (!!1, !!255, !!0), (!!1, !!255, !!3);
+      ];
+    check (tuple4 c c c c)
+      [
+        lower1, (!!1, !!0, !!0, !!0), (!!1, !!2, !!3, !!4);
+        lower1, (!!1, !!0, !!0, !!0), (!!1, !!255, !!3, !!4);
+        lower2, (!!1, !!2, !!0, !!0), (!!1, !!2, !!3, !!4);
+        lower2, (!!1, !!255, !!0, !!0), (!!1, !!255, !!3, !!4);
+        lower3, (!!1, !!2, !!3, !!0), (!!1, !!2, !!3, !!4);
+        lower3, (!!1, !!255, !!3, !!0), (!!1, !!255, !!3, !!4);
+      ];
+    check (tuple5 c c c c c)
+      [
+        lower1, (!!1, !!0, !!0, !!0, !!0), (!!1, !!2, !!3, !!4, !!5);
+        lower1, (!!1, !!0, !!0, !!0, !!0), (!!1, !!255, !!3, !!4, !!5);
+        lower2, (!!1, !!2, !!0, !!0, !!0), (!!1, !!2, !!3, !!4, !!5);
+        lower2, (!!1, !!255, !!0, !!0, !!0), (!!1, !!255, !!3, !!4, !!5);
+        lower3, (!!1, !!2, !!3, !!0, !!0), (!!1, !!2, !!3, !!4, !!5);
+        lower3, (!!1, !!255, !!3, !!0, !!0), (!!1, !!255, !!3, !!4, !!5);
+        lower4, (!!1, !!2, !!3, !!4, !!0), (!!1, !!2, !!3, !!4, !!5);
+        lower4, (!!1, !!255, !!3, !!4, !!0), (!!1, !!255, !!3, !!4, !!5);
+      ] in
+  let check_strings c =
+    check (c *** c) [ lower1, ("1", ""), ("1", "2"); ];
+    check (tuple3 c c c)
+      [
+        lower1, ("1", "", ""), ("1", "2", "3");
+        lower2, ("1", "2", ""), ("1", "2", "3");
+      ]
+  in
+    check (bool *** bool) [ lower1, (true, false), (true, true) ];
+    check_ints byte (fun x -> x);
+    check_ints positive_int64 Int64.of_int;
+    check_ints positive_int64_complement Int64.of_int;
+    check_strings self_delimited_string;
+    check_strings stringz;
+    check_strings stringz_unsafe
+
+let test_upper () =
+  let check c l =
+    List.iter
+      (fun (f, expected, orig) ->
+         assert_equal ~printer:(K.pp c) expected (f c orig))
+      l in
+  let check_ints c (!!) =
+    let m = K.max c in
+      check (c *** c)
+        [
+          upper1, (!!0, m), (!!0, !!1);
+          upper1, (!!0, m), (!!0, !!255);
+          upper1, (!!42, m), (!!42, !!255);
+        ];
+      check (tuple3 c c c)
+        [
+          upper1, (!!1, m, m), (!!1, !!2, !!3);
+          upper1, (!!1, m, m), (!!1, !!255, !!0);
+          upper2, (!!1, !!2, m), (!!1, !!2, !!3);
+          upper2, (!!1, !!255, m), (!!1, !!255, !!3);
+        ];
+      check (tuple4 c c c c)
+        [
+          upper1, (!!1, m, m, m), (!!1, !!2, !!3, !!4);
+          upper1, (!!1, m, m, m), (!!1, !!255, !!3, !!4);
+          upper2, (!!1, !!2, m, m), (!!1, !!2, !!3, !!4);
+          upper2, (!!1, !!255, m, m), (!!1, !!255, !!3, !!4);
+          upper3, (!!1, !!2, !!3, m), (!!1, !!2, !!3, !!4);
+          upper3, (!!1, !!255, !!3, m), (!!1, !!255, !!3, !!4);
+        ];
+      check (tuple5 c c c c c)
+        [
+          upper1, (!!1, m, m, m, m), (!!1, !!2, !!3, !!4, !!5);
+          upper1, (!!1, m, m, m, m), (!!1, !!255, !!3, !!4, !!5);
+          upper2, (!!1, !!2, m, m, m), (!!1, !!2, !!3, !!4, !!5);
+          upper2, (!!1, !!255, m, m, m), (!!1, !!255, !!3, !!4, !!5);
+          upper3, (!!1, !!2, !!3, m, m), (!!1, !!2, !!3, !!4, !!5);
+          upper3, (!!1, !!255, !!3, m, m), (!!1, !!255, !!3, !!4, !!5);
+          upper4, (!!1, !!2, !!3, !!4, m), (!!1, !!2, !!3, !!4, !!5);
+          upper4, (!!1, !!255, !!3, !!4, m), (!!1, !!255, !!3, !!4, !!5);
+        ] in
+  let check_strings c =
+    let m = K.max c in
+      check (c *** c) [ upper1, ("1", m), ("1", "2"); ];
+      check (tuple3 c c c)
+        [
+          upper1, ("1", m, m), ("1", "2", "3");
+          upper2, ("1", "2", m), ("1", "2", "3");
+        ]
+  in
+    check (bool *** bool) [ upper1, (false, true), (false, false) ];
+    check_ints byte (fun x -> x);
+    check_ints positive_int64 Int64.of_int;
+    check_ints positive_int64_complement Int64.of_int;
+    check_strings self_delimited_string;
+    check_strings stringz;
+    check_strings stringz_unsafe
+
 let tests =
   [ "stringz" >:: test_stringz;
     "byte" >:: test_byte;
@@ -207,6 +369,12 @@ let tests =
     "choice3" >:: test_choice3;
     "choice4" >:: test_choice4;
     "choice5" >:: test_choice5;
+    "min" >:: test_min;
+    "max" >:: test_max;
+    (* "succ" >:: test_succ; *)
+    (* "pred" >:: test_pred; *)
+    "lower" >:: test_lower;
+    "upper" >:: test_upper;
   ]
 
 let () =

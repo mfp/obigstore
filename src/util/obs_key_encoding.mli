@@ -84,18 +84,24 @@ val succ : (_, 'a, _) codec -> 'a -> 'a
 (** Saturating predecessor: returns the min if the value is already the min. *)
 val pred : (_, 'a, _) codec -> 'a -> 'a
 
-(** {4 Operations with immutable prefix.} *)
+(** {4 Upper/lower bounds with immutable prefix} *)
 
-(** Given a codec [c], if [x'] is the internal n-tuple corresponding to the
-  * value [x] according to [c], [min5 c x] returns the value corresponding to
-  * an internal n-tuple [x''] where the 4 first elements of [x'] have been
-  * preserved, and the 5th and following have been set to their minimum values.
+(** [lower5 c x] gives the lower bound for values that have the same 5-ary
+  * prefix as [x].
+  *
+  * Given n types [t1, t2, ..., tn] whose values have correspondingly
+  * [m1, m2, ..., mn] as their minimum values and [M1, M2, ..., Mn] as their
+  * maximum ones, a codec [c] whose internal type is the tuple
+  * [t1 * (t2 * (... * (tn-1 * tn)))], and a value [x] whose internal
+  * representation according to [c] is [(x1, (x2, ... (xn-1, xn)))],
+  * [lower5 c x] returns a value corresponding to the internal n-tuple
+  * [(x1, (x2, (x3, (x4, (x5, (m6, ... (mn-1, mn)))))))].
   *
   * E.g., for given a codec
   * [let c = byte *** byte *** byte *** byte *** byte *** byte],
-  * [min5 c (0, (1, (2, (3, (4, 5))))) = (0, (1, (2, (3, (0, 0)))))].
+  * [lower5 c (0, (1, (2, (3, (4, 5))))) = (0, (1, (2, (3, (4, 0)))))].
   * *)
-val min5 :
+val lower5 :
   ('a * ('b * ('c * ('d * ('e * 'f)))), 'g,
    ('h, 'b * 'i, 'j, 'k, 'l,
     ('m, 'c * 'n, 'o, 'p, 'q,
@@ -106,9 +112,8 @@ val min5 :
    cons)
   codec -> 'g -> 'g
 
-(** Similar to {!min5}, but sets all the values starting from the 4th to their
-  * minima. *)
-val min4 :
+(** Refer to {!lower5}. *)
+val lower4 :
   ('a * ('b * ('c * ('d * 'e))), 'f,
    ('g, 'b * 'h, 'i, 'j, 'k,
     ('l, 'c * 'm, 'n, 'o, 'p,
@@ -117,25 +122,41 @@ val min4 :
    cons)
   codec -> 'f -> 'f
 
-(** Similar to {!min5}, but sets all the values starting from the 3rd to their
-  * minima. *)
-val min3 :
+(** Refer to {!lower5}. *)
+val lower3 :
   ('a * ('b * ('c * 'd)), 'e,
    ('f, 'b * 'g, 'h, 'i, 'j,
     ('k, 'c * 'd, 'l, 'm, 'n, ('c, 'd, 'o, 'p, 'q, 'r) cons) cons)
    cons)
   codec -> 'e -> 'e
 
-(** Similar to {!min5}, but sets all the values starting from the 2nd to their
-  * minima. *)
-val min2 :
+(** Refer to {!lower5}. *)
+val lower2 :
   ('a * ('b * 'c), 'd,
    ('e, 'b * 'c, 'f, 'g, 'h, ('b, 'c, 'i, 'j, 'k, 'l) cons) cons)
   codec -> 'd -> 'd
 
-val min1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
+(** Refer to {!lower5}. *)
+val lower1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
 
-val max5 :
+(** [upper5 c x] gives the upper bound for values that have the same 5-ary
+  * prefix as [x].
+  *
+  * Given n types [t1, t2, ..., tn] whose values have correspondingly
+  * [m1, m2, ..., mn] as their minimum values and [M1, M2, ..., Mn] as their
+  * maximum ones, a codec [c] whose internal type is the tuple
+  * [t1 * (t2 * (... * (tn-1 * tn)))], and a value [x] whose internal
+  * representation according to [c] is [(x1, (x2, ... (xn-1, xn)))],
+  * [upper5 c x] returns a value corresponding to the internal n-tuple
+  * [(x1, (x2, (x3, (x4, (x5, (M6, ... (Mn-1, Mn)))))))].
+  *
+  * E.g., for given a codec
+  * [let c = byte *** byte *** byte *** byte *** byte *** byte],
+  * [upper5 c (0, (1, (2, (3, (4, 5))))) = (0, (1, (2, (3, (4, 255)))))]
+  * and
+  * [upper4 c (0, (1, (2, (3, (4, 5))))) = (0, (1, (2, (3, (255, 255)))))].
+  * *)
+val upper5 :
   ('a * ('b * ('c * ('d * ('e * 'f)))), 'g,
    ('h, 'b * 'i, 'j, 'k, 'l,
     ('m, 'c * 'n, 'o, 'p, 'q,
@@ -145,7 +166,9 @@ val max5 :
     cons)
    cons)
   codec -> 'g -> 'g
-val max4 :
+
+(** Refer to {!upper5}. *)
+val upper4 :
   ('a * ('b * ('c * ('d * 'e))), 'f,
    ('g, 'b * 'h, 'i, 'j, 'k,
     ('l, 'c * 'm, 'n, 'o, 'p,
@@ -153,22 +176,27 @@ val max4 :
     cons)
    cons)
   codec -> 'f -> 'f
-val max3 :
+
+(** Refer to {!upper5}. *)
+val upper3 :
   ('a * ('b * ('c * 'd)), 'e,
    ('f, 'b * 'g, 'h, 'i, 'j,
     ('k, 'c * 'd, 'l, 'm, 'n, ('c, 'd, 'o, 'p, 'q, 'r) cons) cons)
    cons)
   codec -> 'e -> 'e
-val max2 :
+
+(** Refer to {!upper5}. *)
+val upper2 :
   ('a * ('b * 'c), 'd,
    ('e, 'b * 'c, 'f, 'g, 'h, ('b, 'c, 'i, 'j, 'k, 'l) cons) cons)
   codec -> 'd -> 'd
-val max1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
 
+(** Refer to {!upper5}. *)
+val upper1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
 
 (*+ {2 Codecs} *)
 
-(** {3} Primitive codecs. *)
+(** {3 Primitive codecs} *)
 
 val self_delimited_string : string primitive_codec
 val stringz : string primitive_codec

@@ -92,17 +92,13 @@ let skip f (c : ('a * 'b, _, _) codec) ((x : 'a), y) =
   let _, c2 = split c in
     (x, f c2 y)
 
-let succ1 (c : ('a * 'b, _, _) codec) (x, (y : 'b)) =
+let lower1 (c : ('a * 'b, _, _) codec) ((x : 'a), (y : 'b)) =
   let c1, c2 = split c in
-    (c1.succ x, c2.min)
+    (x, c2.min)
 
-let min1 (c : ('a * 'b, _, _) codec) ((x : 'a), (y : 'b)) =
+let upper1 (c : ('a * 'b, _, _) codec) ((x : 'a), (y : 'b)) =
   let c1, c2 = split c in
-    (c1.min, c2.min)
-
-let max1 (c : ('a * 'b, _, _) codec) ((x : 'a), (y : 'b)) =
-  let c1, c2 = split c in
-    (c1.max, c2.min)
+    (x, c2.max)
 
 let pp c x = c.pp x
 let min c = c.extract c.min
@@ -112,23 +108,17 @@ let pred c x = c.extract (c.pred (c.inject x))
 
 let lift f c x = c.extract (f c (c.inject x))
 
-let succ5 c x = lift (skip (skip (skip (skip succ1)))) c x
-let succ4 c x = lift (skip (skip (skip succ1))) c x
-let succ3 c x = lift (skip (skip succ1)) c x
-let succ2 c x = lift (skip succ1) c x
-let succ1 c x = lift succ1 c x
+let lower5 c x = lift (skip (skip (skip (skip lower1)))) c x
+let lower4 c x = lift (skip (skip (skip lower1))) c x
+let lower3 c x = lift (skip (skip lower1)) c x
+let lower2 c x = lift (skip lower1) c x
+let lower1 c x = lift lower1 c x
 
-let min5 c x = lift (skip (skip (skip (skip min1)))) c x
-let min4 c x = lift (skip (skip (skip min1))) c x
-let min3 c x = lift (skip (skip min1)) c x
-let min2 c x = lift (skip min1) c x
-let min1 c x = lift min1 c x
-
-let max5 c x = lift (skip (skip (skip (skip max1)))) c x
-let max4 c x = lift (skip (skip (skip max1))) c x
-let max3 c x = lift (skip (skip max1)) c x
-let max2 c x = lift (skip max1) c x
-let max1 c x = lift max1 c x
+let upper5 c x = lift (skip (skip (skip (skip upper1)))) c x
+let upper4 c x = lift (skip (skip (skip upper1))) c x
+let upper3 c x = lift (skip (skip upper1)) c x
+let upper2 c x = lift (skip upper1) c x
+let upper1 c x = lift upper1 c x
 
 let error where e = raise (Error (e, "Obs_key_encoding." ^ where))
 
@@ -318,8 +308,12 @@ let tuple2 c1 c2 : (_, _, (_, _, _, _, _, _) cons) codec =
                 let x = c1.decode s ~off ~len scratch in
                 let y = c2.decode s ~off ~len:(len - (!off - off0)) scratch in
                   (x, y));
-    succ = (fun (x, y) -> (x, c2.succ y));
-    pred = (fun (x, y) -> (x, c2.pred y));
+    succ = (fun (x, y) ->
+              let y' = c2.succ y in
+                if y = y' then (c1.succ x, y') else (x, y'));
+    pred = (fun (x, y) ->
+              let y' = c2.pred y in
+                if y = y' then (c1.pred x, y') else (x, y'));
     inject = (fun (x, y) -> (c1.inject x, c2.inject y));
     extract = (fun (x, y) -> (c1.extract x, c2.extract y));
     pp = (fun (x, y) -> sprintf "(%s, %s)" (c1.pp x) (c2.pp y));
