@@ -353,6 +353,88 @@ let test_upper () =
     check_strings stringz;
     check_strings stringz_unsafe
 
+let test_expand_max () =
+  let check f c l =
+    List.iter
+      (fun (expected, t) ->
+         assert_equal ~printer:(K.pp c) expected (f c t))
+      l in
+  let check_ints c (!!) =
+    let m = K.max c in
+      check expand_max1 (c *** c)
+        [ (!!0, m), !!0; (!!1, m), !!1; ];
+      check expand_max1 (tuple3 c c c)
+        [ (!!1, m, m), !!1; (!!2, m, m), !!2; ];
+      check expand_max2 (tuple4 c c c c)
+        [
+          (!!1, !!2, m, m), (!!1, !!2);
+          (!!1, !!255, m, m), (!!1, !!255);
+        ];
+      check expand_max3 (tuple5 c c c c c)
+        [
+          (!!1, !!2, !!3, m, m), (!!1, !!2, !!3);
+          (!!1, !!255, !!3, m, m), (!!1, !!255, !!3);
+        ] in
+  let check_strings c =
+    let m = K.max c in
+      check expand_max1 (c *** c)
+        [ ("1", m), "1"; ("2", m), "2"; ];
+      check expand_max2 (tuple3 c c c)
+        [
+          ("1", "2", m), ("1", "2");
+          ("1", "", m), ("1", "");
+        ]
+  in
+    check expand_max1 (bool *** bool)
+      [ (false, true), false; (true, true), true; ];
+    check_ints byte (fun x -> x);
+    check_ints positive_int64 Int64.of_int;
+    check_ints positive_int64_complement Int64.of_int;
+    check_strings self_delimited_string;
+    check_strings stringz;
+    check_strings stringz_unsafe
+
+let test_expand_min () =
+  let check f c l =
+    List.iter
+      (fun (expected, t) ->
+         assert_equal ~printer:(K.pp c) expected (f c t))
+      l in
+  let check_ints c (!!) =
+    let m = K.min c in
+      check expand_min1 (c *** c)
+        [ (!!0, m), !!0; (!!1, m), !!1; ];
+      check expand_min1 (tuple3 c c c)
+        [ (!!1, m, m), !!1; (!!2, m, m), !!2; ];
+      check expand_min2 (tuple4 c c c c)
+        [
+          (!!1, !!2, m, m), (!!1, !!2);
+          (!!1, !!255, m, m), (!!1, !!255);
+        ];
+      check expand_min3 (tuple5 c c c c c)
+        [
+          (!!1, !!2, !!3, m, m), (!!1, !!2, !!3);
+          (!!1, !!255, !!3, m, m), (!!1, !!255, !!3);
+        ] in
+  let check_strings c =
+    let m = K.min c in
+      check expand_min1 (c *** c)
+        [ ("1", m), "1"; ("2", m), "2"; ];
+      check expand_min2 (tuple3 c c c)
+        [
+          ("1", "2", m), ("1", "2");
+          ("1", "", m), ("1", "");
+        ]
+  in
+    check expand_min1 (bool *** bool)
+      [ (false, false), false; (true, false), true; ];
+    check_ints byte (fun x -> x);
+    check_ints positive_int64 Int64.of_int;
+    check_ints positive_int64_complement Int64.of_int;
+    check_strings self_delimited_string;
+    check_strings stringz;
+    check_strings stringz_unsafe
+
 let tests =
   [ "stringz" >:: test_stringz;
     "byte" >:: test_byte;
@@ -375,6 +457,8 @@ let tests =
     (* "pred" >:: test_pred; *)
     "lower" >:: test_lower;
     "upper" >:: test_upper;
+    "expand_max" >:: test_expand_max;
+    "expand_min" >:: test_expand_min;
   ]
 
 let () =

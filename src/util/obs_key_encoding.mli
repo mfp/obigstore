@@ -46,9 +46,7 @@ type 'a primitive_codec = ('a, 'a, unit) codec
 type ('a, 'b, 'ma, 'mb, 'ta, 'tb) cons =
     ('a, 'ma, 'ta) codec * ('b, 'mb, 'tb) codec
 
-(** {2 Operations} *)
-
-(** {3 Encoding/decoding} *)
+(** {2 Encoding/decoding} *)
 
 (** [encode codec b x] appends to the buffer [b] a byte sequence representing
   * [x] according to the [codec].
@@ -72,7 +70,7 @@ val decode :
 (** Similar to {!decode}. *)
 val decode_string : (_, 'a, _) codec -> string -> 'a
 
-(** {3 Operations on values.} *)
+(** {2 Operations on values.} *)
 
 val pp : (_, 'a, _) codec -> 'a -> string
 val min : (_, 'a, _) codec -> 'a
@@ -84,7 +82,9 @@ val succ : (_, 'a, _) codec -> 'a -> 'a
 (** Saturating predecessor: returns the min if the value is already the min. *)
 val pred : (_, 'a, _) codec -> 'a -> 'a
 
-(** {4 Upper/lower bounds with immutable prefix} *)
+(** {3 Operations with immutable prefix} *)
+
+(** {4 Lower bounds} *)
 
 (** [lower5 c x] gives the lower bound for values that have the same 5-ary
   * prefix as [x].
@@ -138,6 +138,8 @@ val lower2 :
 
 (** Refer to {!lower5}. *)
 val lower1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
+
+(** {4 Upper bounds} *)
 
 (** [upper5 c x] gives the upper bound for values that have the same 5-ary
   * prefix as [x].
@@ -193,6 +195,100 @@ val upper2 :
 
 (** Refer to {!upper5}. *)
 val upper1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
+
+(** {4 Prefix expansion} *)
+
+(** [expand_max1 c x] takes takes a prefix [x] and expands it up to [c]'s
+  * arity by appending the maximum values as defined by the codec.
+  *
+  * E.g.,
+  *   [expand_max1 (byte *** byte) 42 = (42, 255)]
+  * and
+  *   [expand_max1 (tuple3 byte byte byte) 42 = (42, 255, 255)]
+  * *)
+val expand_max1 : ('a * 'b, 'c, ('a, 'b, 'd, 'b, 'e, 'f) cons) codec -> 'd -> 'c
+
+(** Refer to {!expand_max1}. *)
+val expand_max2 :
+  ('a * ('b * 'c), 'd,
+   ('a, 'e, 'f, 'g, 'h, ('b, 'c, 'i, 'c, 'j, 'k) cons) cons)
+  codec -> 'f * 'i -> 'd
+
+(** Refer to {!expand_max1}. *)
+val expand_max3 :
+  ('a * ('b * ('c * 'd)), 'e,
+   ('a, 'f, 'g, 'h, 'i,
+    ('b, 'j, 'k, 'l, 'm, ('c, 'd, 'n, 'd, 'o, 'p) cons) cons)
+   cons)
+  codec -> 'g * 'k * 'n -> 'e
+
+(** Refer to {!expand_max1}. *)
+val expand_max4 :
+  ('a * ('b * ('c * ('d * 'e))), 'f,
+   ('a, 'g, 'h, 'i, 'j,
+    ('b, 'k, 'l, 'm, 'n,
+     ('c, 'o, 'p, 'q, 'r, ('d, 'e, 's, 'e, 't, 'u) cons) cons)
+    cons)
+   cons)
+  codec -> 'h * 'l * 'p * 's -> 'f
+
+(** Refer to {!expand_max1}. *)
+val expand_max5 :
+  ('a * ('b * ('c * ('d * ('e * 'f)))), 'g,
+   ('a, 'h, 'i, 'j, 'k,
+    ('b, 'l, 'm, 'n, 'o,
+     ('c, 'p, 'q, 'r, 's,
+      ('d, 't, 'u, 'v, 'w, ('e, 'f, 'x, 'f, 'y, 'z) cons) cons)
+     cons)
+    cons)
+   cons)
+  codec -> 'i * 'm * 'q * 'u * 'x -> 'g
+
+(** [expand_min1 c x] takes takes a prefix [x] and expands it up to [c]'s
+  * arity by appending the minimum values as defined by the codec.
+  *
+  * E.g.,
+  *   [expand_min1 (byte *** byte) 42 = (42, 0)]
+  * and
+  *   [expand_min1 (tuple3 byte byte byte) 42 = (42, 0, 0)]
+  * *)
+val expand_min1 : ('a * 'b, 'c, ('a, 'b, 'd, 'b, 'e, 'f) cons) codec -> 'd -> 'c
+
+(** Refer to {!expand_min1}. *)
+val expand_min2 :
+  ('a * ('b * 'c), 'd,
+   ('a, 'e, 'f, 'g, 'h, ('b, 'c, 'i, 'c, 'j, 'k) cons) cons)
+  codec -> 'f * 'i -> 'd
+
+(** Refer to {!expand_min1}. *)
+val expand_min3 :
+  ('a * ('b * ('c * 'd)), 'e,
+   ('a, 'f, 'g, 'h, 'i,
+    ('b, 'j, 'k, 'l, 'm, ('c, 'd, 'n, 'd, 'o, 'p) cons) cons)
+   cons)
+  codec -> 'g * 'k * 'n -> 'e
+
+(** Refer to {!expand_min1}. *)
+val expand_min4 :
+  ('a * ('b * ('c * ('d * 'e))), 'f,
+   ('a, 'g, 'h, 'i, 'j,
+    ('b, 'k, 'l, 'm, 'n,
+     ('c, 'o, 'p, 'q, 'r, ('d, 'e, 's, 'e, 't, 'u) cons) cons)
+    cons)
+   cons)
+  codec -> 'h * 'l * 'p * 's -> 'f
+
+(** Refer to {!expand_min1}. *)
+val expand_min5 :
+  ('a * ('b * ('c * ('d * ('e * 'f)))), 'g,
+   ('a, 'h, 'i, 'j, 'k,
+    ('b, 'l, 'm, 'n, 'o,
+     ('c, 'p, 'q, 'r, 's,
+      ('d, 't, 'u, 'v, 'w, ('e, 'f, 'x, 'f, 'y, 'z) cons) cons)
+     cons)
+    cons)
+   cons)
+  codec -> 'i * 'm * 'q * 'u * 'x -> 'g
 
 (*+ {2 Codecs} *)
 
