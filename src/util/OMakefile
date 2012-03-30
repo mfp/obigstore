@@ -3,6 +3,7 @@ OCAMLINCLUDES += ../core
 
 OBJECTS[] =
     obs_key_encoding
+    obs_typed_table
 
 OCamlLibrary(obigstore_util, $(OBJECTS))
 
