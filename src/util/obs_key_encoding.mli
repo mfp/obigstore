@@ -223,10 +223,10 @@ val part :
   ('f, 'g, ('h, 'b, 'a, 'c, 'i, 'd) cons) codec -> 'h * 'e
 
 (** {! Refer to {!expand}. *)
-val max_suffix : ('a, 'a, 'b) codec -> 'a
+val max_suffix : ('a, 'b, 'c) codec -> 'a
 
 (** {! Refer to {!expand}. *)
-val min_suffix : ('a, 'a, 'b) codec -> 'a
+val min_suffix : ('a, 'b, 'c) codec -> 'a
 
 (** {5 Direct-style interface} *)
 
@@ -238,28 +238,28 @@ val min_suffix : ('a, 'a, 'b) codec -> 'a
   * and
   *   [expand_max1 (tuple3 byte byte byte) 42 = (42, 255, 255)]
   * *)
-val expand_max1 : ('a * 'b, 'c, ('a, 'b, 'd, 'b, 'e, 'f) cons) codec -> 'd -> 'c
+val expand_max1 : ('a * 'b, 'c, ('a, 'b, 'd, _, _, _) cons) codec -> 'd -> 'c
 
 (** Refer to {!expand_max1}. *)
 val expand_max2 :
   ('a * ('b * 'c), 'd,
-   ('a, 'e, 'f, 'g, 'h, ('b, 'c, 'i, 'c, 'j, 'k) cons) cons)
+   ('a, ('b * 'c), 'f, _, _, ('b, 'c, 'i, _, _, _) cons) cons)
   codec -> 'f * 'i -> 'd
 
 (** Refer to {!expand_max1}. *)
 val expand_max3 :
   ('a * ('b * ('c * 'd)), 'e,
-   ('a, 'f, 'g, 'h, 'i,
-    ('b, 'j, 'k, 'l, 'm, ('c, 'd, 'n, 'd, 'o, 'p) cons) cons)
+   ('a, ('b * ('c * 'd)), 'g, _, _,
+    ('b, ('c * 'd), 'k, _, _, ('c, 'd, 'n, _, _, _) cons) cons)
    cons)
   codec -> 'g * 'k * 'n -> 'e
 
 (** Refer to {!expand_max1}. *)
 val expand_max4 :
   ('a * ('b * ('c * ('d * 'e))), 'f,
-   ('a, 'g, 'h, 'i, 'j,
-    ('b, 'k, 'l, 'm, 'n,
-     ('c, 'o, 'p, 'q, 'r, ('d, 'e, 's, 'e, 't, 'u) cons) cons)
+   ('a, ('b * ('c * ('d * 'e))), 'h, _, _,
+    ('b, ('c * ('d * 'e)), 'l, _, _,
+     ('c, ('d * 'e), 'p, _, _, ('d, 'e, 's, _, _, _) cons) cons)
     cons)
    cons)
   codec -> 'h * 'l * 'p * 's -> 'f
@@ -267,10 +267,10 @@ val expand_max4 :
 (** Refer to {!expand_max1}. *)
 val expand_max5 :
   ('a * ('b * ('c * ('d * ('e * 'f)))), 'g,
-   ('a, 'h, 'i, 'j, 'k,
-    ('b, 'l, 'm, 'n, 'o,
-     ('c, 'p, 'q, 'r, 's,
-      ('d, 't, 'u, 'v, 'w, ('e, 'f, 'x, 'f, 'y, 'z) cons) cons)
+   ('a, ('b * ('c * ('d * ('e * 'f)))), 'i, _, _,
+    ('b, ('c * ('d * ('e * 'f))), 'm, _, _,
+     ('c, ('d * ('e * 'f)), 'q, _, _,
+      ('d, ('e * 'f), 'u, _, _, ('e, 'f, 'x, _, _, _) cons) cons)
      cons)
     cons)
    cons)
@@ -283,29 +283,29 @@ val expand_max5 :
   *   [expand_min1 (byte *** byte) 42 = (42, 0)]
   * and
   *   [expand_min1 (tuple3 byte byte byte) 42 = (42, 0, 0)]
-  * *)
-val expand_min1 : ('a * 'b, 'c, ('a, 'b, 'd, 'b, 'e, 'f) cons) codec -> 'd -> 'c
+  *)
+val expand_min1 : ('a * 'b, 'c, ('a, 'b, 'd, _, _, _) cons) codec -> 'd -> 'c
 
 (** Refer to {!expand_min1}. *)
 val expand_min2 :
   ('a * ('b * 'c), 'd,
-   ('a, 'e, 'f, 'g, 'h, ('b, 'c, 'i, 'c, 'j, 'k) cons) cons)
+   ('a, ('b * 'c), 'f, _, _, ('b, 'c, 'i, _, _, _) cons) cons)
   codec -> 'f * 'i -> 'd
 
 (** Refer to {!expand_min1}. *)
 val expand_min3 :
   ('a * ('b * ('c * 'd)), 'e,
-   ('a, 'f, 'g, 'h, 'i,
-    ('b, 'j, 'k, 'l, 'm, ('c, 'd, 'n, 'd, 'o, 'p) cons) cons)
+   ('a, ('b * ('c * 'd)), 'g, _, _,
+    ('b, ('c * 'd), 'k, _, _, ('c, 'd, 'n, _, _, _) cons) cons)
    cons)
   codec -> 'g * 'k * 'n -> 'e
 
 (** Refer to {!expand_min1}. *)
 val expand_min4 :
   ('a * ('b * ('c * ('d * 'e))), 'f,
-   ('a, 'g, 'h, 'i, 'j,
-    ('b, 'k, 'l, 'm, 'n,
-     ('c, 'o, 'p, 'q, 'r, ('d, 'e, 's, 'e, 't, 'u) cons) cons)
+   ('a, ('b * ('c * ('d * 'e))), 'h, _, _,
+    ('b, ('c * ('d * 'e)), 'l, _, _,
+     ('c, ('d * 'e), 'p, _, _, ('d, 'e, 's, _, _, _) cons) cons)
     cons)
    cons)
   codec -> 'h * 'l * 'p * 's -> 'f
@@ -313,10 +313,10 @@ val expand_min4 :
 (** Refer to {!expand_min1}. *)
 val expand_min5 :
   ('a * ('b * ('c * ('d * ('e * 'f)))), 'g,
-   ('a, 'h, 'i, 'j, 'k,
-    ('b, 'l, 'm, 'n, 'o,
-     ('c, 'p, 'q, 'r, 's,
-      ('d, 't, 'u, 'v, 'w, ('e, 'f, 'x, 'f, 'y, 'z) cons) cons)
+   ('a, ('b * ('c * ('d * ('e * 'f)))), 'i, _, _,
+    ('b, ('c * ('d * ('e * 'f))), 'm, _, _,
+     ('c, ('d * ('e * 'f)), 'q, _, _,
+      ('d, ('e * 'f), 'u, _, _, ('e, 'f, 'x, _, _, _) cons) cons)
      cons)
     cons)
    cons)

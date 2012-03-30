@@ -124,8 +124,8 @@ let cons_ x f c =
   let c1, c2 = split c in
     (c1.inject x, f c2)
 
-let max_ c = c.inject c.max
-let min_ c = c.inject c.min
+let max_ c = c.max
+let min_ c = c.min
 
 let expand c f = c.extract (f c)
 
