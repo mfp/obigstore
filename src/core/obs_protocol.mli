@@ -157,8 +157,8 @@ val read_checksummed_int : Lwt_io.input_channel -> int option Lwt.t
 val read_checksummed_int64_le : Lwt_io.input_channel -> Int64.t option Lwt.t
 
 (**/**)
-val krange : Obs_data_model.key_range -> Obs_request.Key_range.key_range
+val krange : string Obs_data_model.key_range -> Obs_request.Key_range.key_range
 val crange : Obs_data_model.column_range -> Obs_request.Column_range.column_range
 
-val krange' : Obs_request.Key_range.key_range -> Obs_data_model.key_range
+val krange' : Obs_request.Key_range.key_range -> string Obs_data_model.key_range
 val crange' : Obs_request.Column_range.column_range -> Obs_data_model.column_range

@@ -62,9 +62,9 @@ type 'key range =
     reverse : bool;
   }
 
-type key_range = [ `Continuous of string range | `Discrete of string list ]
+type 'key key_range = [ `Continuous of 'key range | `Discrete of 'key list ]
 
-type simple_column_range = key_range
+type simple_column_range = string key_range
 
 type column_range = [ `All | `Union of simple_column_range list ]
 
@@ -152,7 +152,7 @@ sig
   val get_keys :
     keyspace -> table ->
     ?max_keys:int ->
-    key_range -> string list Lwt.t
+    string key_range -> string list Lwt.t
 
   (** [exists_key ks table k] returns [true] if any column with the given
     * [key] exists in the given [table] within the keyspace [ks]. *)
@@ -166,7 +166,7 @@ sig
   (** Count the keys in the given range: [count_keys tx table range] is
     * functionality equivalent to [get_keys tx table range >|= List.length]
     * but somewhat faster, by a constant factor, and more memory-efficient. *)
-  val count_keys : keyspace -> table -> key_range -> Int64.t Lwt.t
+  val count_keys : keyspace -> table -> string key_range -> Int64.t Lwt.t
 
   (** [get_slice tx table ?max_keys ?max_columns ?decode_timestamp
     *  key_range ?predicate column_range] returns a data slice corresponding
@@ -191,7 +191,7 @@ sig
   val get_slice :
     keyspace -> table ->
     ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
-    key_range -> ?predicate:row_predicate -> column_range -> string slice Lwt.t
+    string key_range -> ?predicate:row_predicate -> column_range -> string slice Lwt.t
 
   (** [get_slice_values tx table key_range ["col1"; "col2"]]
     * returns [Some last_key, l] if at least a key was selected, where [l] is
@@ -203,7 +203,7 @@ sig
   val get_slice_values :
     keyspace -> table ->
     ?max_keys:int ->
-    key_range -> column_name list ->
+    string key_range -> column_name list ->
     (key option * (key * string option list) list) Lwt.t
 
   (** Similar to [get_slice_values], but returning the data and the
@@ -211,7 +211,7 @@ sig
   val get_slice_values_with_timestamps :
     keyspace -> table ->
     ?max_keys:int ->
-    key_range -> column_name list ->
+    string key_range -> column_name list ->
     (key option * (key * (string * Int64.t) option list) list) Lwt.t
 
   (** @return [Some last_column_name, column_list] if any column exists for the
