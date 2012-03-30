@@ -49,7 +49,7 @@ struct
 
   type keyspace = OP.keyspace
   type key = M.Codec.key
-  type key_range = [`Key_range of key range | `Keys of key list]
+  type key_range = [`Continuous of key range | `Discrete of key list]
 
   let table = table_of_string M.name
 
@@ -66,9 +66,9 @@ struct
   let lock = OP.lock
 
   let inject_range = function
-      `Keys l -> Keys (List.map C.encode_to_string l)
-    | `Key_range kr ->
-      Key_range
+      `Discrete l -> `Discrete (List.map C.encode_to_string l)
+    | `Continuous kr ->
+      `Continuous
         { kr with first = Option.map C.encode_to_string kr.first;
                   up_to = Option.map C.encode_to_string kr.up_to; }
 
@@ -92,12 +92,12 @@ struct
                 data)
 
   let get_row ks ?decode_timestamps key =
-    match_lwt get_slice ks ?decode_timestamps (`Keys [key]) All_columns with
+    match_lwt get_slice ks ?decode_timestamps (`Discrete [key]) `All with
         _, kd :: _ -> return (M.row_of_key_data kd)
       | _ -> return None
 
   let get_rows ks ?decode_timestamps key_range =
-    lwt k, l = get_slice ks key_range All_columns in
+    lwt k, l = get_slice ks key_range `All in
       return (k, List.filter_map M.row_of_key_data l)
 
   let get_slice_values ks ?max_keys key_range cols =

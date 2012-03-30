@@ -41,7 +41,7 @@ module Make :
 sig
   type keyspace = OP.keyspace
   type key = M.Codec.key
-  type key_range = [`Key_range of key range | `Keys of key list]
+  type key_range = [`Continuous of key range | `Discrete of key list]
 
   val table : table
 

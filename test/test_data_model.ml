@@ -46,9 +46,9 @@ module Run_test
    end) =
 struct
   let string_of_key_range = function
-      DM.Keys l -> sprintf "Keys %s" (string_of_list (sprintf "%S") l)
-    | DM.Key_range { DM.first; up_to; reverse; } ->
-        sprintf "Key_range { first: %s; up_to: %s; reverse: %b; }"
+      `Discrete l -> sprintf "`Discrete %s" (string_of_list (sprintf "%S") l)
+    | `Continuous { DM.first; up_to; reverse; } ->
+        sprintf "`Continuous { first: %s; up_to: %s; reverse: %b; }"
           (string_of_option (sprintf "%S") first)
           (string_of_option (sprintf "%S") up_to)
           reverse
@@ -81,10 +81,10 @@ struct
     let up_to = match last with
         None -> None
       | Some l -> Some (l ^ "\000")
-    in DM.Key_range { DM.first; up_to; reverse = false; }
+    in `Continuous { DM.first; up_to; reverse = false; }
 
   let rev_key_range ?first ?up_to () =
-    DM.Key_range { DM.first; up_to; reverse = true; }
+    `Continuous { DM.first; up_to; reverse = true; }
 
   let col_range_ ?(reverse = false) ?first ?last ?up_to () =
     let up_to = match up_to with
@@ -92,14 +92,14 @@ struct
       | None -> match last with
             None -> None
           | Some x -> Some (x ^ "\000")
-    in DM.Column_range { DM.first; up_to; reverse; }
+    in `Continuous { DM.first; up_to; reverse; }
 
   let col_range ?reverse ?first ?last ?up_to () =
-    DM.Column_range_union [col_range_ ?reverse ?first ?last ?up_to ()]
+    `Union [col_range_ ?reverse ?first ?last ?up_to ()]
 
-  let columns_ l = DM.Columns l
+  let columns_ l = `Discrete l
 
-  let columns l = DM.Column_range_union [columns_ l]
+  let columns l = `Union [columns_ l]
 
   let put_slice ks tbl l =
     D.read_committed_transaction ks
@@ -299,7 +299,7 @@ struct
 
   let get_keys ks tbl l =
     D.read_committed_transaction ks
-      (fun tx -> D.get_keys tx tbl (DM.Keys l))
+      (fun tx -> D.get_keys tx tbl (`Discrete l))
 
   let test_get_keys_ranges db =
     lwt ks1 = D.register_keyspace db "test_get_keys_ranges" in
@@ -552,7 +552,7 @@ struct
         ] >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_slice tx T.tbl (DM.Keys ["a"; "c"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["a"; "c"]) `All >|=
              aeq_slice
                (Some "c",
                 ["a", "v", [ "k", "kk"; "v", "vv" ];
@@ -560,14 +560,14 @@ struct
            delete tx T.tbl "a" ["v"] >>
            delete tx T.tbl "c" ["k2"] >>
            put tx T.tbl "a" ["v2", "v2"] >>
-           get_slice tx T.tbl (DM.Keys ["a"; "c"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["a"; "c"]) `All >|=
              aeq_slice
                (Some "c",
                 ["a", "v2", [ "k", "kk"; "v2", "v2"; ];
                  "c", "w", [ "w", "ww" ]])) >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_slice tx T.tbl (DM.Keys ["a"; "c"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["a"; "c"]) `All >|=
              aeq_slice
                (Some "c",
                 ["a", "v2", [ "k", "kk"; "v2", "v2"; ];
@@ -578,12 +578,12 @@ struct
 
     let expect tx =
       get_slice tx T.tbl
-        (DM.Keys ["08"; "01"])
+        (`Discrete ["08"; "01"])
         (col_range ~reverse:true ~first:"8" ~up_to:"6" ()) >|=
       aeq_slice (Some "08", ["01", "6", ["7", ""; "6", ""];
                              "08", "6", ["7", ""; "6", ""]]) >>
       get_slice tx T.tbl ~max_columns:1
-        (DM.Keys ["08"; "01"])
+        (`Discrete ["08"; "01"])
         (col_range ~reverse:true ~first:"8" ~up_to:"6" ()) >|=
       aeq_slice (Some "08", ["01", "7", ["7", ""];
                              "08", "7", ["7", ""]])
@@ -599,7 +599,7 @@ struct
 
   let test_get_slice_key_range db =
     lwt ks = D.register_keyspace db "test_get_slice_key_range" in
-    let all = DM.All_columns in
+    let all = `All in
       put_slice ks T.tbl
         [
          "a", ["k", "kk"; "v", "vv"];
@@ -625,7 +625,7 @@ struct
 
   let test_get_slice_key_range_reverse db =
     lwt ks = D.register_keyspace db "test_get_slice_key_range_reverse" in
-    let all = DM.All_columns in
+    let all = `All in
     let expect1 tx =
       let e1 =
         aeq_slice
@@ -662,12 +662,12 @@ struct
            put_slice ks T.tbl [ "a", ["k", "new"] ] >>
            get_slice tx T.tbl
              (rev_key_range ~first:"b" ~up_to:"a" ())
-             DM.All_columns >|=
+             `All >|=
            aeq_slice (Some "a", [ "a", "k", [ "v", "vv"; "k", "new" ] ]))
 
   let test_get_slice_max_keys db =
     lwt ks = D.register_keyspace db "test_get_slice_max_keys" in
-    let all = DM.All_columns in
+    let all = `All in
       put_slice ks T.tbl
         (List.init 100 (fun i -> (sprintf "%03d" i, [ "x", "" ]))) >>
       D.read_committed_transaction ks
@@ -686,7 +686,7 @@ struct
            get_slice tx T.tbl ~max_keys:2 (key_range ~first:"002" ()) all >|=
              aeq_slice
                (Some "003", [ "002", "y", ["y", ""]; "003", "x", ["x", ""]]) >>
-           get_slice tx T.tbl ~max_keys:1 (DM.Keys ["001"; "002"])
+           get_slice tx T.tbl ~max_keys:1 (`Discrete ["001"; "002"])
              (columns ["y"]) >|=
              aeq_slice (Some "002", [ "002", "y", ["y", ""] ])) >>
       D.read_committed_transaction ks
@@ -701,7 +701,7 @@ struct
                (Some "099",
                 List.init 100
                   (fun i -> (sprintf "%03d" i, "x", ["x", ""]))) >>
-           get_slice tx T.tbl ~max_keys:2 (DM.Keys ["003"; "001"; "002"]) all >|=
+           get_slice tx T.tbl ~max_keys:2 (`Discrete ["003"; "001"; "002"]) all >|=
              aeq_slice (Some "002",
                         [ "001", "x", ["x", ""];
                           "002", "x", ["x", ""]]))
@@ -715,7 +715,7 @@ struct
       D.read_committed_transaction ks
         (fun tx ->
            get_slice tx T.tbl ~max_keys:2 ~max_columns:2
-             (key_range ()) DM.All_columns >|=
+             (key_range ()) `All >|=
              aeq_slice
                (Some "01", ["00", "1", ["0", ""; "1", ""];
                             "01", "1", ["0", ""; "1", ""]]) >>
@@ -731,7 +731,7 @@ struct
                             "01", "0", ["0", ""]]) >>
            put_slice ks T.tbl [ "01",  ["10", "a"; "11", "b"] ] >>
            get_slice tx T.tbl ~max_keys:2 ~max_columns:3
-             (key_range ()) DM.All_columns >|=
+             (key_range ()) `All >|=
              aeq_slice
                (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
                             "01", "11", ["0", ""; "10", "a"; "11", "b"]]) >>
@@ -743,12 +743,12 @@ struct
       D.read_committed_transaction ks
         (fun tx ->
            get_slice tx T.tbl ~max_keys:2 ~max_columns:3
-             (key_range ()) DM.All_columns >|=
+             (key_range ()) `All >|=
              aeq_slice
                (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
                             "01", "11", ["0", ""; "10", "a"; "11", "b"]]) >>
            get_slice tx T.tbl ~max_keys:2 ~max_columns:3
-             (DM.Keys ["01"; "00"]) (columns ["2"; "1"; "0"; "10"]) >|=
+             (`Discrete ["01"; "00"]) (columns ["2"; "1"; "0"; "10"]) >|=
              aeq_slice
                (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
                             "01", "10", ["0", ""; "10", "a"]]))
@@ -805,35 +805,35 @@ struct
     let expect tx =
       get_slice tx T.tbl ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
-        (DM.Column_range_union
+        (`Union
            [ col_range_ ~first:"2" ~last:"3" ();
              col_range_ ~first:"7" ~last:"99" () ]) >|=
         aeq_slice (Some "02",
                    ["02", "9", ["2", ""; "3", ""; "7", ""; "8", ""; "9", ""]]) >>
       get_slice tx T.tbl ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
-        (DM.Column_range_union
+        (`Union
            [ col_range_ ~first:"7" ~last:"99" ();
              col_range_ ~first:"2" ~last:"3" (); ]) >|=
         aeq_slice (Some "02",
                    ["02", "9", ["2", ""; "3", ""; "7", ""; "8", ""; "9", ""]]) >>
       get_slice tx T.tbl ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
-        (DM.Column_range_union
+        (`Union
            [ col_range_ ~first:"7" ~last:"99" ();
              columns_ ["3"; "2"] ]) >|=
         aeq_slice (Some "02",
                    ["02", "9", ["2", ""; "3", ""; "7", ""; "8", ""; "9", ""]]) >>
       get_slice tx T.tbl ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
-        (DM.Column_range_union
+        (`Union
            [ col_range_ ~first:"7" ~last:"99" ();
              columns_ ["2"]; columns_ ["3"] ]) >|=
         aeq_slice (Some "02",
                    ["02", "9", ["2", ""; "3", ""; "7", ""; "8", ""; "9", ""]]) >>
       get_slice tx T.tbl ~max_keys:1
         (rev_key_range ~first:"03" ~up_to:"01" ())
-        (DM.Column_range_union
+        (`Union
            [ col_range_ ~first:"7" ~last:"99" ();
              columns_ ["2"]; columns_ ["3"] ]) >|=
         aeq_slice (Some "02",
@@ -853,7 +853,7 @@ struct
                   let get () =
                     get_slice tx T.tbl ~max_keys:1
                       (rev_key_range ~first:"03" ~up_to:"01" ())
-                      (DM.Column_range_union
+                      (`Union
                          [ col_range_ ~first:"7" ~last:"99" ();
                            columns_ ["2"]; columns_ ["3"] ])
                   in
@@ -870,7 +870,7 @@ struct
 
   let test_get_slice_nested_transactions db =
     lwt ks = D.register_keyspace db "test_get_slice_nested_transactions" in
-    let all = DM.All_columns in
+    let all = `All in
       put_slice ks T.tbl
         [
           "a", [ "c1", ""; "c2", "" ];
@@ -911,7 +911,7 @@ struct
       D.read_committed_transaction ks
         (fun tx ->
            put_slice ks T.tbl [ "a", ["00", ""]; "b", [ "10", ""] ] >>
-           get_slice tx T.tbl (key_range ()) DM.All_columns >|=
+           get_slice tx T.tbl (key_range ()) `All >|=
              aeq_slice
                (Some "b", ["a", "1", ["0", ""; "00", ""; "1", ""];
                            "b", "10", ["0", ""; "1", ""; "10", ""]]) >>
@@ -919,7 +919,7 @@ struct
              aeq_slice ~msg:"key range"
                (Some "b", ["a", "00", ["0", ""; "00", ""];
                            "b", "0", ["0", ""]]) >>
-           get_slice tx T.tbl (DM.Keys ["a"; "b"]) (columns ["0"; "00"]) >|=
+           get_slice tx T.tbl (`Discrete ["a"; "b"]) (columns ["0"; "00"]) >|=
              aeq_slice ~msg:"discrete keys"
                (Some "b", ["a", "00", ["0", ""; "00", ""];
                            "b", "0", ["0", ""]]))
@@ -936,9 +936,9 @@ struct
           "k\000", [ "2", "" ] ] >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_slice tx T.tbl (DM.Keys ["k"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["k"]) `All >|=
              aeq_slice (Some "k", [ "k", "\0003", [ "\0003", "" ] ]) >>
-           get_slice tx T.tbl (DM.Keys ["k\000"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["k\000"]) `All >|=
              aeq_slice (Some "k\000", [ "k\000", "2", [ "2", "" ] ]))
 
   let test_get_slice_with_keyspaces db =
@@ -948,7 +948,7 @@ struct
       put_slice ks2 T.tbl [ "b", ["w", "z"] ] >>
       D.read_committed_transaction ks1
         (fun tx ->
-           get_slice tx T.tbl (key_range ()) DM.All_columns >|=
+           get_slice tx T.tbl (key_range ()) `All >|=
            aeq_slice (Some "a", ["a", "x", ["x", "y"]]))
 
   let test_get_slice_predicates db =
@@ -997,19 +997,19 @@ struct
              get_slice tx tbl range
                ~max_columns:1
                ~predicate:(any [all [DM.Column_val ("c", DM.GT "2")]])
-               DM.All_columns >|=
+               `All >|=
                aeq_slice (Some "c", [ "b", "b", ["b", "5"];
                                       "c", "a", ["a", "2"] ]) >>
              get_slice tx tbl range
                ~max_keys:1
                ~max_columns:1
                ~predicate:(any [all [DM.Column_val ("c", DM.GT "2")]])
-               DM.All_columns >|=
+               `All >|=
                aeq_slice (Some "b", [ "b", "b", ["b", "5"] ])
            in
            let expect tx =
              expect tx (key_range ()) (Some (rev_key_range ())) >>
-             expect tx (DM.Keys ["a"; "b"; "x"; "c"; "d"]) None
+             expect tx (`Discrete ["a"; "b"; "x"; "c"; "d"]) None
            in return expect)
     in D.read_committed_transaction ks expect
 
@@ -1021,11 +1021,11 @@ struct
           "b", ["0", "b0"; "3", "b3"];
           "c", ["1", "c1"] ] in
     let assertions tx =
-      D.get_slice_values tx T.tbl (DM.Keys ["a"; "b"]) ["0"; "1"] >|=
+      D.get_slice_values tx T.tbl (`Discrete ["a"; "b"]) ["0"; "1"] >|=
         aeq_slice_columns
           (Some "b", ["a", [Some "a0"; Some "a1"];
                       "b", [Some "b0"; None]]) >>
-      D.get_slice_values tx T.tbl (DM.Keys ["a"; "b"]) ["1"] >|=
+      D.get_slice_values tx T.tbl (`Discrete ["a"; "b"]) ["1"] >|=
         aeq_slice_columns
           (Some "b", ["a", [Some "a1"];
                       "b", [None]]) >>
@@ -1062,7 +1062,7 @@ struct
 
   let test_delete_key db =
     lwt ks = D.register_keyspace db "test_delete_key" in
-    let get_all tx = get_slice tx T.tbl (key_range ()) DM.All_columns in
+    let get_all tx = get_slice tx T.tbl (key_range ()) `All in
       put_slice ks T.tbl
         [ "a", [ "x", ""; "y", ""; "z", "" ];
           "b", [ "x", ""; "y", ""; "z", "" ]] >>
@@ -1079,7 +1079,7 @@ struct
                (Some "a",
                 [ "a", "z", [ "x", ""; "y", ""; "z", "" ]])
            in get_all tx >|= expect_after_del "with key range">>
-              get_slice tx T.tbl (DM.Keys ["a"; "b"]) DM.All_columns >|=
+              get_slice tx T.tbl (`Discrete ["a"; "b"]) `All >|=
                 expect_after_del "with discrete keys") >>
       D.read_committed_transaction ks
         (fun tx ->
@@ -1120,7 +1120,7 @@ struct
            D.exist_keys ks T.t1 ["1"; "2"] >|= aeq [false; true])
 
   let get_all tx tbl =
-    get_slice tx tbl (key_range ()) DM.All_columns
+    get_slice tx tbl (key_range ()) `All
 
   let test_delete_columns db =
     lwt ks = D.register_keyspace db "test_delete_columns" in
@@ -1162,11 +1162,11 @@ struct
                   "b", "z", [ "x", ""; "y", ""; "z", "" ];
                   "c", "z", [ "z", "" ]]) >>
            put_slice ks T.tbl [ "c", ["c", "c"]] >>
-           get_slice tx T.tbl (DM.Keys ["c"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["c"]) `All >|=
              aeq_slice (Some "c", [ "c", "z", ["c", "c"; "z", ""] ])) >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_slice tx T.tbl (DM.Keys ["c"]) DM.All_columns >|=
+           get_slice tx T.tbl (`Discrete ["c"]) `All >|=
              aeq_slice (Some "c", [ "c", "z", ["c", "c"; "z", ""] ]))
 
   let test_lock_recursive db =

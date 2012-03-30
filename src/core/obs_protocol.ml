@@ -256,3 +256,35 @@ let read_checksummed_int64_le ich =
   lwt crc = read_exactly ich 4 in
     if crc32c_of_int64_le n <> crc then return None
     else return (Some n)
+
+open Obs_request
+
+let range = function
+    `Continuous c -> Key_range.Key_range c
+  | `Discrete l -> Key_range.Keys l
+
+let krange = range
+
+let crange = function
+    `All -> Column_range.All_columns
+  | `Union l ->
+      Column_range.Column_range_union
+        (List.map
+           (function
+              | `Discrete l -> Simple_column_range.Columns l
+              | `Continuous r -> Simple_column_range.Column_range r)
+           l)
+
+let krange' = function
+    Key_range.Key_range c -> `Continuous c
+  | Key_range.Keys l -> `Discrete l
+
+let crange' = function
+    Column_range.All_columns -> `All
+  | Column_range.Column_range_union l ->
+      `Union
+        (List.map
+           (function
+              | Simple_column_range.Columns l -> `Discrete l
+              | Simple_column_range.Column_range r -> `Continuous r)
+           l)

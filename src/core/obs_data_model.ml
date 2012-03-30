@@ -63,16 +63,11 @@ type 'key range =
   }
 
 type key_range =
-    Key_range of string range
-  | Keys of string list
+  [ `Continuous of string range | `Discrete of string list ]
 
-type simple_column_range =
-    Columns of string list
-  | Column_range of string range
+type simple_column_range = key_range
 
-type column_range =
-    All_columns
-  | Column_range_union of simple_column_range list
+type column_range = [ `All | `Union of simple_column_range list ]
 
 (** Predicate on the value of a colum *)
 type column_val_rel =
@@ -180,12 +175,12 @@ sig
     *  the columns specified in the [column_range] and satisfy the
     *  [predicate].
     *
-    * If the key range is [Keys l] and the column range is a [Column_range]
+    * If the key range is [`Discrete l] and the column range is a [Column_range]
     * the columns will be returned:
     * * in lexicographic order, if the column range is not reverse
     * * in reverse lexicographic order, if the column range is reverse
     *
-    * For the sake of efficiency, if the key range is [Key_range _], the
+    * For the sake of efficiency, if the key range is [`Continuous _], the
     * columns are selected:
     * * in lexicographic order, if the key range is not [reverse]
     * * in reverse lexicographic order, if the key range is [reverse]
@@ -204,8 +199,8 @@ sig
     * an associative list whose elements are pairs containing the key and a list
     * of value options corresponding to the requested columns (in the order they
     * were given to [get_slice_values]). A key is selected if:
-    * * it is specified in a [Keys l] range
-    * * it exists in the given [Key_range r] range *)
+    * * it is specified in a [`Discrete l] range
+    * * it exists in the given [`Continuous r] range *)
   val get_slice_values :
     keyspace -> table ->
     ?max_keys:int ->

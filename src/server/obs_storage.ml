@@ -1167,7 +1167,7 @@ let fold_over_data tx table f ?first_column acc ~reverse ~first_key ~up_to_key =
                  ~reverse ~first_key ~up_to_key)
 
 let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
-    Keys l ->
+    `Discrete l ->
       with_exists_key tx table
         (fun exists_key ->
            detach_ks_op tx.ks
@@ -1183,7 +1183,7 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
                 in map_f s)
              ())
 
-  | Key_range { first; up_to; reverse; } ->
+  | `Continuous { first; up_to; reverse; } ->
       (* we recover all the keys added in the transaction *)
       let s = TM.find_default S.empty table tx.added_keys in
       let s =
@@ -1234,7 +1234,7 @@ let get_keys tx table ?(max_keys = max_int) range =
       tx table ~max_keys range >|= S.to_list in
   let all_keys_in_wanted_order =
     match range with
-        Key_range { reverse = true; } -> List.rev keys_in_lexicographic_order
+        `Continuous { reverse = true; } -> List.rev keys_in_lexicographic_order
       | _ -> keys_in_lexicographic_order
   in return (List.take max_keys all_keys_in_wanted_order)
 
@@ -1331,7 +1331,7 @@ let rev_filter_map f l =
   in do_rev_filter_map f [] l
 
 let simple_column_range_selector = function
-  | Columns l ->
+  | `Discrete l ->
       if List.length l < 5 then (* TODO: determine threshold *)
         (fun ~buf ~len ->
            List.exists
@@ -1346,7 +1346,7 @@ let simple_column_range_selector = function
                else String.sub buf 0 len
              in S.mem c s)
       end
-  | Column_range { first; up_to; reverse; } ->
+  | `Continuous { first; up_to; reverse; } ->
       let first, up_to = if reverse then (up_to, first) else (first, up_to) in
       let cmp_first = match first with
           None -> (fun ~buf ~len -> true)
@@ -1361,10 +1361,10 @@ let simple_column_range_selector = function
       in (fun ~buf ~len -> cmp_first ~buf ~len && cmp_up_to ~buf ~len)
 
 let column_range_selector = function
-    All_columns -> (fun ~buf ~len -> true)
-  | Column_range_union [] -> (fun ~buf ~len -> false)
-  | Column_range_union [x] -> simple_column_range_selector x
-  | Column_range_union l ->
+    `All -> (fun ~buf ~len -> true)
+  | `Union [] -> (fun ~buf ~len -> false)
+  | `Union [x] -> simple_column_range_selector x
+  | `Union l ->
         let fs = List.map simple_column_range_selector l in
           (fun ~buf ~len -> List.exists (fun f -> f ~buf ~len) fs)
 
@@ -1383,7 +1383,7 @@ let column_range_selector_for_predicate = function
     None -> (fun ~buf ~len -> false)
   | Some _ as x ->
       simple_column_range_selector
-        (Columns (S.to_list (columns_needed_for_predicate x)))
+        (`Discrete (S.to_list (columns_needed_for_predicate x)))
 
 let scmp = Obs_string_util.compare
 
@@ -1430,7 +1430,7 @@ let get_slice_aux_discrete
       (fun k -> not (S.mem k (TM.find_default S.empty table tx.deleted_keys)))
       (List.sort String.compare l) in
   let reverse = match column_range with
-      Column_range_union [Column_range { reverse; _ }] -> reverse
+      `Union [`Continuous { reverse; _ }] -> reverse
     | _ -> false in
   let columns_needed_for_predicate = columns_needed_for_predicate predicate in
   lwt key_data_list, _ =
@@ -1962,7 +1962,7 @@ let get_slice_aux
       ~max_keys ~max_columns ~decode_timestamps
       key_range ?predicate column_range =
   match predicate, key_range with
-      _, Keys l ->
+      _, `Discrete l ->
         short_request
           (max_keys < max_keys_in_short_request ||
            List.length l < max_keys_in_short_request)
@@ -1971,12 +1971,12 @@ let get_slice_aux
                postproc_keydata get_keydata_key ~keep_columnless_keys tx table
                ~max_keys ~max_columns ~decode_timestamps
                l ?predicate column_range)
-    | None, Key_range range ->
+    | None, `Continuous range ->
         get_slice_aux_continuous_no_predicate
           postproc_keydata get_keydata_key ~keep_columnless_keys tx table
           ~max_keys ~max_columns ~decode_timestamps
           range column_range
-    | Some predicate, Key_range range ->
+    | Some predicate, `Continuous range ->
         get_slice_aux_continuous_with_predicate
           postproc_keydata get_keydata_key ~keep_columnless_keys tx table
           ~max_keys ~max_columns ~decode_timestamps
@@ -2020,20 +2020,20 @@ let get_slice tx table
 
   (* if we're being given a list (union) of columns, we restrict the max
    * number of columns to the cardinality of the column set *)
-  let is_columns = function Columns _ -> true | Column_range _ -> false in
+  let is_columns = function `Discrete _ -> true | `Continuous _ -> false in
   let max_columns = match max_columns with
       Some m -> m
     | None -> match column_range with
-        | Column_range_union l when List.for_all is_columns l ->
+        | `Union l when List.for_all is_columns l ->
             let columns =
               List.fold_left
                 (fun s x -> match x with
-                     Columns l -> List.fold_left (fun s c -> S.add c s) s l
-                   | Column_range _ -> s)
+                     `Discrete l -> List.fold_left (fun s c -> S.add c s) s l
+                   | `Continuous _ -> s)
                 S.empty
                 l
             in S.cardinal columns
-        | Column_range_union _ | All_columns -> max_int
+        | `Union _ | `All -> max_int
   in
     Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
     get_slice_aux
@@ -2064,7 +2064,7 @@ let get_slice_values tx table
       postproc_keydata get_keydata_key ~keep_columnless_keys:true tx table
        ~max_keys ~max_columns:(List.length columns)
        ~decode_timestamps:false key_range
-       (Column_range_union [Columns columns])
+       (`Union [`Discrete columns])
   in
     Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
     Obs_load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
@@ -2099,7 +2099,7 @@ let get_slice_values_with_timestamps tx table
       postproc_keydata get_keydata_key ~keep_columnless_keys:true tx table
        ~max_keys ~max_columns:(List.length columns)
        ~decode_timestamps:true key_range
-       (Column_range_union [Columns columns])
+       (`Union [`Discrete columns])
   in
     Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
     Obs_load_stats.record_bytes_rd tx.ks.ks_db.load_stats !bytes_read;
@@ -2110,7 +2110,7 @@ let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
                 key column_range =
   match_lwt
     get_slice tx table ~max_columns ?decode_timestamps
-      (Keys [key]) column_range
+      (`Discrete [key]) column_range
   with
     | (_, { last_column = last_column;
             columns = ((_ :: _ as columns)) } :: _ ) ->
@@ -2118,14 +2118,14 @@ let get_columns tx table ?(max_columns = max_int) ?decode_timestamps
     | _ -> return None
 
 let get_column_values tx table key columns =
-  match_lwt get_slice_values tx table (Keys [key]) columns with
+  match_lwt get_slice_values tx table (`Discrete [key]) columns with
     | (_, (_, l):: _) -> return l
     | _ -> assert false
 
 let get_column tx table key column_name =
   match_lwt
     get_columns tx table key ~decode_timestamps:true ~max_columns:1
-      (Column_range_union [Columns [column_name]])
+      (`Union [`Discrete [column_name]])
   with
       Some (_, c :: _) -> return (Some (c.data, c.timestamp))
     | _ -> return None
@@ -2232,7 +2232,7 @@ let delete_columns tx table key cols =
 let delete_key tx table key =
   match_lwt
     get_columns tx table ~max_columns:max_int ~decode_timestamps:false
-      key All_columns
+      key `All
   with
       None -> return ()
     | Some (_, columns) ->

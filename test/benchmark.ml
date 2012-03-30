@@ -160,8 +160,8 @@ struct
     let rec read_from tx first =
       lwt (last_key, l) =
         D.get_slice tx table_dummy ~max_keys ~max_columns
-          (DM.Key_range { DM.first; up_to = None; reverse = false; })
-          DM.All_columns in
+          (`Continuous { DM.first; up_to = None; reverse = false; })
+          `All in
       let len = List.length l in
         n_keys := !n_keys + len;
         n_columns := !n_columns +
@@ -281,7 +281,7 @@ struct
     lwt dt =
       time (fun () ->
               lwt n = D.count_keys ks table
-                        (DM.Key_range { DM.first= None; up_to = None; reverse = false; })
+                        (`Continuous { DM.first= None; up_to = None; reverse = false; })
               in
                 nkeys := n;
                 return ())
@@ -329,8 +329,8 @@ struct
     lwt dt_no_tx = dt (fun ks f -> f ks) in
     lwt dt_slices =
       let do_read keys =
-        lwt _ = D.get_slice ks table (DM.Keys keys)
-                  (DM.Column_range_union [DM.Columns ["value"]])
+        lwt _ = D.get_slice ks table (`Discrete keys)
+                  (`Union [`Discrete ["value"]])
         in
           return ()
       in

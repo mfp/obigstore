@@ -329,7 +329,7 @@ struct
                raise_lwt Abort_exn)
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.get_keys ks table ?max_keys key_range >>=
+          (fun ks -> D.get_keys ks table ?max_keys (krange' key_range) >>=
                      P.return_keys ?buf c.och ~request_id)
     | Exist_keys { Exist_keys.keyspace; table; keys; } ->
         with_keyspace c keyspace ~request_id
@@ -337,33 +337,34 @@ struct
                      P.return_exist_result ?buf c.och ~request_id)
     | Count_keys { Count_keys.keyspace; table; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.count_keys ks table key_range >>=
+          (fun ks -> D.count_keys ks table (krange' key_range) >>=
                      P.return_key_count ?buf c.och ~request_id)
     | Get_slice { Get_slice.keyspace; table; max_keys; max_columns;
                   decode_timestamps; key_range; predicate; column_range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              D.get_slice ks table ?max_keys ?max_columns ~decode_timestamps
-               key_range ?predicate column_range >>=
+               (krange' key_range) ?predicate (crange' column_range) >>=
              P.return_slice ?buf c.och ~request_id)
     | Get_slice_values { Get_slice_values.keyspace; table; max_keys;
                          key_range; columns; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_slice_values ks table ?max_keys key_range columns >>=
+             D.get_slice_values ks table ?max_keys (krange' key_range) columns >>=
              P.return_slice_values ?buf c.och ~request_id)
     | Get_slice_values_timestamps
         { Get_slice_values_timestamps.keyspace; table; max_keys; key_range; columns; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_slice_values_with_timestamps ks table ?max_keys key_range columns >>=
+             D.get_slice_values_with_timestamps ks table ?max_keys
+               (krange' key_range) columns >>=
              P.return_slice_values_timestamps ?buf c.och ~request_id)
     | Get_columns { Get_columns.keyspace; table; max_columns;
                     decode_timestamps; key; column_range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              D.get_columns ks table ?max_columns ~decode_timestamps
-               key column_range >>=
+               key (crange' column_range) >>=
              P.return_columns ?buf c.och ~request_id)
     | Get_column_values { Get_column_values.keyspace; table; key; columns; } ->
         with_keyspace c keyspace ~request_id
