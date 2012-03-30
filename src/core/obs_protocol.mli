@@ -78,7 +78,7 @@ sig
   val return_key_range_size_on_disk : Int64.t writer
   val return_keys : string list writer
   val return_key_count : Int64.t writer
-  val return_slice : Obs_data_model.slice writer
+  val return_slice : string Obs_data_model.slice writer
   val return_slice_values :
     (Obs_data_model.key option * (Obs_data_model.key * string option list) list)
     writer
@@ -106,7 +106,7 @@ sig
   val read_key_range_size_on_disk : Int64.t reader
   val read_keys : string list reader
   val read_key_count : Int64.t reader
-  val read_slice : Obs_data_model.slice reader
+  val read_slice : string Obs_data_model.slice reader
   val read_slice_values :
     (Obs_data_model.key option * (Obs_data_model.key * string option list) list)
     reader

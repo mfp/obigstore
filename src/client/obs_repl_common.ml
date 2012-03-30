@@ -9,7 +9,7 @@ type req =
   | Dump_local of string option
 
 type generic_range =
-    Range of Range.range
+    Range of string Range.range
   | List of string list
 
 let curr_keyspace : (string * int) option ref = ref None

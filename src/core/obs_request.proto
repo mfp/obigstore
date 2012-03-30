@@ -14,22 +14,22 @@ type column_name = string
 type table = string
   options "ocaml.type" = "Obs_data_model.table, Obs_data_model.table_of_string, Obs_data_model.string_of_table"
 
-type range = 
+type range 'a =
     { 
-      first : opt<string>;
-      up_to : opt<string>;
+      first : opt<'a>;
+      up_to : opt<'a>;
       reverse : bool;
     }
   options "ocaml.type_equals" = "Obs_data_model.range"
 
 type key_range =
-    Key_range range
+    Key_range range<string>
   | Keys [string]
   options "ocaml.type_equals" = "Obs_data_model.key_range"
 
 type simple_column_range =
     Columns [string]
-  | Column_range range
+  | Column_range range<string>
   options "ocaml.type_equals" = "Obs_data_model.simple_column_range"
 
 type column_range =
@@ -107,7 +107,7 @@ message request =
   | List_tables { keyspace : keyspace; }
   | Table_size_on_disk { keyspace : keyspace; table : table }
   | Key_range_size_on_disk { keyspace : keyspace; table : table;
-                             range : range }
+                             range : range<string> }
   | Begin { keyspace : keyspace; tx_type : tx_type; }
   | Commit { keyspace : keyspace; }
   | Abort { keyspace : keyspace; }

@@ -32,13 +32,13 @@ and column_name = string
 
 and timestamp = No_timestamp | Timestamp of Int64.t
 
-type key_data = {
-  key : key;
+type 'key key_data = {
+  key : 'key;
   last_column : string; (** Name of last column in the following list *)
   columns : column list;
 }
 
-type slice = key option * key_data list (** last_key * data *)
+type 'key slice = 'key option * 'key key_data list (** last_key * data *)
 
 (** Range representing elements between [first] (inclusive if reverse is
   * false, exclusive otherwise) and [up_to]
@@ -55,20 +55,20 @@ type slice = key option * key_data list (** last_key * data *)
   * where a side of the inequality disappears if the corresponding value
   * ([first] or [up_to]) is [None].
   * *)
-type range =
+type 'key range =
   {
-    first : string option;
-    up_to : string option;
+    first : 'key option;
+    up_to : 'key option;
     reverse : bool;
   }
 
 type key_range =
-    Key_range of range
+    Key_range of string range
   | Keys of string list
 
 type simple_column_range =
     Columns of string list
-  | Column_range of range
+  | Column_range of string range
 
 type column_range =
     All_columns
@@ -197,7 +197,7 @@ sig
   val get_slice :
     keyspace -> table ->
     ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
-    key_range -> ?predicate:row_predicate -> column_range -> slice Lwt.t
+    key_range -> ?predicate:row_predicate -> column_range -> string slice Lwt.t
 
   (** [get_slice_values tx table key_range ["col1"; "col2"]]
     * returns [Some last_key, l] if at least a key was selected, where [l] is
