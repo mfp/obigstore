@@ -456,3 +456,172 @@ val choice5 :
    [ `A of 'a | `B of 'c | `C of 'e | `D of 'g | `E of 'i ], unit)
   codec
 
+(** {2 Modular interface} *)
+
+module type CODEC =
+sig
+  type tail
+  type internal_key
+  type key
+  val codec : (internal_key, key, tail) codec
+end
+
+module type CODEC_OPS =
+sig
+  include CODEC
+
+  val min_value : key
+  val max_value : key
+  val pp : key -> string
+  val pp_value : key -> string
+  val succ_value : key -> key
+  val pred_value : key -> key
+  val encode : Obs_bytea.t -> key -> unit
+  val encode_to_string : key -> string
+  val decode : string -> off:int -> len:int -> Obs_bytea.t -> key
+  val decode_string : string -> key
+  val expand : ((internal_key, key, tail) codec -> internal_key) -> key
+end
+
+module type LABELED_CODEC =
+sig
+  type key
+  include CODEC with type key := key and type internal_key = key
+
+  val codec : (internal_key, key, tail) codec
+  val label : string
+end
+
+module type PRIMITIVE_CODEC_OPS =
+sig
+  type key
+  include CODEC_OPS with type key := key and type internal_key = key
+end
+
+module Bool : PRIMITIVE_CODEC_OPS with type key = bool
+module Byte : PRIMITIVE_CODEC_OPS with type key = int
+module Positive_int64 : PRIMITIVE_CODEC_OPS with type key = Int64.t
+module Positive_int64_complement : PRIMITIVE_CODEC_OPS with type key = Int64.t
+module Stringz : PRIMITIVE_CODEC_OPS with type key = string
+module Stringz_unsafe : PRIMITIVE_CODEC_OPS with type key = string
+module Self_delimited_string : PRIMITIVE_CODEC_OPS with type key = string
+
+module Custom :
+  functor (C : CODEC) ->
+  functor
+    (O : sig
+           type key
+           val encode : key -> C.key
+           val decode : C.key -> key
+           val pp : key -> string
+         end) ->
+  CODEC_OPS with type key = O.key
+             and type internal_key = C.internal_key
+             and type tail = C.tail
+
+module Tuple2 :
+  functor (C1 : CODEC) ->
+  functor (C2 : CODEC) ->
+  CODEC_OPS
+    with type key = C1.key * C2.key
+     and type internal_key = C1.internal_key * C2.internal_key
+     and type tail = (C1.internal_key, C2.internal_key, C1.key, C2.key, C1.tail,
+                      C2.tail) cons
+
+module Tuple3 :
+  functor (C1 : CODEC) ->
+  functor (C2 : CODEC) ->
+  functor (C3 : CODEC) ->
+  CODEC_OPS
+    with type key = C1.key * C2.key * C3.key
+     and type internal_key =
+                C1.internal_key * (C2.internal_key * C3.internal_key)
+     and type tail =
+                (C1.internal_key, C2.internal_key * C3.internal_key, C1.key,
+                 C2.key * C3.key, C1.tail,
+                 (C2.internal_key, C3.internal_key, C2.key, C3.key, C2.tail,
+                  C3.tail)
+                 cons)
+                cons
+
+module Tuple4 :
+  functor (C1 : CODEC) ->
+  functor (C2 : CODEC) ->
+  functor (C3 : CODEC) ->
+  functor (C4 : CODEC) ->
+  CODEC_OPS
+    with type key = C1.key * C2.key * C3.key * C4.key
+     and type internal_key =
+                C1.internal_key *
+                (C2.internal_key * (C3.internal_key * C4.internal_key))
+     and type tail =
+           (C1.internal_key,
+            C2.internal_key * (C3.internal_key * C4.internal_key),
+            C1.key, C2.key * (C3.key * C4.key), C1.tail,
+            (C2.internal_key, C3.internal_key * C4.internal_key,
+             C2.key, C3.key * C4.key, C2.tail,
+             (C3.internal_key, C4.internal_key, C3.key, C4.key,
+              C3.tail, C4.tail)
+             cons)
+            cons)
+           cons
+
+module Tuple5 :
+  functor (C1 : CODEC) ->
+  functor (C2 : CODEC) ->
+  functor (C3 : CODEC) ->
+  functor (C4 : CODEC) ->
+  functor (C5 : CODEC) ->
+  CODEC_OPS
+    with type key = C1.key * C2.key * C3.key * C4.key * C5.key
+     and type internal_key =
+                C1.internal_key *
+                (C2.internal_key *
+                 (C3.internal_key * (C4.internal_key * C5.internal_key)))
+     and type tail =
+                (C1.internal_key,
+                 C2.internal_key *
+                 (C3.internal_key * (C4.internal_key * C5.internal_key)),
+                 C1.key, C2.key * (C3.key * (C4.key * C5.key)), C1.tail,
+                 (C2.internal_key,
+                  C3.internal_key * (C4.internal_key * C5.internal_key),
+                  C2.key, C3.key * (C4.key * C5.key), C2.tail,
+                  (C3.internal_key, C4.internal_key * C5.internal_key,
+                   C3.key, C4.key * C5.key, C3.tail,
+                   (C4.internal_key, C5.internal_key, C4.key, C5.key,
+                    C4.tail, C5.tail)
+                   cons)
+                  cons)
+                 cons)
+                cons
+
+module Choice2 :
+  functor (C1 : LABELED_CODEC) ->
+  functor (C2 : LABELED_CODEC) ->
+  PRIMITIVE_CODEC_OPS
+    with type key = [ `A of C1.key | `B of C2.key ]
+
+module Choice3 :
+  functor (C1 : LABELED_CODEC) ->
+  functor (C2 : LABELED_CODEC) ->
+  functor (C3 : LABELED_CODEC) ->
+  PRIMITIVE_CODEC_OPS
+    with type key = [ `A of C1.key | `B of C2.key | `C of C3.key]
+
+module Choice4 :
+  functor (C1 : LABELED_CODEC) ->
+  functor (C2 : LABELED_CODEC) ->
+  functor (C3 : LABELED_CODEC) ->
+  functor (C4 : LABELED_CODEC) ->
+  PRIMITIVE_CODEC_OPS
+    with type key = [ `A of C1.key | `B of C2.key | `C of C3.key | `D of C4.key]
+
+module Choice5 :
+  functor (C1 : LABELED_CODEC) ->
+  functor (C2 : LABELED_CODEC) ->
+  functor (C3 : LABELED_CODEC) ->
+  functor (C4 : LABELED_CODEC) ->
+  functor (C5 : LABELED_CODEC) ->
+  PRIMITIVE_CODEC_OPS
+    with type key = [ `A of C1.key | `B of C2.key | `C of C3.key | `D of C4.key
+                    | `E of C5.key]

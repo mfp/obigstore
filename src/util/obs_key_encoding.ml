@@ -511,3 +511,256 @@ let choice5 lbl1 c1 lbl2 c2 lbl3 c3 lbl4 c4 lbl5 c5 =
     pp = _pp5 lbl1 c1 lbl2 c2 lbl3 c3 lbl4 c4 lbl5 c5;
     succ = _lift5 _succ c1 c2 c3 c4 c5; pred = _lift5 _pred c1 c2 c3 c4 c5;
   }
+
+module type CODEC =
+sig
+  type tail
+  type internal_key
+  type key
+
+  val codec : (internal_key, key, tail) codec
+end
+
+module type CODEC_OPS =
+sig
+  include CODEC
+
+  val min_value : key
+  val max_value : key
+  val pp : key -> string
+  val pp_value : key -> string
+
+  val succ_value : key -> key
+  val pred_value : key -> key
+
+  val encode : Obs_bytea.t -> key -> unit
+  val encode_to_string : key -> string
+
+  val decode : string -> off:int -> len:int -> Obs_bytea.t -> key
+  val decode_string : string -> key
+
+  val expand : ((internal_key, key, tail) codec -> internal_key) -> key
+end
+
+module type PRIMITIVE_CODEC_OPS =
+sig
+  type key
+  include CODEC_OPS with type key := key and type internal_key = key
+end
+
+module OPS(C : CODEC) =
+struct
+  include C
+
+  let min_value = min_value codec
+  let max_value = max_value codec
+  let pp = pp codec
+  let pp_value = pp
+  let succ_value = succ_value codec
+  let pred_value = pred_value codec
+  let encode = encode codec
+  let encode_to_string = encode_to_string codec
+  let decode = decode codec
+  let decode_string = decode_string codec
+
+  let expand f = expand f codec
+end
+
+module Bool =
+  OPS(struct
+        type tail = unit
+        type internal_key = bool
+        type key = bool
+        let codec = bool
+      end)
+
+module Byte =
+  OPS(struct
+        type tail = unit
+        type internal_key = int
+        type key = int
+        let codec = byte
+      end)
+
+module Positive_int64 =
+  OPS(struct
+    type tail = unit
+    type internal_key = Int64.t
+    type key = Int64.t
+    let codec = positive_int64
+  end)
+
+module Positive_int64_complement =
+  OPS(struct
+        type tail = unit
+        type internal_key = Int64.t
+        type key = Int64.t
+        let codec = positive_int64
+      end)
+
+module Stringz =
+  OPS(struct
+        type tail = unit
+        type internal_key = string
+        type key = string
+        let codec = stringz
+      end)
+
+module Stringz_unsafe =
+  OPS(struct
+        type tail = unit
+        type internal_key = string
+        type key = string
+        let codec = stringz
+      end)
+
+module Self_delimited_string =
+  OPS(struct
+        type tail = unit
+        type internal_key = string
+        type key = string
+        let codec = self_delimited_string
+      end)
+
+module Custom
+    (C : CODEC)
+    (O : sig
+       type key
+       val encode : key -> C.key
+       val decode : C.key -> key
+       val pp : key -> string
+     end) =
+OPS(struct
+      open O
+      type key = O.key
+      type internal_key = C.internal_key
+      type tail = C.tail
+      let codec = custom ~encode ~decode ~pp C.codec
+    end)
+
+module Tuple2(C1 : CODEC)(C2 : CODEC) =
+  OPS(struct
+        type key = C1.key * C2.key
+        type internal_key = C1.internal_key * C2.internal_key
+        type tail =
+             (C1.internal_key, C2.internal_key, C1.key, C2.key, C1.tail, C2.tail) cons
+        let codec = tuple2 C1.codec C2.codec
+      end)
+
+module Tuple3(C1 : CODEC)(C2 : CODEC)(C3 : CODEC) =
+  OPS(struct
+        type key = C1.key * C2.key * C3.key
+        type internal_key = C1.internal_key * (C2.internal_key * C3.internal_key)
+        type tail =
+          (C1.internal_key, C2.internal_key * C3.internal_key, C1.key,
+           C2.key * C3.key, C1.tail,
+           (C2.internal_key, C3.internal_key, C2.key, C3.key, C2.tail,
+            C3.tail)
+           cons)
+          cons
+
+        let codec = tuple3 C1.codec C2.codec C3.codec
+      end)
+
+module Tuple4(C1 : CODEC)(C2 : CODEC)(C3 : CODEC)(C4 : CODEC) =
+  OPS(struct
+        type key = C1.key * C2.key * C3.key * C4.key
+        type internal_key = C1.internal_key *
+                            (C2.internal_key *
+                             (C3.internal_key * C4.internal_key))
+        type tail =
+          (C1.internal_key,
+           C2.internal_key * (C3.internal_key * C4.internal_key), C1.key,
+           C2.key * (C3.key * C4.key), C1.tail,
+           (C2.internal_key, C3.internal_key * C4.internal_key, C2.key,
+            C3.key * C4.key, C2.tail,
+            (C3.internal_key, C4.internal_key, C3.key, C4.key, C3.tail,
+             C4.tail)
+            cons)
+           cons)
+          cons
+
+        let codec = tuple4 C1.codec C2.codec C3.codec C4.codec
+      end)
+
+
+module Tuple5(C1 : CODEC)(C2 : CODEC)(C3 : CODEC)(C4 : CODEC)(C5 : CODEC) =
+  OPS(struct
+        type key = C1.key * C2.key * C3.key * C4.key * C5.key
+        type internal_key = C1.internal_key *
+                            (C2.internal_key *
+                             (C3.internal_key *
+                              (C4.internal_key * C5.internal_key)))
+        type tail =
+          (C1.internal_key,
+           C2.internal_key *
+           (C3.internal_key * (C4.internal_key * C5.internal_key)),
+           C1.key, C2.key * (C3.key * (C4.key * C5.key)), C1.tail,
+           (C2.internal_key,
+            C3.internal_key * (C4.internal_key * C5.internal_key),
+            C2.key, C3.key * (C4.key * C5.key), C2.tail,
+            (C3.internal_key, C4.internal_key * C5.internal_key, C3.key,
+             C4.key * C5.key, C3.tail,
+             (C4.internal_key, C5.internal_key, C4.key, C5.key, C4.tail,
+              C5.tail)
+             cons)
+            cons)
+           cons)
+          cons
+
+        let codec = tuple5 C1.codec C2.codec C3.codec C4.codec C5.codec
+      end)
+
+module type LABELED_CODEC =
+sig
+  type key
+  include CODEC with type key := key and type internal_key = key
+
+  val codec : (internal_key, key, tail) codec
+  val label : string
+end
+
+module Choice2(C1 : LABELED_CODEC)(C2 : LABELED_CODEC) =
+  OPS(struct
+        type key = [`A of C1.key | `B of C2.key]
+        type internal_key = key
+        type tail = unit
+
+        let codec = choice2 C1.label C1.codec C2.label C2.codec
+      end)
+
+module Choice3(C1 : LABELED_CODEC)(C2 : LABELED_CODEC)(C3 : LABELED_CODEC) =
+  OPS(struct
+        type key = [`A of C1.key | `B of C2.key | `C of C3.key]
+        type internal_key = key
+        type tail = unit
+
+        let codec = choice3 C1.label C1.codec C2.label C2.codec C3.label C3.codec
+      end)
+
+module Choice4
+    (C1 : LABELED_CODEC)(C2 : LABELED_CODEC)
+    (C3 : LABELED_CODEC)(C4 : LABELED_CODEC) =
+  OPS(struct
+        type key = [`A of C1.key | `B of C2.key | `C of C3.key | `D of C4.key]
+        type internal_key = key
+        type tail = unit
+
+        let codec = choice4
+                      C1.label C1.codec C2.label C2.codec C3.label C3.codec
+                      C4.label C4.codec
+      end)
+
+module Choice5
+    (C1 : LABELED_CODEC)(C2 : LABELED_CODEC)
+    (C3 : LABELED_CODEC)(C4 : LABELED_CODEC)(C5 : LABELED_CODEC) =
+  OPS(struct
+        type key = [`A of C1.key | `B of C2.key | `C of C3.key | `D of C4.key
+                   | `E of C5.key]
+        type internal_key = key
+        type tail = unit
+
+        let codec = choice5
+                      C1.label C1.codec C2.label C2.codec C3.label C3.codec
+                      C4.label C4.codec C5.label C5.codec
+      end)
