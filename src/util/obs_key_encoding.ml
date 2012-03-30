@@ -312,8 +312,8 @@ let positive_int64 =
       off := !off + 8;
       r in
 
-  let succ n = if n = Int64.max_int then n else Int64.add n 1L in
-  let pred n = if n = 0L then n else Int64.sub n 1L in
+  let succ n = if n = Int64.max_int then n else Int64.succ n in
+  let pred n = if n = 0L then n else Int64.pred n in
 
     { min = 0L; max = Int64.max_int; encode; decode; succ; pred;
       inject = id; extract = id; pp = Int64.to_string; parts = ();
@@ -334,8 +334,8 @@ let positive_int64_complement =
       r
   in
     { positive_int64 with
-          succ = (fun x -> if x = 0L then x else Int64.pred x);
-          pred = (fun x -> if x = Int64.max_int then x else Int64.succ x);
+          succ = positive_int64.pred;
+          pred = positive_int64.succ;
           min = Int64.max_int; max = 0L; encode; decode; }
 
 let tuple2 c1 c2 : (_, _, (_, _, _, _, _, _) cons) codec =
