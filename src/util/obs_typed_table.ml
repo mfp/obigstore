@@ -40,6 +40,28 @@ struct
   let row_of_key_data d = Some d
 end
 
+let key_range_with_prefix c ?starting_with p =
+  let open Obs_key_encoding in
+  let first = match starting_with with
+      None -> Some (expand (p min_suffix) c);
+    | Some key -> key
+  in
+    `Continuous
+      { first; reverse = false;
+        up_to = Some (succ_value c (expand (p max_suffix) c));
+      }
+
+let rev_key_range_with_prefix c ?starting_with p =
+  let open Obs_key_encoding in
+  let first = match starting_with with
+      None -> Some (succ_value c (expand (p max_suffix) c));
+    | Some key -> Some (succ_value c key)
+  in
+    `Continuous
+      { first; reverse = true;
+        up_to = Some (expand (p min_suffix) c);
+      }
+
 module Make
   (M : TABLE_CONFIG)
   (OP : Obs_data_model.S) =
@@ -50,6 +72,12 @@ struct
   type keyspace = OP.keyspace
   type key = M.Codec.key
   type key_range = [`Continuous of key range | `Discrete of key list]
+
+  let key_range_with_prefix ?starting_with p =
+    key_range_with_prefix C.codec ?starting_with p
+
+  let rev_key_range_with_prefix ?starting_with p =
+    rev_key_range_with_prefix C.codec ?starting_with p
 
   let table = table_of_string M.name
 

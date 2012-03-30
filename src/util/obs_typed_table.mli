@@ -35,15 +35,40 @@ sig
   val row_of_key_data : 'a -> 'a option
 end
 
+val key_range_with_prefix :
+  ('a, 'b, 'c) Obs_key_encoding.codec ->
+  ?starting_with:'b option ->
+  ((('d, _, _) Obs_key_encoding.codec -> 'd) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) -> 'b key_range
+
+val rev_key_range_with_prefix :
+  ('a, 'b, 'c) Obs_key_encoding.codec ->
+  ?starting_with:'b ->
+  ((('d, _, _) Obs_key_encoding.codec -> 'd) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) -> 'b key_range
+
 module Make :
   functor (M : TABLE_CONFIG) ->
   functor (OP : Obs_data_model.S) ->
 sig
+  open M.Codec
   type keyspace = OP.keyspace
   type key = M.Codec.key
   type key_range = [`Continuous of key range | `Discrete of key list]
 
   val table : table
+
+  val key_range_with_prefix :
+    ?starting_with:key option ->
+    ((('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+     (internal_key, key, M.Codec.tail) Obs_key_encoding.codec ->
+     internal_key) -> key_range
+
+  val rev_key_range_with_prefix :
+    ?starting_with:key ->
+    ((('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+     (internal_key, key, tail) Obs_key_encoding.codec -> internal_key) ->
+    key_range
 
   val size_on_disk : keyspace -> Int64.t Lwt.t
 
