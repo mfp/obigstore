@@ -195,7 +195,7 @@ open K
 
 let test_min () =
   let check c expected =
-    assert_equal ~printer:(K.pp c) expected (min c) in
+    assert_equal ~printer:(K.pp c) expected (min_value c) in
   let check_ints c min =
     check c min;
     check (c *** c) (min, min);
@@ -218,7 +218,7 @@ let test_min () =
 
 let test_max () =
   let check c expected =
-    assert_equal ~printer:(pp c) expected (max c) in
+    assert_equal ~printer:(pp c) expected (max_value c) in
   let check_ints c m =
     check c m;
     check (c *** c) (m, m);
@@ -235,9 +235,9 @@ let test_max () =
     check_ints byte 255;
     check_ints positive_int64 Int64.max_int;
     check_ints positive_int64_complement Int64.max_int;
-    check_strings self_delimited_string (max stringz);
-    check_strings stringz (max stringz);
-    check_strings stringz_unsafe (max stringz)
+    check_strings self_delimited_string (max_value stringz);
+    check_strings stringz (max_value stringz);
+    check_strings stringz_unsafe (max_value stringz)
 
 let test_lower () =
   let check c l =
@@ -302,7 +302,7 @@ let test_upper () =
          assert_equal ~printer:(K.pp c) expected (f c orig))
       l in
   let check_ints c (!!) =
-    let m = K.max c in
+    let m = K.max_value c in
       check (c *** c)
         [
           upper1, (!!0, m), (!!0, !!1);
@@ -337,7 +337,7 @@ let test_upper () =
           upper4, (!!1, !!255, !!3, !!4, m), (!!1, !!255, !!3, !!4, !!5);
         ] in
   let check_strings c =
-    let m = K.max c in
+    let m = K.max_value c in
       check (c *** c) [ upper1, ("1", m), ("1", "2"); ];
       check (tuple3 c c c)
         [
@@ -360,7 +360,7 @@ let test_expand_max () =
          assert_equal ~printer:(K.pp c) expected (f c t))
       l in
   let check_ints c (!!) =
-    let m = K.max c in
+    let m = K.max_value c in
       check expand_max1 (c *** c)
         [ (!!0, m), !!0; (!!1, m), !!1; ];
       check expand_max1 (tuple3 c c c)
@@ -380,7 +380,7 @@ let test_expand_max () =
           (!!1, !!2, m, m, m)
           (expand (part !!1 @@ part !!2 @@ max_suffix) c5) in
   let check_strings c =
-    let m = K.max c in
+    let m = K.max_value c in
       check expand_max1 (c *** c)
         [ ("1", m), "1"; ("2", m), "2"; ];
       check expand_max2 (tuple3 c c c)
@@ -405,7 +405,7 @@ let test_expand_min () =
          assert_equal ~printer:(K.pp c) expected (f c t))
       l in
   let check_ints c (!!) =
-    let m = K.min c in
+    let m = K.min_value c in
       check expand_min1 (c *** c)
         [ (!!0, m), !!0; (!!1, m), !!1; ];
       check expand_min1 (tuple3 c c c)
@@ -426,7 +426,7 @@ let test_expand_min () =
           (expand (part !!1 @@ part !!2 @@ min_suffix) c5)
   in
   let check_strings c =
-    let m = K.min c in
+    let m = K.min_value c in
       check expand_min1 (c *** c)
         [ ("1", m), "1"; ("2", m), "2"; ];
       check expand_min2 (tuple3 c c c)

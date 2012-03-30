@@ -100,11 +100,12 @@ let upper1 (c : ('a * 'b, _, _) codec) ((x : 'a), (y : 'b)) =
   let c1, c2 = split c in
     (x, c2.max)
 
-let pp c x = c.pp x
-let min c = c.extract c.min
-let max c = c.extract c.max
-let succ c x = c.extract (c.succ (c.inject x))
-let pred c x = c.extract (c.pred (c.inject x))
+let pp_value c x = c.pp x
+let pp = pp_value
+let min_value c = c.extract c.min
+let max_value c = c.extract c.max
+let succ_value c x = c.extract (c.succ (c.inject x))
+let pred_value c x = c.extract (c.pred (c.inject x))
 
 let lift f c x = c.extract (f c (c.inject x))
 
@@ -411,8 +412,8 @@ let _pp2 lbl1 c1 lbl2 c2 = function
 
 type inj_func = { injected : 'a 'b 'c. ('a, 'b, 'c) codec -> 'b -> 'b }
 
-let _succ = { injected = succ }
-let _pred = { injected = pred }
+let _succ = { injected = succ_value }
+let _pred = { injected = pred_value }
 
 let _lift2 f c1 c2 = function
     `A x -> `A (f.injected c1 x)

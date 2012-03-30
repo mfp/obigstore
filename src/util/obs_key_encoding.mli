@@ -72,15 +72,19 @@ val decode_string : (_, 'a, _) codec -> string -> 'a
 
 (** {2 Operations on values.} *)
 
+val pp_value : (_, 'a, _) codec -> 'a -> string
+
+(** Synomym for {!!pp_value}. *)
 val pp : (_, 'a, _) codec -> 'a -> string
-val min : (_, 'a, _) codec -> 'a
-val max : (_, 'a, _) codec -> 'a
+
+val min_value : (_, 'a, _) codec -> 'a
+val max_value : (_, 'a, _) codec -> 'a
 
 (** Saturating successor: returns the max if the value is already the max. *)
-val succ : (_, 'a, _) codec -> 'a -> 'a
+val succ_value : (_, 'a, _) codec -> 'a -> 'a
 
 (** Saturating predecessor: returns the min if the value is already the min. *)
-val pred : (_, 'a, _) codec -> 'a -> 'a
+val pred_value : (_, 'a, _) codec -> 'a -> 'a
 
 (** {3 Operations with immutable prefix} *)
 
