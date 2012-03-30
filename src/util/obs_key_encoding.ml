@@ -412,7 +412,7 @@ let _pp2 lbl1 c1 lbl2 c2 = function
 type inj_func = { injected : 'a 'b 'c. ('a, 'b, 'c) codec -> 'b -> 'b }
 
 let _succ = { injected = succ }
-let _pred = { injected = succ }
+let _pred = { injected = pred }
 
 let _lift2 f c1 c2 = function
     `A x -> `A (f.injected c1 x)
