@@ -211,7 +211,7 @@ let test_min () =
     check bool false;
     check_ints byte 0;
     check_ints positive_int64 Int64.zero;
-    check_ints positive_int64_complement Int64.zero;
+    check_ints positive_int64_complement Int64.max_int;
     check_strings self_delimited_string;
     check_strings stringz;
     check_strings stringz_unsafe
@@ -234,7 +234,7 @@ let test_max () =
     check bool true;
     check_ints byte 255;
     check_ints positive_int64 Int64.max_int;
-    check_ints positive_int64_complement Int64.max_int;
+    check_ints positive_int64_complement Int64.zero;
     check_strings self_delimited_string (max_value stringz);
     check_strings stringz (max_value stringz);
     check_strings stringz_unsafe (max_value stringz)
@@ -246,46 +246,48 @@ let test_lower () =
          assert_equal ~printer:(K.pp c) expected (f c orig))
       l in
   let check_ints c (!!) =
-    check (c *** c)
-      [
-        lower1, (!!0, !!0), (!!0, !!1);
-        lower1, (!!0, !!0), (!!0, !!255);
-        lower1, (!!42, !!0), (!!42, !!255);
-      ];
-    check (tuple3 c c c)
-      [
-        lower1, (!!1, !!0, !!0), (!!1, !!2, !!3);
-        lower1, (!!1, !!0, !!0), (!!1, !!255, !!0);
-        lower2, (!!1, !!2, !!0), (!!1, !!2, !!3);
-        lower2, (!!1, !!255, !!0), (!!1, !!255, !!3);
-      ];
-    check (tuple4 c c c c)
-      [
-        lower1, (!!1, !!0, !!0, !!0), (!!1, !!2, !!3, !!4);
-        lower1, (!!1, !!0, !!0, !!0), (!!1, !!255, !!3, !!4);
-        lower2, (!!1, !!2, !!0, !!0), (!!1, !!2, !!3, !!4);
-        lower2, (!!1, !!255, !!0, !!0), (!!1, !!255, !!3, !!4);
-        lower3, (!!1, !!2, !!3, !!0), (!!1, !!2, !!3, !!4);
-        lower3, (!!1, !!255, !!3, !!0), (!!1, !!255, !!3, !!4);
-      ];
-    check (tuple5 c c c c c)
-      [
-        lower1, (!!1, !!0, !!0, !!0, !!0), (!!1, !!2, !!3, !!4, !!5);
-        lower1, (!!1, !!0, !!0, !!0, !!0), (!!1, !!255, !!3, !!4, !!5);
-        lower2, (!!1, !!2, !!0, !!0, !!0), (!!1, !!2, !!3, !!4, !!5);
-        lower2, (!!1, !!255, !!0, !!0, !!0), (!!1, !!255, !!3, !!4, !!5);
-        lower3, (!!1, !!2, !!3, !!0, !!0), (!!1, !!2, !!3, !!4, !!5);
-        lower3, (!!1, !!255, !!3, !!0, !!0), (!!1, !!255, !!3, !!4, !!5);
-        lower4, (!!1, !!2, !!3, !!4, !!0), (!!1, !!2, !!3, !!4, !!5);
-        lower4, (!!1, !!255, !!3, !!4, !!0), (!!1, !!255, !!3, !!4, !!5);
-      ] in
+    let m = K.min_value c in
+      check (c *** c)
+        [
+          lower1, (!!0, m), (!!0, !!1);
+          lower1, (!!0, m), (!!0, !!255);
+          lower1, (!!42, m), (!!42, !!255);
+        ];
+      check (tuple3 c c c)
+        [
+          lower1, (!!1, m, m), (!!1, !!2, !!3);
+          lower1, (!!1, m, m), (!!1, !!255, !!0);
+          lower2, (!!1, !!2, m), (!!1, !!2, !!3);
+          lower2, (!!1, !!255, m), (!!1, !!255, !!3);
+        ];
+      check (tuple4 c c c c)
+        [
+          lower1, (!!1, m, m, m), (!!1, !!2, !!3, !!4);
+          lower1, (!!1, m, m, m), (!!1, !!255, !!3, !!4);
+          lower2, (!!1, !!2, m, m), (!!1, !!2, !!3, !!4);
+          lower2, (!!1, !!255, m, m), (!!1, !!255, !!3, !!4);
+          lower3, (!!1, !!2, !!3, m), (!!1, !!2, !!3, !!4);
+          lower3, (!!1, !!255, !!3, m), (!!1, !!255, !!3, !!4);
+        ];
+      check (tuple5 c c c c c)
+        [
+          lower1, (!!1, m, m, m, m), (!!1, !!2, !!3, !!4, !!5);
+          lower1, (!!1, m, m, m, m), (!!1, !!255, !!3, !!4, !!5);
+          lower2, (!!1, !!2, m, m, m), (!!1, !!2, !!3, !!4, !!5);
+          lower2, (!!1, !!255, m, m, m), (!!1, !!255, !!3, !!4, !!5);
+          lower3, (!!1, !!2, !!3, m, m), (!!1, !!2, !!3, !!4, !!5);
+          lower3, (!!1, !!255, !!3, m, m), (!!1, !!255, !!3, !!4, !!5);
+          lower4, (!!1, !!2, !!3, !!4, m), (!!1, !!2, !!3, !!4, !!5);
+          lower4, (!!1, !!255, !!3, !!4, m), (!!1, !!255, !!3, !!4, !!5);
+        ] in
   let check_strings c =
-    check (c *** c) [ lower1, ("1", ""), ("1", "2"); ];
-    check (tuple3 c c c)
-      [
-        lower1, ("1", "", ""), ("1", "2", "3");
-        lower2, ("1", "2", ""), ("1", "2", "3");
-      ]
+    let m = K.min_value c in
+      check (c *** c) [ lower1, ("1", m), ("1", "2"); ];
+      check (tuple3 c c c)
+        [
+          lower1, ("1", m, m), ("1", "2", "3");
+          lower2, ("1", "2", m), ("1", "2", "3");
+        ]
   in
     check (bool *** bool) [ lower1, (true, false), (true, true) ];
     check_ints byte (fun x -> x);
@@ -393,7 +395,6 @@ let test_expand_max () =
       [ (false, true), false; (true, true), true; ];
     check_ints byte (fun x -> x);
     check_ints positive_int64 Int64.of_int;
-    check_ints positive_int64_complement Int64.of_int;
     check_strings self_delimited_string;
     check_strings stringz;
     check_strings stringz_unsafe
@@ -439,7 +440,6 @@ let test_expand_min () =
       [ (false, false), false; (true, false), true; ];
     check_ints byte (fun x -> x);
     check_ints positive_int64 Int64.of_int;
-    check_ints positive_int64_complement Int64.of_int;
     check_strings self_delimited_string;
     check_strings stringz;
     check_strings stringz_unsafe

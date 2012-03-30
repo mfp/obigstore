@@ -333,7 +333,10 @@ let positive_int64_complement =
       off := !off + 8;
       r
   in
-    { positive_int64 with encode; decode }
+    { positive_int64 with
+          succ = (fun x -> if x = 0L then x else Int64.pred x);
+          pred = (fun x -> if x = Int64.max_int then x else Int64.succ x);
+          min = Int64.max_int; max = 0L; encode; decode; }
 
 let tuple2 c1 c2 : (_, _, (_, _, _, _, _, _) cons) codec =
   {
