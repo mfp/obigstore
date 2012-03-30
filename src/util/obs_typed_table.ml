@@ -68,6 +68,7 @@ module Make
 struct
   open OP
   module C = M.Codec
+  module Codec = M.Codec
 
   type keyspace = OP.keyspace
   type key = M.Codec.key

@@ -52,6 +52,12 @@ module Make :
   functor (OP : Obs_data_model.S) ->
 sig
   open M.Codec
+
+  module Codec : Obs_key_encoding.CODEC_OPS
+    with type key = M.Codec.key
+     and type internal_key = M.Codec.internal_key
+     and type tail = M.Codec.tail
+
   type keyspace = OP.keyspace
   type key = M.Codec.key
   type key_range = [`Continuous of key range | `Discrete of key list]
