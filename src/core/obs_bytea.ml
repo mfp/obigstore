@@ -1,6 +1,6 @@
 
 (*  Copyright 1999 Institut National de Recherche en Informatique et   *)
-(*  en Automatique, 2011 Mauricio Fernandez                            *)
+(*  en Automatique, 2011-2012 Mauricio Fernandez                            *)
 
 (* the original carried this copyright notice: *)
 
