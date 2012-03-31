@@ -5,10 +5,5 @@ OBJECTS[] =
   obs_dump
   obs_util
   obs_protocol_client
-  obs_repl_common
-  obs_repl_gram
-  obs_repl_lex
-
-OCamlGeneratedFiles(obs_repl_gram.ml obs_repl_gram.mli obs_repl_lex.ml)
 
 OCamlLibrary(obigstore_client, $(OBJECTS))

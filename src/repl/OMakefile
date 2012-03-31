@@ -1,0 +1,11 @@
+OCAMLINCLUDES += ../core
+OCAML_LIBS[] += ../obigstore_core
+
+OBJECTS[] =
+  obs_repl_common
+  obs_repl_gram
+  obs_repl_lex
+
+OCamlGeneratedFiles(obs_repl_gram.ml obs_repl_gram.mli obs_repl_lex.ml)
+
+OCamlLibrary(obigstore_repl, $(OBJECTS))

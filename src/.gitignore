@@ -4,6 +4,6 @@
 /ob_repl
 /toplevel
 /core/obs_request.ml
-/client/obs_repl_gram.ml
-/client/obs_repl_gram.mli
-/client/obs_repl_lex.ml
+/repl/obs_repl_gram.ml
+/repl/obs_repl_gram.mli
+/repl/obs_repl_lex.ml
