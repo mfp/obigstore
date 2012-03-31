@@ -239,6 +239,45 @@ let test_max () =
     check_strings stringz (max_value stringz);
     check_strings stringz_unsafe (max_value stringz)
 
+let test_succ () =
+  let check c l =
+    List.iter
+      (fun (expected, v) -> assert_equal ~printer:(pp c) expected (succ_value c v))
+      l
+  in
+    check bool [true, false; true, true];
+    check byte [ 1, 0; 255, 254; 255, 255 ];
+    check positive_int64
+      [ 1L, 0L; Int64.max_int, Int64.pred Int64.max_int;
+        Int64.max_int, Int64.max_int ];
+    check positive_int64_complement [ 0L, 1L; 0L, 0L; ];
+    check self_delimited_string [ "\x00", ""; "a\x00", "a"; "\x00\x00", "\x00"; ];
+    check stringz [ "\x01", ""; "a\x01", "a"; "\x01\x01", "\x01"; ];
+    check (byte *** byte)
+      [ (255, 255), (255, 255); (0, 1), (0, 0); (1, 0), (0, 255);
+        (1, 3), (1, 2);
+      ]
+
+let test_pred () =
+  let check c l =
+    List.iter
+      (fun (expected, v) -> assert_equal ~printer:(pp c) expected (pred_value c v))
+      l
+  in
+    check bool [false, true; false, false];
+    check byte [ 0, 1; 254, 255; 0, 0 ];
+    check positive_int64
+      [ 0L, 1L; Int64.pred Int64.max_int, Int64.max_int; 0L, 0L ];
+    check positive_int64_complement
+      [ 1L, 0L; 2L, 1L; Int64.max_int, Int64.max_int ];
+    check self_delimited_string
+      [ "a", "b"; "", "\x00"; "a", "a\x00"; "", ""; "\x00", "\x00\x00"; ];
+    check stringz [ "a", "b"; "", "\x01"; "a", "a\x01"; "", ""; "\x01", "\x01\x01"; ];
+    check (byte *** byte)
+      [ (0, 0), (0, 0); (0, 0), (0, 1); (0, 255), (1, 0);
+        (1, 2), (1, 3);
+      ]
+
 let test_lower () =
   let check c l =
     List.iter
@@ -462,8 +501,8 @@ let tests =
     "choice5" >:: test_choice5;
     "min" >:: test_min;
     "max" >:: test_max;
-    (* "succ" >:: test_succ; *)
-    (* "pred" >:: test_pred; *)
+    "succ" >:: test_succ;
+    "pred" >:: test_pred;
     "lower" >:: test_lower;
     "upper" >:: test_upper;
     "expand_max" >:: test_expand_max;

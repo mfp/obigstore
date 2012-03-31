@@ -176,24 +176,28 @@ let id x = x
 
 let max_string = String.make 256 '\xFF'
 
-let string_succ s = s ^ "\000"
+let string_succ ~allow_nul s = if allow_nul then s ^ "\x00" else s ^ "\x01"
 
-let string_pred = function
+let string_pred ~allow_nul = function
     "" -> ""
   | s ->
       let s = String.copy s in
+      let new_len = ref (String.length s) in
       let n = ref (String.length s - 1) in
       let finished = ref false in
         while !n >= 0 && not !finished do
           begin
             match String.unsafe_get s !n with
-                '\x00' -> ()
+                '\x00' -> finished := true; decr new_len
+              | '\x01' when not allow_nul ->
+                     finished := true;
+                     decr new_len
               | c -> s.[!n] <- Char.chr (Char.code c - 1);
                      finished := true
           end;
           decr n;
         done;
-        s
+        if !new_len = String.length s then s else String.sub s 0 !new_len
 
 let self_delimited_string =
   let encode b s =
@@ -234,10 +238,9 @@ let self_delimited_string =
       Obs_bytea.contents b in
 
   let pp = sprintf "%S" in
-  let inject = id in
-  let extract = id in
-    { min = ""; max = max_string; encode; decode;
-      succ = string_succ; pred = string_pred; inject; extract;
+    { min = ""; max = max_string; encode; decode; inject = id; extract = id;
+      succ = string_succ ~allow_nul:true;
+      pred = string_pred ~allow_nul:true;
       pp; parts = ();
     }
 
@@ -264,7 +267,11 @@ let stringz =
         incr off;
         s
 
-  in { self_delimited_string with encode; decode; }
+  in { self_delimited_string with
+           encode; decode;
+           pred = string_pred ~allow_nul:false;
+           succ = string_succ ~allow_nul:false;
+  }
 
 let byte =
   let encode b x = Obs_bytea.add_byte b x in
@@ -349,11 +356,19 @@ let tuple2 c1 c2 : (_, _, (_, _, _, _, _, _) cons) codec =
                 let y = c2.decode s ~off ~len:(len - (!off - off0)) scratch in
                   (x, y));
     succ = (fun (x, y) ->
-              let y' = c2.succ y in
-                if y = y' then (c1.succ x, y') else (x, y'));
+              match c2.succ y with
+                  y' when y <> y' -> (x, y')
+                | y ->
+                    match c1.succ x with
+                        x' when x = x' -> (x, y)
+                      | x' -> (x', c2.min));
     pred = (fun (x, y) ->
-              let y' = c2.pred y in
-                if y = y' then (c1.pred x, y') else (x, y'));
+              match c2.pred y with
+                  y' when y <> y' -> (x, y')
+                | y ->
+                    match c1.pred x with
+                        x' when x = x' -> (x, y)
+                      | x' -> (x', c2.max));
     inject = (fun (x, y) -> (c1.inject x, c2.inject y));
     extract = (fun (x, y) -> (c1.extract x, c2.extract y));
     pp = (fun (x, y) -> sprintf "(%s, %s)" (c1.pp x) (c2.pp y));
