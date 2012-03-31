@@ -44,6 +44,7 @@ let col_range_of_multi_range = function
 %token <string> ID
 %token <Big_int.big_int> INT
 %token <string> DIRECTIVE
+%token PRINTER LPAREN RPAREN
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
@@ -92,6 +93,7 @@ phrase : /* empty */  { Nothing }
   | put       { $1 }
   | delete    { $1 }
   | directive { $1 }
+  | printer_directive { $1 }
 
 size :
     SIZE table
@@ -281,3 +283,18 @@ id :
 
 table:
     ID           { DM.table_of_string $1 }
+
+printer_directive:
+      PRINTER ID printer   { Printer_directive ($2, $3) }
+
+printer:
+    normalized_id          { Simple_printer $1 }
+  | normalized_id LPAREN printer_args RPAREN
+                           { Complex_printer ($1, $3) }
+
+printer_args:
+    printer      { [ $1 ] }
+  | printer_args COMMA printer   { $1 @ [ $3 ] }
+
+normalized_id:
+    ID           { String.lowercase $1 }

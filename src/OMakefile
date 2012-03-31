@@ -24,7 +24,7 @@ section
 	OCamlProgram(ob_load, ob_load)
 
 	section
-	    OCAML_LIBS[] += repl/obigstore_repl
+	    OCAML_LIBS[] += repl/obigstore_repl util/obigstore_util
 	    OCamlProgram(ob_repl, ob_repl)
 
     section

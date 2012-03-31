@@ -7,6 +7,11 @@ type req =
   | Directive of string * string list
   | Nothing
   | Dump_local of string option
+  | Printer_directive of string * printer
+
+and printer =
+    Simple_printer of string
+  | Complex_printer of string * printer list
 
 type generic_range =
     Range of string Range.range

@@ -50,6 +50,10 @@ let params =
 
 let tx_level = ref 0
 let debug_requests = ref false
+let key_pretty_printers = Hashtbl.create 13
+
+let install_printer table printer =
+  Hashtbl.replace key_pretty_printers table printer
 
 module Timing =
 struct
@@ -186,7 +190,7 @@ let rec pp_lines f fmt = function
       Format.fprintf fmt "%a@." f x;
       pp_lines f fmt tl
 
-let pprint_slice ~strict fmt (last_key, key_data) =
+let pprint_slice ~strict ?(pp_key = pp_key) fmt (last_key, key_data) =
   if fmt == Format.std_formatter then
     Format.printf "%s@." (String.make 78 '-');
   Format.fprintf fmt "{@\n";
@@ -203,6 +207,21 @@ let pprint_slice ~strict fmt (last_key, key_data) =
          None -> Format.printf "<none>"
        | Some k -> pp_datum ~strict:false fmt k)
     last_key
+
+let pretty_printer_of_codec c =
+  let module C = (val c : Obs_key_encoding.CODEC_OPS) in
+    (fun ~strict fmt k ->
+       try
+         if not strict && false (* remove to enable pp alone *) then
+           Format.fprintf fmt "%s" (C.pp (C.decode_string k))
+         else begin
+           (* we want strict json, so we output the decoded version as a
+            * comment *)
+           Format.fprintf fmt "@[<0>/* %s */@ %a@]"
+             (C.pp (C.decode_string k))
+             (pp_key ~strict:true) k
+         end
+       with _ -> pp_key ~strict:true fmt k)
 
 module Directives =
 struct
@@ -420,7 +439,12 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int nkeys));
         Timing.cnt_cols := Int64.(add !Timing.cnt_cols (of_int ncols));
-        ret (pprint_slice ~strict fmt) slice
+        let pp_key =
+          try
+            Some (Hashtbl.find key_pretty_printers table)
+          with Not_found -> None
+        in
+          ret (pprint_slice ~strict ?pp_key fmt) slice
   | Put_columns { Put_columns.table; data } ->
       let keys = List.length data in
       let columns = List.fold_left (fun s (_, l) -> List.length l + s) 0 data in
@@ -567,6 +591,80 @@ let get_phrase () =
       ()
   end
 
+module Printer =
+struct
+  open Obs_key_encoding
+
+  let simple_printers =
+    [ "bool", (module Bool : CODEC_OPS);
+      "byte", (module Byte : CODEC_OPS);
+      "pint64", (module Positive_int64 : CODEC_OPS);
+      "pint64c", (module Positive_int64_complement : CODEC_OPS);
+      "stringz", (module Stringz : CODEC_OPS);
+      "sstring", (module Self_delimited_string : CODEC_OPS);
+    ]
+
+  let dummy = "\"" (* reset omlet's hl *)
+
+  let first_error = List.find (function `Error _ -> true | _ -> false)
+
+  let fst_error_or_arity_error n l =
+    try
+      first_error l
+    with Not_found -> `Error (sprintf "Wrong arity: tuple%d expects %d arguments." n n)
+
+  let rec build_codec = function
+      Simple_printer s ->
+        begin try
+          `OK (List.assoc s simple_printers)
+        with Not_found ->
+          `Error (sprintf "Unknown codec %S" s)
+        end
+    | Complex_printer ("tuple2", l) -> begin
+        match List.map build_codec l with
+            [ `OK c1; `OK c2 ] ->
+              `OK (module Tuple2
+                     ((val c1 : CODEC_OPS))
+                     ((val c2 : CODEC_OPS))
+                     : CODEC_OPS)
+          | l -> fst_error_or_arity_error 2 l
+      end
+    | Complex_printer ("tuple3", l) -> begin
+        match List.map build_codec l with
+            [ `OK c1; `OK c2; `OK c3 ] ->
+              `OK (module Tuple3
+                     ((val c1 : CODEC_OPS))
+                     ((val c2 : CODEC_OPS))
+                     ((val c3 : CODEC_OPS))
+                     : CODEC_OPS)
+          | l -> fst_error_or_arity_error 3 l
+      end
+    | Complex_printer ("tuple4", l) -> begin
+        match List.map build_codec l with
+            [ `OK c1; `OK c2; `OK c3; `OK c4] ->
+              `OK (module Tuple4
+                     ((val c1 : CODEC_OPS))
+                     ((val c2 : CODEC_OPS))
+                     ((val c3 : CODEC_OPS))
+                     ((val c4 : CODEC_OPS))
+                     : CODEC_OPS)
+          | l -> fst_error_or_arity_error 4 l
+      end
+    | Complex_printer ("tuple5", l) -> begin
+        match List.map build_codec l with
+            [ `OK c1; `OK c2; `OK c3; `OK c4; `OK c5] ->
+              `OK (module Tuple5
+                     ((val c1 : CODEC_OPS))
+                     ((val c2 : CODEC_OPS))
+                     ((val c3 : CODEC_OPS))
+                     ((val c4 : CODEC_OPS))
+                     ((val c5 : CODEC_OPS))
+                     : CODEC_OPS)
+          | l -> fst_error_or_arity_error 5 l
+      end
+    | Complex_printer (x, _) -> `Error (sprintf "Unknown codec %S" x)
+end
+
 exception Need_reconnect of string option
 
 let rec inner_exec_loop ?phrase db ks =
@@ -610,6 +708,14 @@ let rec inner_exec_loop ?phrase db ks =
             lwt raw_dump = D.Raw_dump.dump db in
             lwt _ = DUMP.dump_local raw_dump ?destdir in
               return ()
+        | Printer_directive (table, desc) ->
+            match Printer.build_codec desc with
+                `Error s ->
+                  printf "Couldn't install printer for table %S: %s\n%!" table s;
+                  return ()
+              | `OK c ->
+                  install_printer (table_of_string table) (pretty_printer_of_codec c);
+                  return ()
   with
     | Parsing.Parse_error ->
         print_endline "Parse error";

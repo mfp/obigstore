@@ -68,12 +68,16 @@ rule token = parse
   | '/'            { COND }
   | '['            { LBRACKET }
   | ']'            { RBRACKET }
+  | '('            { LPAREN }
+  | ')'            { RPAREN }
   | ','            { COMMA }
   | '<'            { LT }
   | "<="           { LE }
   | ">"            { GT }
   | ">="           { GE }
   | '='            { EQ }
+  | '.' ("printer" | "PRINTER")
+                   { PRINTER }
   | '.' (['A'-'Z' 'a'-'z']+ as lxm)
                    { DIRECTIVE (String.lowercase lxm) }
   | ['0'-'9']+ as lxm { INT(Big_int.big_int_of_string lxm) }
