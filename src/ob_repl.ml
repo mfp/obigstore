@@ -201,10 +201,10 @@ let pprint_slice ~strict ?(pp_key = pp_key) fmt (last_key, key_data) =
   Format.fprintf fmt "}@\n@.";
   if fmt == Format.std_formatter then
     Format.printf "%s@." (String.make 78 '-');
-  Format.printf "Last_key: %a@."
+  Format.printf "Last key: %a@."
     (fun fmt k -> match k with
          None -> Format.printf "<none>"
-       | Some k -> pp_datum ~strict:false fmt k)
+       | Some k -> pp_key ~strict:false fmt k)
     last_key
 
 let pretty_printer_of_codec c =
