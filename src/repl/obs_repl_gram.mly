@@ -52,26 +52,22 @@ let col_range_of_multi_range = function
       in Column_range.Column_range_union (List.rev rev_union)
 
 let parse_and_encode table v =
-  let parse = snd (Hashtbl.find Obs_repl_common.key_codecs table) in
-  let module M = (val parse v : PARSED_VALUE) in
-    M.encode_to_string M.v
+  try
+    let parse = snd (Hashtbl.find Obs_repl_common.key_codecs table) in
+    let module M = (val parse v : PARSED_VALUE) in
+      M.encode_to_string M.v
+  with Not_found ->
+    failwith (sprintf "No key codec defined for table %S"
+                (DM.string_of_table table))
 
 let encode_key_range table r =
-  try
-    Key_range.Key_range
-      { r with Range.first = Option.map (parse_and_encode table) r.Range.first;
-               up_to = Option.map (parse_and_encode table) r.Range.up_to;
-      }
-  with Not_found ->
-    failwith (sprintf "No key codec defined for table %S"
-                (DM.string_of_table table))
+  Key_range.Key_range
+    { r with Range.first = Option.map (parse_and_encode table) r.Range.first;
+             up_to = Option.map (parse_and_encode table) r.Range.up_to;
+    }
 
 let encode_key_list table l =
-  try
-    Key_range.Keys (List.map (parse_and_encode table) l)
-  with Not_found ->
-    failwith (sprintf "No key codec defined for table %S"
-                (DM.string_of_table table))
+  Key_range.Keys (List.map (parse_and_encode table) l)
 %}
 
 %token <string> ID
@@ -219,6 +215,18 @@ put :
                    $7
                in R.Put_columns
                     { R.Put_columns.keyspace; table = $2; data = [$4, columns] }) }
+  | PUT table LBRACKET LPAREN enc_val RPAREN RBRACKET LBRACKET bindings RBRACKET
+        {
+          with_ks
+            (fun keyspace ->
+               let key = parse_and_encode $2 $5 in
+               let columns =
+                 List.map
+                   (fun (name, data) ->
+                      { Column.name; data; timestamp = Timestamp.No_timestamp })
+                   $9
+               in R.Put_columns
+                    { R.Put_columns.keyspace; table = $2; data = [key, columns] }) }
 
 bindings :
     binding                  { [ $1 ] }
@@ -234,11 +242,25 @@ delete :
              R.Delete_columns
                { R.Delete_columns.keyspace; table = $2;
                  key = $4; columns = $7; }) }
+  | DELETE table LBRACKET LPAREN enc_val RPAREN RBRACKET LBRACKET id_list RBRACKET
+      {
+        with_ks
+          (fun keyspace ->
+             let key = parse_and_encode $2 $5 in
+               R.Delete_columns
+                 { R.Delete_columns.keyspace; table = $2;
+                   key; columns = $9; }) }
   | DELETE table LBRACKET id RBRACKET
       {
         with_ks
           (fun keyspace ->
              R.Delete_key { R.Delete_key.keyspace; table = $2; key = $4; }) }
+  | DELETE table LBRACKET LPAREN enc_val RPAREN RBRACKET
+      {
+        with_ks
+          (fun keyspace ->
+             let key = parse_and_encode $2 $5 in
+               R.Delete_key { R.Delete_key.keyspace; table = $2; key; }) }
 
 directive : DIRECTIVE directive_params { Directive ($1, $2) }
 
