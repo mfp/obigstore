@@ -147,8 +147,8 @@ size :
 range_no_max :
     LBRACKET opt_id RANGE opt_id RBRACKET
               { `Range { Range.first = $2; up_to = $4; reverse = false; } }
-  | LBRACKET opt_enc_val RANGE opt_enc_val RBRACKET
-              { `Enc_range { Range.first = $2; up_to = $4; reverse = false; } }
+  | LBRACKET LPAREN opt_enc_val RANGE opt_enc_val RPAREN RBRACKET
+              { `Enc_range { Range.first = $3; up_to = $5; reverse = false; } }
 
 count :
     COUNT table opt_key_range
@@ -311,14 +311,14 @@ range :
                  { (`List $2, $3) }
 
 enc_range:
-  | LBRACKET opt_enc_val RANGE opt_enc_val opt_cond RBRACKET
-                 { (`Enc_range { Range.first = $2; up_to = $4; reverse = false; },
-                         $5) }
-  | LBRACKET opt_enc_val REVRANGE opt_enc_val opt_cond RBRACKET
-                 { (`Enc_range { Range.first = $2; up_to = $4; reverse = true; },
-                         $5) }
-  | LBRACKET KEYS LPAREN enc_val_list RPAREN opt_cond RBRACKET
-                 { (`Enc_list $4, $6) }
+  | LBRACKET LPAREN opt_enc_val RANGE opt_enc_val RPAREN opt_cond RBRACKET
+                 { (`Enc_range { Range.first = $3; up_to = $5; reverse = false; },
+                         $7) }
+  | LBRACKET LPAREN opt_enc_val REVRANGE opt_enc_val RPAREN opt_cond RBRACKET
+                 { (`Enc_range { Range.first = $3; up_to = $5; reverse = true; },
+                         $7) }
+  | LBRACKET LPAREN KEYS enc_val_list opt_cond RPAREN RBRACKET
+                 { (`Enc_list $4, $5) }
 
 enc_val :
     id                  { Atom $1 }
@@ -331,8 +331,7 @@ enc_val_list :
                        { $1 @ [$3] }
 
 opt_enc_val :
-    LPAREN enc_val RPAREN
-                       { Some $2 }
+    enc_val            { Some $1 }
   | /* nothing */      { None }
 
 opt_row_predicate :
