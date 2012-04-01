@@ -367,6 +367,12 @@ struct
              puts "Request debugging is %s" (bool_to_s !debug_requests)
          | _ -> ())
 
+  let () = exactly 1 ~name:"read"
+             ~help:("FILE", "Execute commands in FILE.")
+             (fun _ ->
+                (* .read is handled directly by the exec loop *)
+                ())
+
   let list =
     Hashtbl.fold (fun name _ l -> name :: l) directive_tbl []
 end
@@ -791,7 +797,7 @@ end
 
 exception Need_reconnect of string option
 
-let rec inner_exec_loop ?phrase db ks =
+let rec inner_exec_loop get_phrase ?phrase db ks =
   let last_phrase = ref None in
   begin try_lwt
     lwt phrase = match phrase with
@@ -803,7 +809,7 @@ let rec inner_exec_loop ?phrase db ks =
        * be corrected in case of syntax error *)
       phrase_history := phrase :: !phrase_history;
     in
-    let loop () = inner_exec_loop db ks in
+    let loop () = inner_exec_loop get_phrase db ks in
     let lexbuf = Lexing.from_string phrase in
       match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
           Command (req, None) -> execute ks db loop req
@@ -819,6 +825,25 @@ let rec inner_exec_loop ?phrase db ks =
               finally
                 close_out oc;
                 return ()
+        | Directive ("read", [file]) -> begin
+            (* we handle .read here directly, the declaration in Directives is
+            * just for the help message *)
+            try_lwt
+              lwt ic = Lwt_io.open_file Lwt_io.input file in
+              let get_phrase () =
+                lwt l = Lwt_io.read_line ic in puts "%s" l; return l in
+              let loop () = inner_exec_loop get_phrase db ks in
+                try_lwt
+                  puts "Executing commands from %S" file;
+                  loop ()
+                with End_of_file -> return ()
+                finally
+                  puts "Done reading commands from %S" file;
+                  Lwt_io.close ic
+            with Unix.Unix_error _ ->
+              printf "Couldn't open file %S." file;
+              return ()
+          end
         | Directive (directive, args) ->
             Directives.eval_directive directive args;
             return ()
@@ -861,7 +886,7 @@ let rec inner_exec_loop ?phrase db ks =
         printf "Got exception: %s\n%!" (Printexc.to_string e);
         return ()
   end >>
-  inner_exec_loop db ks
+  inner_exec_loop get_phrase db ks
 
 let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
@@ -883,7 +908,7 @@ let () =
 
     let rec outer_loop ?phrase db ks =
       try_lwt
-        inner_exec_loop ?phrase db ks
+        inner_exec_loop get_phrase ?phrase db ks
       with
           End_of_file -> exit 0
         | Abort_exn | Commit_exn ->
