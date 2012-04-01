@@ -137,13 +137,22 @@ size :
   | SIZE table range_no_max
               { with_ks
                   (fun keyspace ->
-                     R.Key_range_size_on_disk
-                       { R.Key_range_size_on_disk.keyspace;
-                         table = $2; range = $3 }) }
+                     let range = match $3 with
+                         `Range r -> r
+                       | `Enc_range r ->
+                           let open Range in
+                           let first =  Option.map (parse_and_encode $2) r.first in
+                           let up_to = Option.map (parse_and_encode $2) r.up_to in
+                             { first; up_to; reverse = r.reverse }
+                     in R.Key_range_size_on_disk
+                          { R.Key_range_size_on_disk.keyspace;
+                            table = $2; range; }) }
 
 range_no_max :
     LBRACKET opt_id RANGE opt_id RBRACKET
-              { { Range.first = $2; up_to = $4; reverse = false; } }
+              { `Range { Range.first = $2; up_to = $4; reverse = false; } }
+  | LBRACKET opt_enc_val RANGE opt_enc_val RBRACKET
+              { `Enc_range { Range.first = $2; up_to = $4; reverse = false; } }
 
 count :
     COUNT table opt_key_range
