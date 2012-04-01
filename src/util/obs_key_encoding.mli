@@ -496,6 +496,7 @@ module type PRIMITIVE_CODEC_OPS =
 sig
   type key
   include CODEC_OPS with type key := key and type internal_key = key
+                     and type tail = unit
 end
 
 module Bool : PRIMITIVE_CODEC_OPS with type key = bool

@@ -85,54 +85,76 @@ let test_self_delimited_string () =
 
 let test_bool () =
   let v = [ true; false ] in
-    List.iter (check_roundtrip K.bool) v;
-    check_order_preservation K.bool v
+  let test codec =
+    List.iter (check_roundtrip codec) v;
+    check_order_preservation codec v
+  in
+    test K.bool;
+    test K.Bool.codec
 
 let test_byte () =
   let v = List.init 256 (fun n -> n) in
-    List.iter (check_roundtrip K.byte) v;
-    check_order_preservation K.byte v
+  let test codec =
+    List.iter (check_roundtrip codec) v;
+    check_order_preservation codec v
+  in
+    test K.byte;
+    test K.Byte.codec
 
 let positive_int64_vector =
     [ 0L; 1L; Int64.max_int; 42L; ]
 
 let test_positive_int64 () =
-  List.iter (check_roundtrip K.positive_int64) positive_int64_vector;
-  check_order_preservation K.positive_int64 positive_int64_vector
+  let test codec =
+    List.iter (check_roundtrip K.positive_int64) positive_int64_vector;
+    check_order_preservation K.positive_int64 positive_int64_vector
+  in test K.positive_int64;
+     test K.Positive_int64.codec
 
 let test_positive_int64_complement () =
-  List.iter (check_roundtrip K.positive_int64_complement) positive_int64_vector;
-  check_order_preservation
-    ~cmp:(fun x y -> compare y x) K.positive_int64_complement positive_int64_vector
+  let test codec =
+    List.iter (check_roundtrip codec) positive_int64_vector;
+    check_order_preservation
+      ~cmp:(fun x y -> compare y x) codec positive_int64_vector
+  in test K.positive_int64_complement;
+     test K.Positive_int64_complement.codec
 
 let test_tuple2 () =
-  let codec = K.tuple2 K.stringz K.stringz in
-  let l =
-      [ "", ""; "a", ""; "", "a"; "abc", "def"; "asdsdsa", "sdfdsfssdf" ]
+  let test codec =
+    let l =
+        [ "", ""; "a", ""; "", "a"; "abc", "def"; "asdsdsa", "sdfdsfssdf" ]
+    in
+      List.iter (check_roundtrip codec) l;
+      check_order_preservation codec l
   in
-    List.iter (check_roundtrip codec) l;
-    check_order_preservation codec l
+    test (K.tuple2 K.stringz K.stringz);
+    test (let module M = K.Tuple2(K.Stringz)(K.Stringz) in M.codec)
 
 let test_tuple3 () =
-  let codec = K.tuple3 K.stringz K.stringz K.stringz in
   let l =
     [ "", "", ""; "a", "", ""; "", "a", ""; "abc", "def", "";
-      "asdsdsa", "", "sdfdsfssdf" ]
-  in
+      "asdsdsa", "", "sdfdsfssdf" ] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.tuple3 K.stringz K.stringz K.stringz);
+    test (let module M = K.Tuple3(K.Stringz)(K.Stringz)(K.Stringz) in M.codec)
 
 let test_tuple4 () =
-  let codec = K.tuple4 K.stringz K.stringz K.stringz K.stringz in
   let l =
     [ "", "", "", ""; "a", "", "", ""; "", "a", "", ""; "abc", "def", "", "";
-      "asdsdsa", "", "x", "sdfdsfssdf" ]
-  in
+      "asdsdsa", "", "x", "sdfdsfssdf" ] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.tuple4 K.stringz K.stringz K.stringz K.stringz);
+    test (let module M =
+            K.Tuple4(K.Stringz)(K.Stringz)(K.Stringz)(K.Stringz)
+          in M.codec)
 
 let test_tuple5 () =
-  let codec = K.tuple5 K.stringz K.stringz K.stringz K.stringz K.stringz in
   let l1 =
     [ "", "", "", ""; "a", "", "", ""; "", "a", "", ""; "abc", "def", "", "";
       "asdsdsa", "", "x", "sdfdsfssdf" ] in
@@ -140,49 +162,84 @@ let test_tuple5 () =
   let l =
     List.concat
       (List.map
-         (fun (a, b, c, d) -> List.map (fun e -> (a, b, c, d, e)) suffix) l1)
-  in
+         (fun (a, b, c, d) -> List.map (fun e -> (a, b, c, d, e)) suffix) l1) in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.tuple5 K.stringz K.stringz K.stringz K.stringz K.stringz);
+    test (let module M =
+            K.Tuple5(K.Stringz)(K.Stringz)(K.Stringz)(K.Stringz)(K.Stringz)
+          in M.codec)
 
 let test_choice2 () =
-  let codec = K.choice2 "a" K.stringz "b" K.stringz in
   let l = [`A ""; `B ""; `A "\001"; `B "\001"; `A "foo"; ] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.choice2 "a" K.stringz "b" K.stringz);
+    test (let module M =
+            K.Choice2
+              (struct include K.Stringz let label = "a" end)
+              (struct include K.Stringz let label = "b" end)
+          in M.codec)
 
 let test_choice3 () =
-  let codec = K.choice3 "a" K.stringz "b" K.stringz "c" K.byte in
   let l = [`A ""; `B ""; `A "\001"; `C 0; `B "\001"; `A "foo"; `C 1] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.choice3 "a" K.stringz "b" K.stringz "c" K.byte);
+    test (let module M =
+            K.Choice3
+              (struct include K.Stringz let label = "a" end)
+              (struct include K.Stringz let label = "b" end)
+              (struct include K.Byte let label = "c" end)
+          in M.codec)
 
 let test_choice4 () =
-  let codec = K.choice4 "a" K.stringz "b" K.stringz "c" K.byte "d" K.byte in
   let l = [`A ""; `B ""; `A "\001"; `C 0; `B "\001"; `A "foo"; `C 1; `D 1] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.choice4 "a" K.stringz "b" K.stringz "c" K.byte "d" K.byte);
+    test (let module M =
+            K.Choice4
+              (struct include K.Stringz let label = "a" end)
+              (struct include K.Stringz let label = "b" end)
+              (struct include K.Byte let label = "c" end)
+              (struct include K.Byte let label = "d" end)
+          in M.codec)
 
 let test_choice5 () =
-  let codec = K.choice5 "a" K.stringz "b" K.stringz "c" K.byte "d" K.byte "e" K.byte in
   let l = [`A ""; `B ""; `A "\001"; `C 0; `B "\001"; `A "foo"; `C 1; `D 1;
-           `E 0; `E 1; `C 0 ]
-  in
+           `E 0; `E 1; `C 0 ] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation codec l
+  in
+    test (K.choice5 "a" K.stringz "b" K.stringz "c" K.byte "d" K.byte "e" K.byte);
+    test (let module M =
+            K.Choice5
+              (struct include K.Stringz let label = "a" end)
+              (struct include K.Stringz let label = "b" end)
+              (struct include K.Byte let label = "c" end)
+              (struct include K.Byte let label = "d" end)
+              (struct include K.Byte let label = "e" end)
+          in M.codec)
 
 let test_custom () =
   let encode s = Scanf.sscanf s "%Ld-%Ld-%s" (fun a b c -> (a, b, c)) in
   let decode (a, b, c) = Printf.sprintf "%Ld-%Ld-%s" a b c in
   let pp = sprintf "%S" in
-  let codec = K.custom
-                (K.tuple3 K.positive_int64 K.positive_int64_complement K.stringz)
-                ~encode ~decode ~pp in
   let l =
     [
       "0-0-x"; "0-1-"; "32-43-"; "1-1-"; "1-1-bar"; "42-42-foobar";
-    ]
-  in
+    ] in
+  let test codec =
     List.iter (check_roundtrip codec) l;
     check_order_preservation
       ~cmp:(fun x y ->
@@ -190,90 +247,119 @@ let test_custom () =
               let (a2, b2, c2) = encode y in
                 compare (a1, Int64.neg b1, c1) (a2, Int64.neg b2, c2))
       codec l
+  in
+    test (K.custom
+            (K.tuple3 K.positive_int64 K.positive_int64_complement K.stringz)
+            ~encode ~decode ~pp);
+    test
+      (let module M =
+         K.Custom
+           (K.Tuple3(K.Positive_int64)(K.Positive_int64_complement)(K.Stringz))
+           (struct
+              type key = string
+              let encode = encode
+              let decode = decode
+              let pp = pp
+            end)
+       in M.codec)
 
 open K
 
 let test_min () =
   let check c expected =
     assert_equal ~printer:(K.pp c) expected (min_value c) in
-  let check_ints c min =
+  let check_ints min c =
     check c min;
     check (c *** c) (min, min);
     check (c *** c *** c) (min, (min, min));
     check (tuple3 c c c) (min, min, min) in
+  let check_ints cs min = List.iter (check_ints min) cs in
   let check_strings c =
     check c "";
     check (c *** c) ("", "");
     check (c *** c *** c) ("", ("", ""));
-    check (tuple3 c c c) ("", "", "")
-  in
+    check (tuple3 c c c) ("", "", "") in
+  let check_strings = List.iter check_strings in
     check bool false;
-    check bool false;
-    check_ints byte 0;
-    check_ints positive_int64 Int64.zero;
-    check_ints positive_int64_complement Int64.max_int;
-    check_strings self_delimited_string;
-    check_strings stringz;
-    check_strings stringz_unsafe
+    check Bool.codec false;
+    check_ints [byte; Byte.codec] 0;
+    check_ints [positive_int64; Positive_int64.codec] Int64.zero;
+    check_ints
+      [positive_int64_complement; Positive_int64_complement.codec] Int64.max_int;
+    check_strings [self_delimited_string; Self_delimited_string.codec];
+    check_strings [stringz; Stringz.codec] ;
+    check_strings [stringz_unsafe; Stringz_unsafe.codec]
 
 let test_max () =
   let check c expected =
     assert_equal ~printer:(pp c) expected (max_value c) in
-  let check_ints c m =
+  let check_ints m c =
     check c m;
     check (c *** c) (m, m);
     check (c *** c *** c) (m, (m, m));
     check (tuple3 c c c) (m, m, m) in
-  let check_strings c m =
+  let check_ints cs m = List.iter (check_ints m) cs in
+  let check_strings m c =
     check c m;
     check (c *** c) (m, m);
     check (c *** c *** c) (m, (m, m));
-    check (tuple3 c c c) (m, m, m);
-  in
+    check (tuple3 c c c) (m, m, m) in
+  let check_strings cs m = List.iter (check_strings m) cs in
     check bool true;
-    check bool true;
-    check_ints byte 255;
-    check_ints positive_int64 Int64.max_int;
-    check_ints positive_int64_complement Int64.zero;
-    check_strings self_delimited_string (max_value stringz);
-    check_strings stringz (max_value stringz);
-    check_strings stringz_unsafe (max_value stringz)
+    check Bool.codec true;
+    check_ints [byte; Byte.codec] 255;
+    check_ints [positive_int64; Positive_int64.codec] Int64.max_int;
+    check_ints
+      [positive_int64_complement; Positive_int64_complement.codec] Int64.zero;
+    check_strings
+      [self_delimited_string; Self_delimited_string.codec] (max_value stringz);
+    check_strings [stringz; Stringz.codec] (max_value stringz);
+    check_strings [stringz_unsafe; Stringz_unsafe.codec] (max_value stringz)
 
 let test_succ () =
-  let check c l =
+  let check l c =
     List.iter
       (fun (expected, v) -> assert_equal ~printer:(pp c) expected (succ_value c v))
-      l
-  in
-    check bool [true, false; true, true];
-    check byte [ 1, 0; 255, 254; 255, 255 ];
-    check positive_int64
+      l in
+  let check cs l = List.iter (check l) cs in
+    check [bool; Bool.codec] [true, false; true, true];
+    check [byte; Byte.codec] [ 1, 0; 255, 254; 255, 255 ];
+    check [positive_int64; Positive_int64.codec]
       [ 1L, 0L; Int64.max_int, Int64.pred Int64.max_int;
         Int64.max_int, Int64.max_int ];
-    check positive_int64_complement [ 0L, 1L; 0L, 0L; ];
-    check self_delimited_string [ "\x00", ""; "a\x00", "a"; "\x00\x00", "\x00"; ];
-    check stringz [ "\x01", ""; "a\x01", "a"; "\x01\x01", "\x01"; ];
-    check (byte *** byte)
+    check
+      [positive_int64_complement; Positive_int64_complement.codec]
+      [ 0L, 1L; 0L, 0L; ];
+    check
+      [self_delimited_string; Self_delimited_string.codec]
+      [ "\x00", ""; "a\x00", "a"; "\x00\x00", "\x00"; ];
+    check [stringz; Stringz.codec] [ "\x01", ""; "a\x01", "a"; "\x01\x01", "\x01"; ];
+    check
+      [byte *** byte;
+       let module M = Tuple2(Byte)(Byte) in M.codec]
       [ (255, 255), (255, 255); (0, 1), (0, 0); (1, 0), (0, 255);
         (1, 3), (1, 2);
       ]
 
 let test_pred () =
-  let check c l =
+  let check l c =
     List.iter
       (fun (expected, v) -> assert_equal ~printer:(pp c) expected (pred_value c v))
-      l
-  in
-    check bool [false, true; false, false];
-    check byte [ 0, 1; 254, 255; 0, 0 ];
-    check positive_int64
+      l in
+  let check cs l = List.iter (check l) cs in
+    check [bool; Bool.codec] [false, true; false, false];
+    check [byte; Byte.codec] [ 0, 1; 254, 255; 0, 0 ];
+    check [positive_int64; Positive_int64.codec]
       [ 0L, 1L; Int64.pred Int64.max_int, Int64.max_int; 0L, 0L ];
-    check positive_int64_complement
+    check [positive_int64_complement; Positive_int64_complement.codec]
       [ 1L, 0L; 2L, 1L; Int64.max_int, Int64.max_int ];
-    check self_delimited_string
+    check [self_delimited_string; Self_delimited_string.codec]
       [ "a", "b"; "", "\x00"; "a", "a\x00"; "", ""; "\x00", "\x00\x00"; ];
-    check stringz [ "a", "b"; "", "\x01"; "a", "a\x01"; "", ""; "\x01", "\x01\x01"; ];
-    check (byte *** byte)
+    check [stringz; Stringz.codec]
+      [ "a", "b"; "", "\x01"; "a", "a\x01"; "", ""; "\x01", "\x01\x01"; ];
+    check
+      [byte *** byte;
+       let module M = Tuple2(Byte)(Byte) in M.codec]
       [ (0, 0), (0, 0); (0, 0), (0, 1); (0, 255), (1, 0);
         (1, 2), (1, 3);
       ]
