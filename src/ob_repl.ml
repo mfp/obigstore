@@ -718,7 +718,9 @@ struct
             struct
               include M
               let v = match v with
-                  Atom v -> M.of_string v
+                  Atom (Literal v) -> M.of_string v
+                | Atom Min_value -> M.min_value
+                | Atom Max_value -> M.max_value
                 | Tuple _ -> failwithfmt "Codec %S expects an atom, not a tuple" s
             end
           in (module P : PARSED_VALUE)

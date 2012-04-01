@@ -73,7 +73,7 @@ let encode_key_list table l =
 %token <string> ID
 %token <Big_int.big_int> INT
 %token <string> DIRECTIVE
-%token PRINTER LPAREN RPAREN
+%token PRINTER LPAREN RPAREN PLUS MINUS
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
@@ -321,7 +321,9 @@ enc_range:
                  { (`Enc_list $4, $5) }
 
 enc_val :
-    id                  { Atom $1 }
+    id                  { Atom (Literal $1) }
+  | PLUS                { Atom Max_value }
+  | MINUS               { Atom Min_value }
   | LPAREN enc_val_list RPAREN
                         { match $2 with [x] -> x | l -> Tuple l }
 

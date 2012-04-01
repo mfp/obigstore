@@ -76,6 +76,8 @@ rule token = parse
   | ">"            { GT }
   | ">="           { GE }
   | '='            { EQ }
+  | '+'            { PLUS }
+  | '-'            { MINUS }
   | '.' ("printer" | "PRINTER")
                    { PRINTER }
   | '.' (['A'-'Z' 'a'-'z']+ as lxm)

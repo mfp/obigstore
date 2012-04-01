@@ -22,8 +22,10 @@ and codec =
   | Complex_codec of string * codec list
 
 type key_value =
-    Atom of string
+    Atom of atom
   | Tuple of key_value list
+
+and atom = Literal of string | Max_value | Min_value
 
 let curr_keyspace : (string * int) option ref = ref None
 
