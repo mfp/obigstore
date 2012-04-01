@@ -1,4 +1,4 @@
-OCAMLINCLUDES += ../core
+OCAMLINCLUDES += ../core ../util
 OCAML_LIBS[] += ../obigstore_core
 
 OBJECTS[] =

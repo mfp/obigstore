@@ -19,10 +19,21 @@
 
 %{
 
+open Printf
 open Obs_repl_common
 open Obs_request
 module R = Request
 module DM = Obs_data_model
+module Option = BatOption
+
+type generic_range =
+  [ `Range of string Range.range
+  | `List of string list ]
+
+type key_range =
+  [ generic_range
+  | `Enc_range of key_value Range.range
+  | `Enc_list of key_value list ]
 
 let all_keys =
   Key_range.Key_range { Range.first = None; up_to = None; reverse = false }
@@ -39,6 +50,28 @@ let col_range_of_multi_range = function
               | l, `Elm e -> Simple_column_range.Columns [e] :: l)
         [] l)
       in Column_range.Column_range_union (List.rev rev_union)
+
+let parse_and_encode table v =
+  let parse = snd (Hashtbl.find Obs_repl_common.key_codecs table) in
+  let module M = (val parse v : PARSED_VALUE) in
+    M.encode_to_string M.v
+
+let encode_key_range table r =
+  try
+    Key_range.Key_range
+      { r with Range.first = Option.map (parse_and_encode table) r.Range.first;
+               up_to = Option.map (parse_and_encode table) r.Range.up_to;
+      }
+  with Not_found ->
+    failwith (sprintf "No key codec defined for table %S"
+                (DM.string_of_table table))
+
+let encode_key_list table l =
+  try
+    Key_range.Keys (List.map (parse_and_encode table) l)
+  with Not_found ->
+    failwith (sprintf "No key codec defined for table %S"
+                (DM.string_of_table table))
 %}
 
 %token <string> ID
@@ -113,18 +146,20 @@ range_no_max :
               { { Range.first = $2; up_to = $4; reverse = false; } }
 
 count :
-    COUNT table opt_range
+    COUNT table opt_key_range
               { with_ks
                   (fun keyspace ->
                      let key_range = match $3 with
                          None -> all_keys
-                       | Some (Range r, _) -> Key_range.Key_range r
-                       | Some (List l, _) -> Key_range.Keys l
+                       | Some (`Range r, _) -> Key_range.Key_range r
+                       | Some (`List l, _) -> Key_range.Keys l
+                       | Some (`Enc_range r, _) -> encode_key_range $2 r
+                       | Some (`Enc_list l, _) -> encode_key_list $2 l
                      in R.Count_keys { R.Count_keys.keyspace; table = $2;
                                           key_range; }) }
 
 get :
-    GET table range opt_multi_range opt_row_predicate opt_redir
+    GET table key_range opt_multi_range opt_row_predicate opt_redir
        {
          with_ks_unwrap
            (fun keyspace ->
@@ -132,8 +167,10 @@ get :
                   None -> Column_range.All_columns, None
                 | Some x -> x in
               let key_range = match fst $3 with
-                  Range r -> Key_range.Key_range r
-                | List l -> Key_range.Keys l in
+                  `Range r -> Key_range.Key_range r
+                | `List l -> Key_range.Keys l
+                | `Enc_range l -> encode_key_range $2 l
+                | `Enc_list l -> encode_key_list $2 l in
               let req =
                 R.Get_slice
                   { R.Get_slice.keyspace; table = $2;
@@ -142,13 +179,15 @@ get :
                     column_range; }
               in Command (req, $6))
        }
-  | GET KEYS table opt_range opt_redir
+  | GET KEYS table opt_key_range opt_redir
       {
         with_ks_unwrap
           (fun keyspace ->
              let key_range = match $4 with
-                 Some (Range r, _) -> Key_range.Key_range r
-               | Some (List l, _) -> Key_range.Keys l
+                 Some (`Range r, _) -> Key_range.Key_range r
+               | Some (`List l, _) -> Key_range.Keys l
+               | Some (`Enc_range l, _) -> encode_key_range $3 l
+               | Some (`Enc_list l, _) -> encode_key_list $3 l
                | None -> all_keys in
              let max_keys = match $4 with
                  None -> None
@@ -198,8 +237,9 @@ directive_params :
     /* empty */         { [] }
   | directive_params id { $1 @ [ $2 ] }
 
-opt_range :
+opt_key_range :
   | range               { Some $1 }
+  | enc_range           { Some $1 }
   | /* empty */         { None }
 
 opt_multi_range :
@@ -222,18 +262,47 @@ multi_range_elm :
   | opt_id REVRANGE opt_id
                  { `Range { Range.first = $1; up_to = $3; reverse = true; } }
 
+key_range :
+    range        { $1 }
+  | enc_range    { $1 }
+
 range :
   | LBRACKET opt_id RANGE opt_id opt_cond RBRACKET
-                 { (Range { Range.first = $2; up_to = $4; reverse = false; },
+                 { (`Range { Range.first = $2; up_to = $4; reverse = false; },
                          $5) }
   | LBRACKET opt_id REVRANGE opt_id opt_cond RBRACKET
-                 { (Range { Range.first = $2; up_to = $4; reverse = true; },
+                 { (`Range { Range.first = $2; up_to = $4; reverse = true; },
                          $5) }
   | LBRACKET opt_cond RBRACKET
-                 { (Range { Range.first = None; up_to = None; reverse = false; },
+                 { (`Range { Range.first = None; up_to = None; reverse = false; },
                          $2) }
   | LBRACKET id_list opt_cond RBRACKET
-                 { (List $2, $3) }
+                 { (`List $2, $3) }
+
+enc_range:
+  | LBRACKET opt_enc_val RANGE opt_enc_val opt_cond RBRACKET
+                 { (`Enc_range { Range.first = $2; up_to = $4; reverse = false; },
+                         $5) }
+  | LBRACKET opt_enc_val REVRANGE opt_enc_val opt_cond RBRACKET
+                 { (`Enc_range { Range.first = $2; up_to = $4; reverse = true; },
+                         $5) }
+  | LBRACKET KEYS LPAREN enc_val_list RPAREN opt_cond RBRACKET
+                 { (`Enc_list $4, $6) }
+
+enc_val :
+    id                  { Atom $1 }
+  | LPAREN enc_val_list RPAREN
+                        { match $2 with [x] -> x | l -> Tuple l }
+
+enc_val_list :
+    enc_val            { [ $1 ] }
+  | enc_val_list COMMA enc_val
+                       { $1 @ [$3] }
+
+opt_enc_val :
+    LPAREN enc_val RPAREN
+                       { Some $2 }
+  | /* nothing */      { None }
 
 opt_row_predicate :
     /* empty */        { None }
@@ -285,12 +354,12 @@ table:
     ID           { DM.table_of_string $1 }
 
 printer_directive:
-      PRINTER ID printer   { Printer_directive ($2, $3) }
+      PRINTER ID printer   { Codec_directive ($2, $3) }
 
 printer:
-    normalized_id          { Simple_printer $1 }
+    normalized_id          { Simple_codec $1 }
   | normalized_id LPAREN printer_args RPAREN
-                           { Complex_printer ($1, $3) }
+                           { Complex_codec ($1, $3) }
 
 printer_args:
     printer      { [ $1 ] }

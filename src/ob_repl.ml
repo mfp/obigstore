@@ -50,10 +50,9 @@ let params =
 
 let tx_level = ref 0
 let debug_requests = ref false
-let key_pretty_printers = Hashtbl.create 13
 
-let install_printer table printer =
-  Hashtbl.replace key_pretty_printers table printer
+let install_key_codec table print parse =
+  Hashtbl.replace key_codecs table (print, parse)
 
 module Timing =
 struct
@@ -441,7 +440,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
         Timing.cnt_cols := Int64.(add !Timing.cnt_cols (of_int ncols));
         let pp_key =
           try
-            Some (Hashtbl.find key_pretty_printers table)
+            Some (fst (Hashtbl.find Obs_repl_common.key_codecs table))
           with Not_found -> None
         in
           ret (pprint_slice ~strict ?pp_key fmt) slice
@@ -595,13 +594,56 @@ module Printer =
 struct
   open Obs_key_encoding
 
+  let failwithfmt fmt = Printf.ksprintf failwith fmt
+
+  module type PRIM_OPS =
+  sig
+    include CODEC_OPS
+    val of_string : string -> key
+  end
+
+  module Bool =
+  struct
+    include Bool
+    let of_string = function
+        "true" | "t" | "1" -> true
+      | "false" | "f" | "0" -> false
+      | s -> failwithfmt "Invalid bool literal: %S" s
+  end
+
+  module Byte = struct include Byte let of_string = int_of_string end
+
+  module Positive_int64 =
+  struct
+    include Positive_int64
+    let of_string = Int64.of_string
+  end
+
+  module Positive_int64_complement =
+  struct
+    include Positive_int64_complement
+    let of_string = Int64.of_string
+  end
+
+  module Stringz =
+  struct
+    include Stringz
+    let of_string s = s
+  end
+
+  module Self_delimited_string =
+  struct
+    include Self_delimited_string
+    let of_string s = s
+  end
+
   let simple_printers =
-    [ "bool", (module Bool : CODEC_OPS);
-      "byte", (module Byte : CODEC_OPS);
-      "pint64", (module Positive_int64 : CODEC_OPS);
-      "pint64c", (module Positive_int64_complement : CODEC_OPS);
-      "stringz", (module Stringz : CODEC_OPS);
-      "sstring", (module Self_delimited_string : CODEC_OPS);
+    [ "bool", (module Bool : PRIM_OPS);
+      "byte", (module Byte : PRIM_OPS);
+      "pint64", (module Positive_int64 : PRIM_OPS);
+      "pint64c", (module Positive_int64_complement : PRIM_OPS);
+      "stringz", (module Stringz : PRIM_OPS);
+      "sstring", (module Self_delimited_string : PRIM_OPS);
     ]
 
   let dummy = "\"" (* reset omlet's hl *)
@@ -614,13 +656,15 @@ struct
     with Not_found -> `Error (sprintf "Wrong arity: tuple%d expects %d arguments." n n)
 
   let rec build_codec = function
-      Simple_printer s ->
+      Simple_codec s ->
         begin try
-          `OK (List.assoc s simple_printers)
+          `OK (module struct
+                 include (val List.assoc s simple_printers : PRIM_OPS)
+               end : CODEC_OPS)
         with Not_found ->
           `Error (sprintf "Unknown codec %S" s)
         end
-    | Complex_printer ("tuple2", l) -> begin
+    | Complex_codec ("tuple2", l) -> begin
         match List.map build_codec l with
             [ `OK c1; `OK c2 ] ->
               `OK (module Tuple2
@@ -629,7 +673,7 @@ struct
                      : CODEC_OPS)
           | l -> fst_error_or_arity_error 2 l
       end
-    | Complex_printer ("tuple3", l) -> begin
+    | Complex_codec ("tuple3", l) -> begin
         match List.map build_codec l with
             [ `OK c1; `OK c2; `OK c3 ] ->
               `OK (module Tuple3
@@ -639,7 +683,7 @@ struct
                      : CODEC_OPS)
           | l -> fst_error_or_arity_error 3 l
       end
-    | Complex_printer ("tuple4", l) -> begin
+    | Complex_codec ("tuple4", l) -> begin
         match List.map build_codec l with
             [ `OK c1; `OK c2; `OK c3; `OK c4] ->
               `OK (module Tuple4
@@ -650,7 +694,7 @@ struct
                      : CODEC_OPS)
           | l -> fst_error_or_arity_error 4 l
       end
-    | Complex_printer ("tuple5", l) -> begin
+    | Complex_codec ("tuple5", l) -> begin
         match List.map build_codec l with
             [ `OK c1; `OK c2; `OK c3; `OK c4; `OK c5] ->
               `OK (module Tuple5
@@ -662,7 +706,90 @@ struct
                      : CODEC_OPS)
           | l -> fst_error_or_arity_error 5 l
       end
-    | Complex_printer (x, _) -> `Error (sprintf "Unknown codec %S" x)
+    | Complex_codec (x, _) -> `Error (sprintf "Unknown codec %S" x)
+
+  let arity_error n = failwithfmt "Codec tuple%d expects %d arguments." n n
+
+  let rec parse_value codec_desc v = match codec_desc, v with
+      Simple_codec s, v ->
+        begin try
+          let module M = (val List.assoc s simple_printers : PRIM_OPS) in
+          let module P =
+            struct
+              include M
+              let v = match v with
+                  Atom v -> M.of_string v
+                | Tuple _ -> failwithfmt "Codec %S expects an atom, not a tuple" s
+            end
+          in (module P : PARSED_VALUE)
+        with Not_found -> failwithfmt "Unknown codec %S" s
+        end
+    | Complex_codec ("tuple2", [ c1; c2 ]), Tuple [v1; v2] ->
+        let p1 = parse_value c1 v1 in
+        let p2 = parse_value c2 v2 in
+        let module P =
+          struct
+            module P1 = (val p1 : PARSED_VALUE)
+            module P2 = (val p2 : PARSED_VALUE)
+            include Tuple2(P1)(P2)
+            let v = (P1.v, P2.v)
+          end
+        in (module P : PARSED_VALUE)
+    | Complex_codec ("tuple2", l1), Tuple l2 ->
+        Printf.printf "GOT tuple2 %d Tuple %d\n%!" (List.length l1) (List.length l2);
+        arity_error 2
+    | Complex_codec ("tuple2", l1), Atom s ->
+        Printf.printf "GOT tuple2 %d Atom %S\n%!" (List.length l1) s;
+        arity_error 2
+    | Complex_codec ("tuple3", [ c1; c2; c3 ]), Tuple [v1; v2; v3] ->
+        let p1 = parse_value c1 v1 in
+        let p2 = parse_value c2 v2 in
+        let p3 = parse_value c3 v3 in
+        let module P =
+          struct
+            module P1 = (val p1 : PARSED_VALUE)
+            module P2 = (val p2 : PARSED_VALUE)
+            module P3 = (val p3 : PARSED_VALUE)
+            include Tuple3(P1)(P2)(P3)
+            let v = (P1.v, P2.v, P3.v)
+          end
+        in (module P : PARSED_VALUE)
+    | Complex_codec ("tuple3", _), _ -> arity_error 3
+    | Complex_codec ("tuple4", [ c1; c2; c3; c4 ]), Tuple [v1; v2; v3; v4] ->
+        let p1 = parse_value c1 v1 in
+        let p2 = parse_value c2 v2 in
+        let p3 = parse_value c3 v3 in
+        let p4 = parse_value c4 v4 in
+        let module P =
+          struct
+            module P1 = (val p1 : PARSED_VALUE)
+            module P2 = (val p2 : PARSED_VALUE)
+            module P3 = (val p3 : PARSED_VALUE)
+            module P4 = (val p4 : PARSED_VALUE)
+            include Tuple4(P1)(P2)(P3)(P4)
+            let v = (P1.v, P2.v, P3.v, P4.v)
+          end
+        in (module P : PARSED_VALUE)
+    | Complex_codec ("tuple4", _), _ -> arity_error 4
+    | Complex_codec ("tuple5", [ c1; c2; c3; c4; c5 ]), Tuple [v1; v2; v3; v4; v5] ->
+        let p1 = parse_value c1 v1 in
+        let p2 = parse_value c2 v2 in
+        let p3 = parse_value c3 v3 in
+        let p4 = parse_value c4 v4 in
+        let p5 = parse_value c5 v5 in
+        let module P =
+          struct
+            module P1 = (val p1 : PARSED_VALUE)
+            module P2 = (val p2 : PARSED_VALUE)
+            module P3 = (val p3 : PARSED_VALUE)
+            module P4 = (val p4 : PARSED_VALUE)
+            module P5 = (val p5 : PARSED_VALUE)
+            include Tuple5(P1)(P2)(P3)(P4)(P5)
+            let v = (P1.v, P2.v, P3.v, P4.v, P5.v)
+          end
+        in (module P : PARSED_VALUE)
+    | Complex_codec ("tuple5", _), _ -> arity_error 5
+    | Complex_codec (x, _), _ -> failwithfmt "Unknown codec %S" x
 end
 
 exception Need_reconnect of string option
@@ -708,13 +835,14 @@ let rec inner_exec_loop ?phrase db ks =
             lwt raw_dump = D.Raw_dump.dump db in
             lwt _ = DUMP.dump_local raw_dump ?destdir in
               return ()
-        | Printer_directive (table, desc) ->
+        | Codec_directive (table, desc) ->
             match Printer.build_codec desc with
                 `Error s ->
                   printf "Couldn't install printer for table %S: %s\n%!" table s;
                   return ()
               | `OK c ->
-                  install_printer (table_of_string table) (pretty_printer_of_codec c);
+                  install_key_codec (table_of_string table)
+                    (pretty_printer_of_codec c) (Printer.parse_value desc);
                   return ()
   with
     | Parsing.Parse_error ->

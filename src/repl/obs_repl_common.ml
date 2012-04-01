@@ -1,21 +1,29 @@
 
 open Obs_request
 
+module type PARSED_VALUE =
+sig
+  include Obs_key_encoding.CODEC_OPS
+  val v : key
+end
+
+type parsed_value = (module PARSED_VALUE)
+
 type req =
     Command of Request.request * string option (* redirect to file if Some *)
   | Error of string
   | Directive of string * string list
   | Nothing
   | Dump_local of string option
-  | Printer_directive of string * printer
+  | Codec_directive of string * codec
 
-and printer =
-    Simple_printer of string
-  | Complex_printer of string * printer list
+and codec =
+    Simple_codec of string
+  | Complex_codec of string * codec list
 
-type generic_range =
-    Range of string Range.range
-  | List of string list
+type key_value =
+    Atom of string
+  | Tuple of key_value list
 
 let curr_keyspace : (string * int) option ref = ref None
 
@@ -28,3 +36,8 @@ let with_ks_unwrap f =
   match !curr_keyspace with
     None -> Error "Select a keyspace first with   keyspace xxx"
   | Some (_, ks) -> f ks
+
+let key_codecs :
+  (Obs_data_model.table,
+   (strict:bool -> Format.formatter -> string -> unit) *
+   (key_value -> parsed_value)) Hashtbl.t = Hashtbl.create 13
