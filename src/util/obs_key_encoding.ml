@@ -613,7 +613,7 @@ module Positive_int64_complement =
         type tail = unit
         type internal_key = Int64.t
         type key = Int64.t
-        let codec = positive_int64
+        let codec = positive_int64_complement
       end)
 
 module Stringz =
@@ -629,7 +629,7 @@ module Stringz_unsafe =
         type tail = unit
         type internal_key = string
         type key = string
-        let codec = stringz
+        let codec = stringz_unsafe
       end)
 
 module Self_delimited_string =
