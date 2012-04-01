@@ -735,12 +735,7 @@ struct
             let v = (P1.v, P2.v)
           end
         in (module P : PARSED_VALUE)
-    | Complex_codec ("tuple2", l1), Tuple l2 ->
-        Printf.printf "GOT tuple2 %d Tuple %d\n%!" (List.length l1) (List.length l2);
-        arity_error 2
-    | Complex_codec ("tuple2", l1), Atom s ->
-        Printf.printf "GOT tuple2 %d Atom %S\n%!" (List.length l1) s;
-        arity_error 2
+    | Complex_codec ("tuple2", _), _ -> arity_error 2
     | Complex_codec ("tuple3", [ c1; c2; c3 ]), Tuple [v1; v2; v3] ->
         let p1 = parse_value c1 v1 in
         let p2 = parse_value c2 v2 in
