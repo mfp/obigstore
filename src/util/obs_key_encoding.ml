@@ -157,6 +157,12 @@ let ( @@ ) f x = f x
 let max_suffix = max_
 let min_suffix = min_
 
+let prefix1 x last = last x
+let prefix2 (x, y) last = part x @@ last y
+let prefix3 (x, y, z) last = part x @@ part y @@ last z
+let prefix4 (x, y, z, a) last = part x @@ part y @@ part z @@ last a
+let prefix5 (x, y, z, a, b) last = part x @@ part y @@ part z @@ part a @@ last b
+
 let error where e = raise (Error (e, "Obs_key_encoding." ^ where))
 
 let invalid_off_len ~fname s off len =

@@ -213,7 +213,7 @@ val upper1 : ('a * 'b, 'c, ('a, 'b, 'd, 'e, 'f, 'g) cons) codec -> 'c -> 'c
   *      (part 1 @@ part "foo" @@ max_suffix)
   *      (tuple4 byte stringz byte byte) = (1, "foo", 255, 255)
   *
-  *    expand (part 1 @@@ min_suffix) (byte *** positive_int64) = (1, 0L)
+  *    expand (part 1 @@ min_suffix) (byte *** positive_int64) = (1, 0L)
   * ]}
   * *)
 val expand : (('a, 'b, 'c) codec -> 'a) -> ('a, 'b, 'c) codec -> 'b
@@ -231,6 +231,55 @@ val max_suffix : ('a, 'b, 'c) codec -> 'a
 
 (** {! Refer to {!expand}. *)
 val min_suffix : ('a, 'b, 'c) codec -> 'a
+
+(** prefixN can be used to create composable prefixes; e.g.,
+  * {[
+  *    let prefix = prefix2 ("foo", 42) in
+  *    (* alternatively:
+  *     *  let prefix last = part "foo" @@ last 42 in
+  *     * *)
+  *    let lower = expand (prefix min_suffix) codec in
+  *    let upper = expand (prefix max_suffix) codec in
+  *      ...
+  * ]}
+  *
+  * *)
+val prefix1 : 'a -> ('a -> 'b) -> 'b
+
+(** Refer to {!prefix1}. *)
+val prefix2 :
+  'a * 'b ->
+  ('b -> ('c, 'd, 'e) codec -> 'f) ->
+  ('g, 'h, ('i, 'c, 'a, 'd, 'j, 'e) cons) codec -> 'i * 'f
+
+(** Refer to {!prefix1}. *)
+val prefix3 :
+  'a * 'b * 'c ->
+  ('c -> ('d, 'e, 'f) codec -> 'g) ->
+  ('h, 'i, ('j, 'k, 'a, 'l, 'm, ('n, 'd, 'b, 'e, 'o, 'f) cons) cons) codec ->
+  'j * ('n * 'g)
+
+(** Refer to {!prefix1}. *)
+val prefix4 :
+  'a * 'b * 'c * 'd ->
+  ('d -> ('e, 'f, 'g) codec -> 'h) ->
+  ('i, 'j,
+   ('k, 'l, 'a, 'm, 'n,
+    ('o, 'p, 'b, 'q, 'r, ('s, 'e, 'c, 'f, 't, 'g) cons) cons)
+   cons)
+  codec -> 'k * ('o * ('s * 'h))
+
+(** Refer to {!prefix1}. *)
+val prefix5 :
+  'a * 'b * 'c * 'd * 'e ->
+  ('e -> ('f, 'g, 'h) codec -> 'i) ->
+  ('j, 'k,
+   ('l, 'm, 'a, 'n, 'o,
+    ('p, 'q, 'b, 'r, 's,
+     ('t, 'u, 'c, 'v, 'w, ('x, 'f, 'd, 'g, 'y, 'h) cons) cons)
+    cons)
+   cons)
+  codec -> 'l * ('p * ('t * ('x * 'i)))
 
 (** {5 Direct-style interface} *)
 
