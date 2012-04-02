@@ -45,7 +45,7 @@ let key_range_with_prefix c ?starting_with p =
   let open Obs_key_encoding in
   let first = match starting_with with
       None -> Some (expand (p min_suffix) c);
-    | Some key -> key
+    | Some _ as key -> key
   in
     `Continuous
       { first; reverse = false;

@@ -38,7 +38,7 @@ end
 
 val key_range_with_prefix :
   ('a, 'b, 'c) Obs_key_encoding.codec ->
-  ?starting_with:'b option ->
+  ?starting_with:'b ->
   ((('d, _, _) Obs_key_encoding.codec -> 'd) ->
    ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) -> 'b key_range
 
@@ -66,7 +66,7 @@ sig
   val table : table
 
   val key_range_with_prefix :
-    ?starting_with:key option ->
+    ?starting_with:key ->
     ((('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
      (internal_key, key, M.Codec.tail) Obs_key_encoding.codec ->
      internal_key) -> key_range
