@@ -37,8 +37,9 @@ end
 
 module Trivial_row =
 struct
-  type 'key row = 'key key_data list
+  type 'key row = 'key key_data
   let row_of_key_data d = Some d
+  let row_needs_timestamps = true
 end
 
 let key_range_with_prefix c ?starting_with p =

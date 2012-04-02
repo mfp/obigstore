@@ -30,10 +30,15 @@ sig
   val row_needs_timestamps : bool
 end
 
+(** Trivial row module that can be included  to create a {!TABLE_CONFIG}
+  * module. *)
 module Trivial_row :
 sig
-  type 'a row = 'a key_data list
-  val row_of_key_data : 'a -> 'a option
+  type 'a row = 'a key_data
+  val row_of_key_data : 'a row -> 'a row option
+
+  (** Set to [true] (safe default). *)
+  val row_needs_timestamps : bool
 end
 
 val key_range_with_prefix :
