@@ -32,6 +32,7 @@ sig
   val name : string
 
   val row_of_key_data : Codec.key key_data -> Codec.key row option
+  val row_needs_timestamps : bool
 end
 
 module Trivial_row =
@@ -120,14 +121,17 @@ struct
                 (fun kd -> { kd with key = C.decode_string kd.key })
                 data)
 
-  let get_row ks ?decode_timestamps key =
-    match_lwt get_slice ks ?decode_timestamps (`Discrete [key]) `All with
+  let get_row ks key =
+    match_lwt get_slice ks ~decode_timestamps:M.row_needs_timestamps
+      (`Discrete [key]) `All
+    with
         _, kd :: _ -> return (M.row_of_key_data kd)
       | _ -> return None
 
-  let get_rows ks ?decode_timestamps key_range =
-    lwt k, l = get_slice ks key_range `All in
-      return (k, List.filter_map M.row_of_key_data l)
+  let get_rows ks key_range =
+    lwt k, l = get_slice ks key_range
+                 ~decode_timestamps:M.row_needs_timestamps `All
+    in return (k, List.filter_map M.row_of_key_data l)
 
   let get_slice_values ks ?max_keys key_range cols =
     lwt k, l =

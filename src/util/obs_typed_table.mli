@@ -27,6 +27,7 @@ sig
 
   val name : string
   val row_of_key_data : Codec.key key_data -> Codec.key row option
+  val row_needs_timestamps : bool
 end
 
 module Trivial_row :
@@ -108,12 +109,9 @@ sig
     column_range ->
     (key option * key key_data list) Lwt.t
 
-  val get_row :
-    keyspace -> ?decode_timestamps:bool -> key -> key M.row option Lwt.t
+  val get_row : keyspace -> key -> key M.row option Lwt.t
 
-  val get_rows :
-    keyspace -> ?decode_timestamps:'bool -> key_range ->
-    (key option * key M.row list) Lwt.t
+  val get_rows : keyspace -> key_range -> (key option * key M.row list) Lwt.t
 
   val get_slice_values :
     keyspace -> ?max_keys:int -> key_range -> column_name list ->
