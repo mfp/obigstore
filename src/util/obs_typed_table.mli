@@ -39,14 +39,20 @@ end
 val key_range_with_prefix :
   ('a, 'b, 'c) Obs_key_encoding.codec ->
   ?starting_with:'b ->
-  ((('d, _, _) Obs_key_encoding.codec -> 'd) ->
-   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) -> 'b key_range
+  (('d ->
+    (_, _, ('g, 'h, 'd, _, _, _) Obs_key_encoding.cons)
+    Obs_key_encoding.codec -> 'g * 'h) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+  'b key_range
 
 val rev_key_range_with_prefix :
   ('a, 'b, 'c) Obs_key_encoding.codec ->
   ?starting_with:'b ->
-  ((('d, _, _) Obs_key_encoding.codec -> 'd) ->
-   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) -> 'b key_range
+  (('d ->
+    (_, _, ('g, 'h, 'd, _, _, _) Obs_key_encoding.cons)
+    Obs_key_encoding.codec -> 'g * 'h) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+  'b key_range
 
 module Make :
   functor (M : TABLE_CONFIG) ->
@@ -67,14 +73,20 @@ sig
 
   val key_range_with_prefix :
     ?starting_with:key ->
-    ((('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
-     (internal_key, key, M.Codec.tail) Obs_key_encoding.codec ->
-     internal_key) -> key_range
+    (('a ->
+      ('b, 'c, ('d, 'e, 'a, _, _, _) Obs_key_encoding.cons)
+      Obs_key_encoding.codec -> 'd * 'e) ->
+     (internal_key, key, tail) Obs_key_encoding.codec ->
+     internal_key) ->
+    key_range
 
   val rev_key_range_with_prefix :
     ?starting_with:key ->
-    ((('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
-     (internal_key, key, tail) Obs_key_encoding.codec -> internal_key) ->
+    (('a ->
+      ('b, 'c, ('d, 'e, 'a, _, _, _) Obs_key_encoding.cons)
+      Obs_key_encoding.codec -> 'd * 'e) ->
+     (internal_key, key, tail) Obs_key_encoding.codec ->
+     internal_key) ->
     key_range
 
   val size_on_disk : keyspace -> Int64.t Lwt.t

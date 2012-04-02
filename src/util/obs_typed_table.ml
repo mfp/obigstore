@@ -44,23 +44,23 @@ end
 let key_range_with_prefix c ?starting_with p =
   let open Obs_key_encoding in
   let first = match starting_with with
-      None -> Some (expand (p min_suffix) c);
+      None -> Some (expand (p (fun x -> part x @@ min_suffix)) c);
     | Some _ as key -> key
   in
     `Continuous
       { first; reverse = false;
-        up_to = Some (succ_value c (expand (p max_suffix) c));
+        up_to = Some (succ_value c (expand (p (fun x -> part x @@ max_suffix)) c));
       }
 
 let rev_key_range_with_prefix c ?starting_with p =
   let open Obs_key_encoding in
   let first = match starting_with with
-      None -> Some (succ_value c (expand (p max_suffix) c));
+      None -> Some (succ_value c (expand (p (fun x -> part x @@ max_suffix)) c));
     | Some key -> Some (succ_value c key)
   in
     `Continuous
       { first; reverse = true;
-        up_to = Some (expand (p min_suffix) c);
+        up_to = Some (expand (p (fun x -> part x @@ min_suffix)) c);
       }
 
 module Make
