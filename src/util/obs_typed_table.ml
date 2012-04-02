@@ -128,8 +128,8 @@ struct
         _, kd :: _ -> return (M.row_of_key_data kd)
       | _ -> return None
 
-  let get_rows ks key_range =
-    lwt k, l = get_slice ks key_range
+  let get_rows ks ?max_keys key_range =
+    lwt k, l = get_slice ks key_range ?max_keys
                  ~decode_timestamps:M.row_needs_timestamps `All
     in return (k, List.filter_map M.row_of_key_data l)
 

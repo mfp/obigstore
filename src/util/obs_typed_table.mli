@@ -111,7 +111,8 @@ sig
 
   val get_row : keyspace -> key -> key M.row option Lwt.t
 
-  val get_rows : keyspace -> key_range -> (key option * key M.row list) Lwt.t
+  val get_rows : keyspace -> ?max_keys:int -> key_range ->
+    (key option * key M.row list) Lwt.t
 
   val get_slice_values :
     keyspace -> ?max_keys:int -> key_range -> column_name list ->
