@@ -66,7 +66,7 @@ type 'key key_range = [ `Continuous of 'key range | `Discrete of 'key list ]
 
 type simple_column_range = string key_range
 
-type column_range = [ `All | `Union of simple_column_range list ]
+type column_range = [ string key_range | `All | `Union of simple_column_range list ]
 
 (** Predicate on the value of a colum *)
 type column_val_rel =

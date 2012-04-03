@@ -1364,6 +1364,7 @@ let column_range_selector = function
     `All -> (fun ~buf ~len -> true)
   | `Union [] -> (fun ~buf ~len -> false)
   | `Union [x] -> simple_column_range_selector x
+  | (`Discrete _ | `Continuous _) as x -> simple_column_range_selector x
   | `Union l ->
         let fs = List.map simple_column_range_selector l in
           (fun ~buf ~len -> List.exists (fun f -> f ~buf ~len) fs)
@@ -1430,8 +1431,8 @@ let get_slice_aux_discrete
       (fun k -> not (S.mem k (TM.find_default S.empty table tx.deleted_keys)))
       (List.sort String.compare l) in
   let reverse = match column_range with
-      `Union [`Continuous { reverse; _ }] -> reverse
-    | _ -> false in
+      `Union [`Continuous { reverse; _ }] | `Continuous { reverse; _ } -> reverse
+    | `Discrete _ | `Union _ | `All -> false in
   let columns_needed_for_predicate = columns_needed_for_predicate predicate in
   lwt key_data_list, _ =
     Lwt_list.fold_left_s
@@ -2033,7 +2034,10 @@ let get_slice tx table
                 S.empty
                 l
             in S.cardinal columns
-        | `Union _ | `All -> max_int
+        | `Discrete l ->
+            let columns = List.fold_left (fun s c -> S.add c s) S.empty l in
+              S.cardinal columns
+        | `Continuous _ | `Union _ | `All -> max_int
   in
     Obs_load_stats.record_reads tx.ks.ks_db.load_stats 1;
     get_slice_aux

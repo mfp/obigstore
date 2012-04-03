@@ -267,6 +267,10 @@ let krange = range
 
 let crange = function
     `All -> Column_range.All_columns
+  | `Discrete l ->
+      Column_range.Column_range_union [Simple_column_range.Columns l]
+  | `Continuous r ->
+      Column_range.Column_range_union [Simple_column_range.Column_range r]
   | `Union l ->
       Column_range.Column_range_union
         (List.map
@@ -281,6 +285,9 @@ let krange' = function
 
 let crange' = function
     Column_range.All_columns -> `All
+  | Column_range.Column_range_union [Simple_column_range.Columns l] -> `Discrete l
+  | Column_range.Column_range_union [Simple_column_range.Column_range r] ->
+      `Continuous r
   | Column_range.Column_range_union l ->
       `Union
         (List.map
