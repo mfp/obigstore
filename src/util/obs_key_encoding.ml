@@ -383,8 +383,10 @@ let tuple2 c1 c2 : (_, _, (_, _, _, _, _, _) cons) codec =
 
 let ( *** ) = tuple2
 
-let custom ~encode:inject ~decode:extract ~pp c =
-  { c with inject = (fun x -> c.inject (inject x));
+let custom ~encode:inject ~decode:extract ~pp ?min ?max c =
+  { c with min = BatOption.map_default (fun x -> c.inject (inject x)) c.min min;
+           max = BatOption.map_default (fun x -> c.inject (inject x)) c.max max;
+           inject = (fun x -> c.inject (inject x));
            extract = (fun x -> extract (c.extract x));
            pp; }
 
@@ -654,13 +656,15 @@ module Custom
        val encode : key -> C.key
        val decode : C.key -> key
        val pp : key -> string
+       val min : key option
+       val max : key option
      end) =
 OPS(struct
       open O
       type key = O.key
       type internal_key = C.internal_key
       type tail = C.tail
-      let codec = custom ~encode ~decode ~pp C.codec
+      let codec = custom ~encode ~decode ~pp ?min:O.min ?max:O.max C.codec
     end)
 
 module Tuple2(C1 : CODEC)(C2 : CODEC) =

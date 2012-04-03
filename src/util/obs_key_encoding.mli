@@ -394,18 +394,22 @@ val positive_int64_complement : Int64.t primitive_codec
 
 (** {3 Composite codecs} *)
 
-(** [custom ~encode ~decode ~pp codec] creates a new codec which operates
+(** [custom ~encode ~decode ~pp ?min ?max codec] creates a new codec which operates
   * internally with values of the type handled by [codec], but uses [encode] and
   * [decode] to convert to/from an external type, so that for instance
   * [encode (custom ~encode:enc ~decode:dec ~pp codec) b x]
   * is equivalent to  [encode codec b (enc x)], and
   * [decode_string (custom ~encode:enc ~decode:dec ~pp codec) s] is equivalent
   * to [dec (decode_string codec s)].
+  *
+  * If encode/decode are not bijective and the value mapping is only defined
+  * in a range, [min] and [max] can be used to specify it.
   * *)
 val custom :
   encode:('a -> 'c) ->
   decode:('c -> 'a) ->
-  pp:('a -> string) -> ('b, 'c, 'd) codec -> ('b, 'a, 'd) codec
+  pp:('a -> string) ->
+  ?min:'a -> ?max:'a -> ('b, 'c, 'd) codec -> ('b, 'a, 'd) codec
 
 (** [tuple2 c1 c2] creates a new codec which operates on tuples whose 1st element
   * have the type handled by [c1] and whose 2nd element have the type handled
@@ -564,6 +568,11 @@ module Custom :
            val encode : key -> C.key
            val decode : C.key -> key
            val pp : key -> string
+
+           (**  Set to [Some min] if the default range (obtained by revere mapping
+             * the range of the original codec with [decode]) is not valid. *)
+           val min : key option
+           val max : key option
          end) ->
   CODEC_OPS with type key = O.key
              and type internal_key = C.internal_key
