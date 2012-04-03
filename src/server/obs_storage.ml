@@ -507,6 +507,13 @@ let register_keyspace t ks_name =
       Hashtbl.add t.keyspaces ks_name ks;
       return ks
 
+let register_keyspace =
+  (* concurrent register_keyspace ops for the same name would be problematic:
+   * the keyspace could be registered more than once (with different ids)! *)
+  let mutex = Lwt_mutex.create () in
+    (fun t ks_name ->
+       Lwt_mutex.with_lock mutex (fun () -> register_keyspace t ks_name))
+
 let register_keyspace t ks_name =
   Miniregion.use t.db (fun lldb -> register_keyspace t ks_name)
 
