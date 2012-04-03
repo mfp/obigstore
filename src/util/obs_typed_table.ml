@@ -53,6 +53,19 @@ let key_range_with_prefix c ?starting_with p =
         up_to = Some (succ_value c (expand (p (fun x -> part x @@ max_suffix)) c));
       }
 
+let range_with_prefix = key_range_with_prefix
+
+let encode_range c r =
+  let open Obs_key_encoding in
+  let `Continuous r = r in
+    `Continuous
+      { r with first = Option.map (encode_to_string c) r.first;
+               up_to = Option.map (encode_to_string c) r.up_to; }
+
+
+let encoded_range_with_prefix c ?starting_with p =
+  encode_range c (key_range_with_prefix c ?starting_with p)
+
 let rev_key_range_with_prefix c ?starting_with p =
   let open Obs_key_encoding in
   let first = match starting_with with
@@ -63,6 +76,11 @@ let rev_key_range_with_prefix c ?starting_with p =
       { first; reverse = true;
         up_to = Some (expand (p (fun x -> part x @@ min_suffix)) c);
       }
+
+let rev_range_with_prefix = rev_key_range_with_prefix
+
+let encoded_rev_range_with_prefix c ?starting_with p =
+  encode_range c (rev_key_range_with_prefix c ?starting_with p)
 
 module Make
   (M : TABLE_CONFIG)

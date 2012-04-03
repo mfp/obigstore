@@ -41,6 +41,25 @@ sig
   val row_needs_timestamps : bool
 end
 
+val range_with_prefix :
+  ('a, 'b, 'c) Obs_key_encoding.codec ->
+  ?starting_with:'b ->
+  (('d ->
+    (_, _, ('g, 'h, 'd, _, _, _) Obs_key_encoding.cons)
+    Obs_key_encoding.codec -> 'g * 'h) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+  [> `Continuous of 'b Obs_data_model.range]
+
+val encoded_range_with_prefix :
+  ('a, 'b, 'c) Obs_key_encoding.codec ->
+  ?starting_with:'b ->
+  (('d ->
+    ('e, 'f, ('g, 'h, 'd, 'i, 'j, 'k) Obs_key_encoding.cons)
+    Obs_key_encoding.codec -> 'g * 'h) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+  [> `Continuous of string Obs_data_model.range ]
+
+(** Synonym for {!range_with_prefix}. *)
 val key_range_with_prefix :
   ('a, 'b, 'c) Obs_key_encoding.codec ->
   ?starting_with:'b ->
@@ -48,8 +67,27 @@ val key_range_with_prefix :
     (_, _, ('g, 'h, 'd, _, _, _) Obs_key_encoding.cons)
     Obs_key_encoding.codec -> 'g * 'h) ->
    ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
-  'b key_range
+  [> `Continuous of 'b Obs_data_model.range]
 
+val rev_range_with_prefix :
+  ('a, 'b, 'c) Obs_key_encoding.codec ->
+  ?starting_with:'b ->
+  (('d ->
+    (_, _, ('g, 'h, 'd, _, _, _) Obs_key_encoding.cons)
+    Obs_key_encoding.codec -> 'g * 'h) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+  [> `Continuous of 'b Obs_data_model.range]
+
+val encoded_rev_range_with_prefix :
+  ('a, 'b, 'c) Obs_key_encoding.codec ->
+  ?starting_with:'b ->
+  (('d ->
+    ('e, 'f, ('g, 'h, 'd, 'i, 'j, 'k) Obs_key_encoding.cons)
+    Obs_key_encoding.codec -> 'g * 'h) ->
+   ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
+  [> `Continuous of string Obs_data_model.range ]
+
+(** Synonym for {!rev_range_with_prefix}. *)
 val rev_key_range_with_prefix :
   ('a, 'b, 'c) Obs_key_encoding.codec ->
   ?starting_with:'b ->
@@ -57,7 +95,7 @@ val rev_key_range_with_prefix :
     (_, _, ('g, 'h, 'd, _, _, _) Obs_key_encoding.cons)
     Obs_key_encoding.codec -> 'g * 'h) ->
    ('a, 'b, 'c) Obs_key_encoding.codec -> 'a) ->
-  'b key_range
+  [> `Continuous of 'b Obs_data_model.range]
 
 module Make :
   functor (M : TABLE_CONFIG) ->
