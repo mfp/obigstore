@@ -260,6 +260,8 @@ let test_custom () =
               let encode = encode
               let decode = decode
               let pp = pp
+              let min = None
+              let max = None
             end)
        in M.codec)
 
