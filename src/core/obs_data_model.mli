@@ -115,7 +115,15 @@ sig
   type keyspace
 
   val list_keyspaces : db -> string list Lwt.t
+
+  (** Register the keyspace in the DB and return a new [keyspace] object.
+    * Different calls to [register_keyspace name] with the same [name]
+    * return different values (allowing to perform transactions on them
+    * independently). *)
   val register_keyspace : db -> string -> keyspace Lwt.t
+
+  (** Similar to [register_keyspace], but only returns [Some ks] if the
+    * keyspace exists in the DB. *)
   val get_keyspace : db -> string -> keyspace option Lwt.t
 
   val keyspace_name : keyspace -> string

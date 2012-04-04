@@ -249,11 +249,14 @@ struct
 
   let test_keyspace_management db =
     D.list_keyspaces db >|= aeq_string_list [] >>
+    let pr = sprintf "%S" in
+    let name = Option.map D.keyspace_name in
     lwt k1 = D.register_keyspace db "foo" in
     lwt k2 = D.register_keyspace db "bar" in
     D.list_keyspaces db >|= aeq_string_list ["bar"; "foo";] >>
-    D.get_keyspace db "foo" >|= aeq_some D.keyspace_name k1 >>
-    D.get_keyspace db "bar" >|= aeq_some D.keyspace_name k2 >>
+    D.get_keyspace db "foo" >|= name >|= aeq_some pr "foo" >>
+    D.get_keyspace db "bar" >|= name >|= aeq_some pr "bar" >>
+    D.get_keyspace db "baz" >|= name >|= aeq_none >>
       return ()
 
   let aeq_table_list expected actual =
@@ -1199,6 +1202,54 @@ struct
                 put_slice ks1 T.tbl [ "a", ["x", ""] ] >>
                 get_all ks2 T.tbl >|= aeq_slice (Some "a", [ "a", "x", ["x", ""]])))
 
+  let do_test_interlocked_txs db1 db2 =
+    lwt ks0 = D.register_keyspace db1 "test_interlocked_txs" in
+    lwt ks1 = D.register_keyspace db1 "test_interlocked_txs" in
+    lwt ks2 = D.register_keyspace db2 "test_interlocked_txs" in
+    lwt ks3 = D.register_keyspace db2 "test_interlocked_txs" in
+      D.repeatable_read_transaction ks0
+        (fun _ ->
+           get_all ks0 T.tbl >|= aeq_slice ~msg:"ks0 pre" (None, []) >>
+           get_all ks1 T.tbl >|= aeq_slice ~msg:"ks1 pre" (None, []) >>
+           get_all ks2 T.tbl >|= aeq_slice ~msg:"ks2 pre" (None, []) >>
+           get_all ks3 T.tbl >|= aeq_slice ~msg:"ks3 pre" (None, []) >>
+           D.read_committed_transaction ks1
+             (fun _ ->
+                put_slice ks1 T.tbl ["a", ["x", ""]] >>
+                D.repeatable_read_transaction ks3
+                  (fun _ -> put_slice ks3 T.tbl ["c", ["x", ""]]) >>
+                get_all ks1 T.tbl >|=
+                  aeq_slice ~msg:"read in ks1, ks3 committed"
+                    (Some "c", ["a", "x", ["x", ""]; "c", "x", ["x", ""]]) >>
+                get_all ks0 T.tbl >|=
+                  aeq_slice ~msg:"read in ks0, ks3 committed" (None, []) >>
+                D.read_committed_transaction ks2
+                  (fun _ ->
+                     put_slice ks2 T.tbl ["b", ["x", ""]] >>
+                     get_all ks2 T.tbl >|=
+                       aeq_slice ~msg:"read in ks2"
+                         (Some "c", ["b", "x", ["x", ""]; "c", "x", ["x", ""]])) >>
+                get_all ks1 T.tbl >|=
+                  aeq_slice ~msg:"read in ks1, ks2 and ks3 committed"
+                    (Some "c", ["a", "x", ["x", ""];
+                                "b", "x", ["x", ""];
+                                "c", "x", ["x", ""]])) >>
+           get_all ks0 T.tbl >|=
+             aeq_slice ~msg:"read in ks0 after all commits" (None, [])) >>
+      let expected = (Some "c", ["a", "x", ["x", ""];
+                                 "b", "x", ["x", ""];
+                                 "c", "x", ["x", ""]])
+      in
+        get_all ks0 T.tbl >|= aeq_slice ~msg:"final ks0" expected >>
+        get_all ks1 T.tbl >|= aeq_slice ~msg:"final ks1" expected >>
+        get_all ks2 T.tbl >|= aeq_slice ~msg:"final ks2" expected >>
+        get_all ks3 T.tbl >|= aeq_slice ~msg:"final ks3" expected
+
+  let test_interlocked_txs p =
+    Lwt_pool.use p (fun db1 -> Lwt_pool.use p (do_test_interlocked_txs db1))
+
+  let test_interlocked_txs_same_db db = do_test_interlocked_txs db db
+
   let test_with_db f () = C.with_db f
   let test_with_pool f () = C.with_db_pool f
 
@@ -1239,10 +1290,12 @@ struct
       "exist_keys", test_exist_keys;
       "lock recursive", test_lock_recursive;
       "lock nested", test_lock_nested;
+      "interlocked txs", test_interlocked_txs_same_db;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [
       "commit before return", test_commit_before_return;
+      "interlocked txs from diff ks", test_interlocked_txs;
     ]
 
   let () =

@@ -27,6 +27,10 @@ let data_protocol_version = (0, 0, 0)
 
 type replication_wait = Await_reception | Await_commit
 
+let new_unique_id =
+  let n = ref 0 in
+    (fun () -> incr n; !n)
+
 module Make
   (D : sig
      include Obs_data_model.S
@@ -98,8 +102,7 @@ struct
   type client_state =
       {
         id : client_id;
-        keyspaces : D.keyspace H.t;
-        rev_keyspaces : int H.t;
+        keyspaces : keyspace H.t;
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         server : t;
@@ -111,12 +114,16 @@ struct
         async_req_region : Lwt_util.region;
       }
 
-  type tx_data =
+  and keyspace =
+    { ks_unique_id : int;
+      ks_tx_key : tx_data Lwt.key;
+      ks_ks : D.keyspace;
+  }
+
+  and tx_data =
       {
         mutable tx_notifications : string Notif_queue.t;
       }
-
-  let tx_key = Lwt.new_key ()
 
   let find_or_add find add h k =
     try find h k with Not_found -> add h k
@@ -257,34 +264,20 @@ struct
         pp_request_id request_id c.id Request.pp r;
     match r with
       Register_keyspace { Register_keyspace.name } ->
-        lwt ks = D.register_keyspace c.server.db name in
-        let idx =
-          (* find keyspace idx in local table, register if not found *)
-          try
-            H.find c.rev_keyspaces (D.keyspace_id ks)
-          with Not_found ->
-            let idx = H.length c.keyspaces in
-              H.add c.keyspaces idx ks;
-              H.add c.rev_keyspaces (D.keyspace_id ks) idx;
-              idx
-        in
-          P.return_keyspace ?buf c.och ~request_id idx
+        lwt ks_ks = D.register_keyspace c.server.db name in
+        let ks_unique_id = new_unique_id () in
+          H.add c.keyspaces ks_unique_id
+            { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); };
+          P.return_keyspace ?buf c.och ~request_id ks_unique_id
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.server.db name with
             None -> P.return_keyspace_maybe ?buf c.och ~request_id None
-          | Some ks ->
-              let idx =
-                (* find keyspace idx in local table, register if not found *)
-                try
-                  H.find c.rev_keyspaces (D.keyspace_id ks)
-                with Not_found ->
-                  let idx = H.length c.keyspaces in
-                    H.add c.keyspaces idx ks;
-                    H.add c.rev_keyspaces (D.keyspace_id ks) idx;
-                    idx
-              in
+          | Some ks_ks ->
+              let ks_unique_id = new_unique_id () in
+                H.add c.keyspaces ks_unique_id
+                  { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); };
                 P.return_keyspace_maybe ?buf c.och ~request_id
-                  (Some idx)
+                  (Some ks_unique_id)
       end
     | List_keyspaces _ ->
         D.list_keyspaces c.server.db >>=
@@ -292,40 +285,38 @@ struct
     | List_tables { List_tables.keyspace } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             (D.list_tables ks :> string list Lwt.t) >>=
+             (D.list_tables ks.ks_ks :> string list Lwt.t) >>=
              P.return_table_list ?buf c.och ~request_id)
     | Table_size_on_disk { Table_size_on_disk.keyspace; table; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.table_size_on_disk ks table >>=
+             D.table_size_on_disk ks.ks_ks table >>=
              P.return_table_size_on_disk ?buf c.och ~request_id)
     | Key_range_size_on_disk { Key_range_size_on_disk.keyspace; table; range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.key_range_size_on_disk ks table
+             D.key_range_size_on_disk ks.ks_ks table
                ?first:range.first ?up_to:range.up_to >>=
              P.return_key_range_size_on_disk ?buf c.och ~request_id)
     | Begin { Begin.keyspace; tx_type; } ->
-        (* FIXME: check if we have an open tx in another ks, and signal error
-         * if so *)
-        let is_outermost, parent_tx_data, tx_data =
-          match Lwt.get tx_key with
-              None ->
-                let d = { tx_notifications = Notif_queue.empty } in
-                  (true, d, d)
-            | Some d -> (false, d, { tx_notifications = d.tx_notifications; }) in
-        let transaction_f = match tx_type with
-            Tx_type.Repeatable_read -> D.repeatable_read_transaction
-          | Tx_type.Read_committed -> D.read_committed_transaction
-        in
-          wait_for_pending_reqs c >>
-          with_keyspace c keyspace ~request_id
-            (fun ks ->
+        wait_for_pending_reqs c >>
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             let is_outermost, parent_tx_data, tx_data =
+               match Lwt.get ks.ks_tx_key with
+                   None ->
+                     let d = { tx_notifications = Notif_queue.empty } in
+                       (true, d, d)
+                 | Some d -> (false, d, { tx_notifications = d.tx_notifications; }) in
+             let transaction_f = match tx_type with
+                 Tx_type.Repeatable_read -> D.repeatable_read_transaction
+               | Tx_type.Read_committed -> D.read_committed_transaction
+             in
                try_lwt
                  lwt () =
-                   transaction_f ks
-                     (fun ks ->
-                        Lwt.with_value tx_key (Some tx_data)
+                   transaction_f ks.ks_ks
+                     (fun _ ->
+                        Lwt.with_value ks.ks_tx_key (Some tx_data)
                           (fun () ->
                              try_lwt
                                P.return_ok ?buf c.och ~request_id () >>
@@ -338,51 +329,55 @@ struct
                     * (otherwise, new data wouldn't be found if another client
                     *  performs a query right away) *)
                    begin if is_outermost then
-                     Notif_queue.iter (notify c.server ks) tx_data.tx_notifications
+                     Notif_queue.iter (notify c.server ks.ks_ks) tx_data.tx_notifications
                    else parent_tx_data.tx_notifications <- tx_data.tx_notifications
                    end;
                    return ()
                with Abort_exn ->
                  wait_for_pending_reqs c >>
                  P.return_ok ?buf c.och ~request_id ())
-    | Commit _ ->
+    | Commit { Commit.keyspace; _ } ->
         (* only commit if we're inside a tx *)
-        begin match Lwt.get tx_key with
-            None -> P.return_ok ?buf c.och ~request_id ()
-          | Some _ -> raise_lwt Commit_exn
-        end
-    | Abort _ ->
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             begin match Lwt.get ks.ks_tx_key with
+                 None -> P.return_ok ?buf c.och ~request_id ()
+               | Some _ -> raise_lwt Commit_exn
+             end)
+    | Abort { Abort.keyspace; _ } ->
         (* only abort if we're inside a tx *)
-        begin match Lwt.get tx_key with
-            None -> P.return_ok ?buf c.och ~request_id ()
-          | Some _ -> raise_lwt Abort_exn
-        end
+        with_keyspace c keyspace ~request_id
+          (fun ks ->
+             begin match Lwt.get ks.ks_tx_key with
+                 None -> P.return_ok ?buf c.och ~request_id ()
+               | Some _ -> raise_lwt Abort_exn
+             end)
     | Lock { Lock.keyspace; names; shared; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
              try_lwt
-               D.lock ks ~shared names >>
+               D.lock ks.ks_ks ~shared names >>
                P.return_ok ?buf c.och ~request_id ()
              with Error Deadlock ->
                P.deadlock ?buf c.och ~request_id () >>
                raise_lwt Abort_exn)
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.get_keys ks table ?max_keys (krange' key_range) >>=
+          (fun ks -> D.get_keys ks.ks_ks table ?max_keys (krange' key_range) >>=
                      P.return_keys ?buf c.och ~request_id)
     | Exist_keys { Exist_keys.keyspace; table; keys; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.exist_keys ks table keys >>=
+          (fun ks -> D.exist_keys ks.ks_ks table keys >>=
                      P.return_exist_result ?buf c.och ~request_id)
     | Count_keys { Count_keys.keyspace; table; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.count_keys ks table (krange' key_range) >>=
+          (fun ks -> D.count_keys ks.ks_ks table (krange' key_range) >>=
                      P.return_key_count ?buf c.och ~request_id)
     | Get_slice { Get_slice.keyspace; table; max_keys; max_columns;
                   decode_timestamps; key_range; predicate; column_range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_slice ks table ?max_keys ?max_columns ~decode_timestamps
+             D.get_slice ks.ks_ks table ?max_keys ?max_columns ~decode_timestamps
                (krange' key_range) ?predicate (crange' column_range) >>=
              maybe_pp c pp_slice ~request_id >>=
              P.return_slice ?buf c.och ~request_id)
@@ -390,42 +385,42 @@ struct
                          key_range; columns; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_slice_values ks table ?max_keys (krange' key_range) columns >>=
+             D.get_slice_values ks.ks_ks table ?max_keys (krange' key_range) columns >>=
              P.return_slice_values ?buf c.och ~request_id)
     | Get_slice_values_timestamps
         { Get_slice_values_timestamps.keyspace; table; max_keys; key_range; columns; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_slice_values_with_timestamps ks table ?max_keys
+             D.get_slice_values_with_timestamps ks.ks_ks table ?max_keys
                (krange' key_range) columns >>=
              P.return_slice_values_timestamps ?buf c.och ~request_id)
     | Get_columns { Get_columns.keyspace; table; max_columns;
                     decode_timestamps; key; column_range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_columns ks table ?max_columns ~decode_timestamps
+             D.get_columns ks.ks_ks table ?max_columns ~decode_timestamps
                key (crange' column_range) >>=
              P.return_columns ?buf c.och ~request_id)
     | Get_column_values { Get_column_values.keyspace; table; key; columns; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.get_column_values ks table key columns >>=
+             D.get_column_values ks.ks_ks table key columns >>=
              P.return_column_values ?buf c.och ~request_id)
     | Get_column { Get_column.keyspace; table; key; column; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.get_column ks table key column >>=
+          (fun ks -> D.get_column ks.ks_ks table key column >>=
                      P.return_column ?buf c.och ~request_id)
     | Put_columns { Put_columns.keyspace; table; data; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.put_multi_columns ks table data >>=
+          (fun ks -> D.put_multi_columns ks.ks_ks table data >>=
                      P.return_ok ?buf c.och ~request_id)
     | Delete_columns { Delete_columns.keyspace; table; key; columns; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.delete_columns ks table key columns >>=
+          (fun ks -> D.delete_columns ks.ks_ks table key columns >>=
                      P.return_ok ?buf c.och ~request_id)
     | Delete_key { Delete_key.keyspace; table; key; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.delete_key ks table key >>=
+          (fun ks -> D.delete_key ks.ks_ks table key >>=
                      P.return_ok ?buf c.och ~request_id)
     | Dump { Dump.keyspace; only_tables; cursor; format; } ->
         let offset = match cursor with
@@ -434,7 +429,7 @@ struct
         with_keyspace c keyspace ~request_id
           (fun ks ->
              lwt x =
-               D.dump ks ?format ?only_tables ?offset () >|= function
+               D.dump ks.ks_ks ?format ?only_tables ?offset () >|= function
                    None -> None
                  | Some (data, None) -> Some (data, None)
                  | Some (data, Some cursor) ->
@@ -443,16 +438,16 @@ struct
     | Load { Load.keyspace; data; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             D.load ks data >>=
+             D.load ks.ks_ks data >>=
              P.return_backup_load_result ?buf c.och ~request_id)
     | Stats { Stats.keyspace; } ->
         with_keyspace c keyspace ~request_id
-          (fun ks -> D.load_stats ks >>=
+          (fun ks -> D.load_stats ks.ks_ks >>=
                      P.return_load_stats ?buf c.och ~request_id)
     | Listen { Listen.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             let ks_name = D.keyspace_name ks in
+             let ks_name = D.keyspace_name ks.ks_ks in
              let k = { subs_ks = ks_name; subs_topic = topic} in
              let tbl =
                find_or_add
@@ -481,7 +476,7 @@ struct
     | Unlisten { Unlisten.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             let ks_name = D.keyspace_name ks in
+             let ks_name = D.keyspace_name ks.ks_ks in
              let k = { subs_ks = ks_name; subs_topic = topic} in
                begin try
                  H.remove (Hashtbl.find c.server.subscriptions k) c.id;
@@ -491,8 +486,8 @@ struct
     | Notify { Notify.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             begin match Lwt.get tx_key with
-                 None -> notify c.server ks topic
+             begin match Lwt.get ks.ks_tx_key with
+                 None -> notify c.server ks.ks_ks topic
                | Some tx_data ->
                    tx_data.tx_notifications <-
                      Notif_queue.push topic tx_data.tx_notifications;
@@ -501,7 +496,7 @@ struct
     | Await { Await.keyspace; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             let ks_name = D.keyspace_name ks in
+             let ks_name = D.keyspace_name ks.ks_ks in
                try_lwt
                  let tbl = H.find c.server.rev_subscriptions c.id in
                  let ((stream, _), _) = Hashtbl.find tbl ks_name in
@@ -595,7 +590,6 @@ struct
       {
         id = (incr client_id; !client_id);
         keyspaces = H.create 13;
-        rev_keyspaces = H.create 13;
         ich; och; server; debug;
         out_buf = Obs_bytea.create 1024;
         in_buf = String.create 128;

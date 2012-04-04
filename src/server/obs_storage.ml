@@ -303,6 +303,67 @@ struct
            return ())
 end
 
+module S =
+struct
+  include Set.Make(String)
+
+  let of_list l = List.fold_left (fun s x -> add x s) empty l
+  let to_list s = List.rev (fold (fun x l -> x :: l) s [])
+
+  let subset ?first ?up_to s =
+    (* trim entries before the first, if proceeds *)
+    let s = match first with
+        None -> s
+      | Some first ->
+          let _, found, after = split first s in
+            if found then add first after else after in
+    (* trim entries starting from up_to if proceeds *)
+    let s = match up_to with
+        None -> s
+      | Some last ->
+          let before, _, _ = split last s in
+            before
+    in s
+end
+
+module EXTMAP(ORD : Map.OrderedType) =
+struct
+  include Map.Make(ORD)
+
+  let find_default x k m = try find k m with Not_found -> x
+
+  let submap ?first ?up_to m =
+    (* trim entries before the first, if proceeds *)
+    let m = match first with
+        None -> m
+      | Some first ->
+          let _, found, after = split first m in
+            match found with
+                Some v -> add first v after
+              | None -> after in
+    (* trim entries starting with up_to, if proceeds *)
+    let m = match up_to with
+        None -> m
+      | Some last ->
+          let before, _, _ = split last m in
+            before
+    in m
+
+  let modify f default k m = add k (f (find_default default k m)) m
+
+  let modify_if_found f k m = try add k (f (find k m)) m with Not_found -> m
+end
+
+module M = EXTMAP(String)
+
+let cmp_table t1 t2 =
+  String.compare (string_of_table t1) (string_of_table t2)
+
+module TM = EXTMAP(struct
+                     type t = table
+                     let compare = cmp_table
+                   end)
+
 type db =
     {
       basedir : string;
@@ -331,7 +392,25 @@ and keyspace =
     mutable ks_tables : (table, int) Hashtbl.t;
     mutable ks_rev_tables : (int, table) Hashtbl.t;
     ks_locks : LOCKS.t;
+    ks_tx_key : transaction Lwt.key;
   }
+
+and transaction =
+    {
+      mutable deleted_keys : S.t TM.t; (* table -> key set *)
+      mutable added_keys : S.t TM.t; (* table -> key set *)
+      mutable added : string M.t M.t TM.t; (* table -> key -> column -> value *)
+      mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
+      repeatable_read : bool;
+      iter_pool : L.iterator Lwt_pool.t ref;
+      ks : keyspace;
+      mutable backup_writebatch : L.writebatch Lazy.t;
+      (* approximate size of data written in current backup_writebatch *)
+      mutable backup_writebatch_size : int;
+      outermost_tx : transaction;
+      mutable locks : (string * Obs_shared_mutex.t option) M.t;
+      dump_buffer : Obs_bytea.t;
+    }
 
 type backup_cursor = Obs_backup.cursor
 
@@ -366,11 +445,13 @@ let read_keyspaces db lldb =
                let ks_tables = read_keyspace_tables lldb ks_name in
                let ks_rev_tables = Hashtbl.create (Hashtbl.length ks_tables) in
                let ks_locks = LOCKS.create 13 in
+               let ks_tx_key = Lwt.new_key () in
                  Hashtbl.iter
                    (fun k v -> Hashtbl.add ks_rev_tables v k)
                    ks_tables;
                  Hashtbl.add h keyspace_name
-                   { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables; ks_locks; };
+                   { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
+                     ks_locks; ks_tx_key; };
                  true)
       lldb
       Obs_datum_encoding.keyspace_table_prefix;
@@ -384,11 +465,14 @@ let reload_keyspaces t lldb =
     Hashtbl.iter
       (fun name ks ->
          try
-           let old_ks = Hashtbl.find t.keyspaces name in
+           let old_kss = Hashtbl.find_all t.keyspaces name in
              (* we must assume that ks_name and ks_id are unchanged;
               * anything else would mean very bad news *)
-             old_ks.ks_tables <- ks.ks_tables;
-             old_ks.ks_rev_tables <- ks.ks_rev_tables
+             List.iter
+               (fun old_ks ->
+                  old_ks.ks_tables <- ks.ks_tables;
+                  old_ks.ks_rev_tables <- ks.ks_rev_tables)
+               old_kss
          with Not_found ->
            (* entirely new keyspace *)
            Hashtbl.add t.keyspaces name ks)
@@ -480,11 +564,23 @@ let short_request x f =
 
 let list_keyspaces t =
   Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>
-  List.sort String.compare |> return
+  S.of_list (* removes duplicates *) |> S.to_list |> return
 
 let register_keyspace t ks_name =
   try
-    return (Hashtbl.find t.keyspaces ks_name)
+    let prev = Hashtbl.find t.keyspaces ks_name in
+      (* we must create a new keyspace with new tx_key and lock table *)
+    let new_ks =
+      { (* we copy explicitly so we get a compile-time complaint if we add a
+         * new field to the record  *)
+        ks_db = prev.ks_db; ks_id = prev.ks_id; ks_name = prev.ks_name;
+        ks_tables = prev.ks_tables; ks_rev_tables = prev.ks_rev_tables;
+        ks_locks = LOCKS.create 13;
+        ks_tx_key = Lwt.new_key ();
+      }
+    in
+      Hashtbl.add t.keyspaces ks_name new_ks;
+      return new_ks
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
@@ -502,6 +598,7 @@ let register_keyspace t ks_name =
         ks_tables = Hashtbl.create 13;
         ks_rev_tables = Hashtbl.create 13;
         ks_locks = LOCKS.create 31;
+        ks_tx_key = Lwt.new_key ();
       }
     in
       Hashtbl.add t.keyspaces ks_name ks;
@@ -518,9 +615,11 @@ let register_keyspace t ks_name =
   Miniregion.use t.db (fun lldb -> register_keyspace t ks_name)
 
 let get_keyspace t ks_name =
-  return begin try
-    Some (Hashtbl.find t.keyspaces ks_name)
-  with Not_found -> None end
+  if Hashtbl.mem t.keyspaces ks_name then begin
+    lwt ks = register_keyspace t ks_name in
+      return (Some ks)
+  end else
+    return None
 
 let keyspace_name ks = ks.ks_name
 
@@ -537,9 +636,6 @@ let it_prev ks it =
 let it_seek ks it s off len =
   Obs_load_stats.record_seeks ks.ks_db.load_stats 1;
   IT.seek it s off len
-
-let cmp_table t1 t2 =
-  String.compare (string_of_table t1) (string_of_table t2)
 
 let list_tables ks =
   let table_r = ref (-1) in
@@ -620,83 +716,6 @@ let key_range_size_on_disk ks ?first ?up_to table =
           Miniregion.use ks.ks_db.db
             (fun lldb -> detach_ks_op ks (L.get_approximate_size lldb _from) _to)
 
-module S =
-struct
-  include Set.Make(String)
-
-  let of_list l = List.fold_left (fun s x -> add x s) empty l
-  let to_list s = List.rev (fold (fun x l -> x :: l) s [])
-
-  let subset ?first ?up_to s =
-    (* trim entries before the first, if proceeds *)
-    let s = match first with
-        None -> s
-      | Some first ->
-          let _, found, after = split first s in
-            if found then add first after else after in
-    (* trim entries starting from up_to if proceeds *)
-    let s = match up_to with
-        None -> s
-      | Some last ->
-          let before, _, _ = split last s in
-            before
-    in s
-end
-
-module EXTMAP(ORD : Map.OrderedType) =
-struct
-  include Map.Make(ORD)
-
-  let find_default x k m = try find k m with Not_found -> x
-
-  let submap ?first ?up_to m =
-    (* trim entries before the first, if proceeds *)
-    let m = match first with
-        None -> m
-      | Some first ->
-          let _, found, after = split first m in
-            match found with
-                Some v -> add first v after
-              | None -> after in
-    (* trim entries starting with up_to, if proceeds *)
-    let m = match up_to with
-        None -> m
-      | Some last ->
-          let before, _, _ = split last m in
-            before
-    in m
-
-  let modify f default k m = add k (f (find_default default k m)) m
-
-  let modify_if_found f k m = try add k (f (find k m)) m with Not_found -> m
-end
-
-module M = EXTMAP(String)
-
-module TM = EXTMAP(struct
-                     type t = table
-                     let compare = cmp_table
-                   end)
-
-type transaction =
-    {
-      mutable deleted_keys : S.t TM.t; (* table -> key set *)
-      mutable added_keys : S.t TM.t; (* table -> key set *)
-      mutable added : string M.t M.t TM.t; (* table -> key -> column -> value *)
-      mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
-      repeatable_read : bool;
-      iter_pool : L.iterator Lwt_pool.t ref;
-      ks : keyspace;
-      mutable backup_writebatch : L.writebatch Lazy.t;
-      (* approximate size of data written in current backup_writebatch *)
-      mutable backup_writebatch_size : int;
-      outermost_tx : transaction;
-      mutable locks : (string * Obs_shared_mutex.t option) M.t;
-      dump_buffer : Obs_bytea.t;
-    }
-
-let tx_key = Lwt.new_key ()
-
 let register_new_table_and_add_to_writebatch_aux put ks wb table =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
@@ -719,7 +738,7 @@ let register_new_table_and_add_to_writebatch' =
        WRITEBATCH.need_keyspace_reload wb)
 
 let rec transaction_aux with_iter_pool ks f =
-  match Lwt.get tx_key with
+  match Lwt.get ks.ks_tx_key with
     | None ->
         with_iter_pool ks.ks_db None begin fun ~iter_pool ~repeatable_read ->
           let rec tx =
@@ -732,7 +751,7 @@ let rec transaction_aux with_iter_pool ks f =
               dump_buffer = Obs_bytea.create 16;
             } in
           try_lwt
-            lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
+            lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
               commit_outermost_transaction ks tx >>
               return y
           finally
@@ -744,7 +763,7 @@ let rec transaction_aux with_iter_pool ks f =
         with_iter_pool
           ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
             let tx = { parent_tx with iter_pool; repeatable_read; } in
-            lwt y = Lwt.with_value tx_key (Some tx) (fun () -> f tx) in
+            lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
               parent_tx.deleted_keys <- tx.deleted_keys;
               parent_tx.added <- tx.added;
               parent_tx.deleted <- tx.deleted;
@@ -869,7 +888,7 @@ let repeatable_read_transaction ks f =
          ks f)
 
 let lock_one ks ~shared name =
-  match Lwt.get tx_key with
+  match Lwt.get ks.ks_tx_key with
       None -> return ()
     | Some tx ->
       (* we use tx.outermost_tx.locks instead of tx.locks because locks are
@@ -2571,7 +2590,7 @@ struct
 end
 
 let with_transaction ks f =
-  match Lwt.get tx_key with
+  match Lwt.get ks.ks_tx_key with
       None -> read_committed_transaction ks f
     | Some tx -> f tx
 
@@ -2614,7 +2633,7 @@ let get_column ks table key column =
   with_transaction ks (fun tx -> get_column tx table key column)
 
 let put_multi_columns ks table data =
-  match Lwt.get tx_key with
+  match Lwt.get ks.ks_tx_key with
     | None -> put_multi_columns_no_tx ks table data
     | Some tx -> put_multi_columns tx table data
 
