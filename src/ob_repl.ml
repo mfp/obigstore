@@ -29,6 +29,7 @@ module Array = struct include BatArray include Array end
 
 exception Commit_exn
 exception Abort_exn
+exception Reload_keyspace of string
 
 module D = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 
@@ -372,6 +373,12 @@ struct
              (fun _ ->
                 (* .read is handled directly by the exec loop *)
                 ())
+
+  let () = exactly 1 ~name:"keyspace"
+             ~help:("KEYSPACE", "Switch to KEYSPACE.")
+             (function
+                | [ks] -> raise (Reload_keyspace ks)
+                | _ -> (* should not happen *)())
 
   let list =
     Hashtbl.fold (fun name _ l -> name :: l) directive_tbl []
@@ -870,7 +877,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
     | Parsing.Parse_error ->
         print_endline "Parse error";
         return ()
-    | End_of_file | Abort_exn | Commit_exn as e -> raise_lwt e
+    | End_of_file | Abort_exn | Commit_exn | Reload_keyspace _ as e -> raise_lwt e
     | Lwt_read_line.Interrupt -> exit 0
     | Obs_protocol.Error (Obs_protocol.Exception End_of_file)
     | Obs_protocol.Error (Obs_protocol.Closed) ->
@@ -914,6 +921,16 @@ let () =
         | Abort_exn | Commit_exn ->
             print_endline "Not inside a transaction";
             outer_loop db ks
+        | Reload_keyspace new_ks -> begin
+            match !curr_keyspace with
+                Some (x, _) when x = new_ks -> outer_loop db ks
+              | _ ->
+                  printf "Switching to keyspace %S\n%!" new_ks;
+                  keyspace := new_ks;
+                  lwt ks = D.register_keyspace db !keyspace in
+                    curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
+                    outer_loop db ks
+          end
         | Need_reconnect phrase ->
             let rec reconnect retry_phrase =
               try_lwt
