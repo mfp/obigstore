@@ -17,6 +17,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+open Lwt
 open Test_00util
 
 module TEST =
@@ -34,4 +35,10 @@ module TEST =
              finally
                Obs_storage.close_db db
            end
-     end)
+
+       let with_db_pool f =
+         with_db
+           (fun db ->
+              let pool = Lwt_pool.create 100 (fun () -> return db) in
+                f pool)
+       end)

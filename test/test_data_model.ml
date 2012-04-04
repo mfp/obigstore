@@ -43,6 +43,7 @@ module Run_test
   (C : sig
      val id : string
      val with_db : (D.db -> unit Lwt.t) -> unit
+     val with_db_pool : (D.db Lwt_pool.t -> unit Lwt.t) -> unit
    end) =
 struct
   let string_of_key_range = function
@@ -1188,7 +1189,18 @@ struct
                 D.lock ks ~shared:false ["test_lock_nested"] >>
                 D.lock ks ~shared:false ["test_lock_nested"]))
 
+  let test_commit_before_return p =
+    Lwt_pool.use p
+      (fun db1 ->
+         Lwt_pool.use p
+           (fun db2 ->
+              lwt ks1 = D.register_keyspace db1 "test_commit_before_return" in
+              lwt ks2 = D.register_keyspace db2 "test_commit_before_return" in
+                put_slice ks1 T.tbl [ "a", ["x", ""] ] >>
+                get_all ks2 T.tbl >|= aeq_slice (Some "a", [ "a", "x", ["x", ""]])))
+
   let test_with_db f () = C.with_db f
+  let test_with_pool f () = C.with_db_pool f
 
   let tests =
     List.map (fun (n, f) -> n >:: test_with_db f)
@@ -1227,6 +1239,10 @@ struct
       "exist_keys", test_exist_keys;
       "lock recursive", test_lock_recursive;
       "lock nested", test_lock_nested;
+    ] @
+    List.map (fun (n, f) -> n >:: test_with_pool f)
+    [
+      "commit before return", test_commit_before_return;
     ]
 
   let () =

@@ -48,6 +48,30 @@ struct
           CLIENT.close client;
           Obs_storage.close_db db
       end
+
+  let with_db_pool f =
+    let dir = make_temp_dir () in
+    let db = Obs_storage.open_db dir in
+    let server = SERVER.make db in
+    let clients = ref [] in
+    let mk_client () =
+      let ch1_in, ch1_out = Lwt_io.pipe () in
+      let ch2_in, ch2_out = Lwt_io.pipe () in
+      let client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out in
+        clients := client :: !clients;
+        ignore
+          (try_lwt
+             SERVER.service_client server ch1_in ch2_out
+           with _ -> return ());
+        return  client in
+    let pool = Lwt_pool.create 100 mk_client in
+      Lwt_unix.run begin
+        try_lwt
+          f pool
+        finally
+          List.iter CLIENT.close !clients;
+          Obs_storage.close_db db
+      end
 end
 
 module TEST = Test_data_model.Run_test(CLIENT)(C)

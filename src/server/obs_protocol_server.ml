@@ -322,7 +322,7 @@ struct
           with_keyspace c keyspace ~request_id
             (fun ks ->
                try_lwt
-                 lwt ret =
+                 lwt () =
                    transaction_f ks
                      (fun ks ->
                         Lwt.with_value tx_key (Some tx_data)
@@ -331,8 +331,8 @@ struct
                                P.return_ok ?buf c.och ~request_id () >>
                                service c
                              with Commit_exn ->
-                               wait_for_pending_reqs c >>
-                               P.return_ok ?buf c.och ~request_id ()))
+                               wait_for_pending_reqs c)) >>
+                     P.return_ok ?buf c.och ~request_id ()
                  in
                    (* we deliver notifications _after_ actual commit
                     * (otherwise, new data wouldn't be found if another client
@@ -341,7 +341,7 @@ struct
                      Notif_queue.iter (notify c.server ks) tx_data.tx_notifications
                    else parent_tx_data.tx_notifications <- tx_data.tx_notifications
                    end;
-                   return ret
+                   return ()
                with Abort_exn ->
                  wait_for_pending_reqs c >>
                  P.return_ok ?buf c.och ~request_id ())
