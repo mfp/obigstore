@@ -38,7 +38,7 @@ let server = ref "127.0.0.1"
 let port = ref 12050
 let simple_repl = ref false
 
-let usage_message = "Usage: ob_repl -keyspace NAME [options]"
+let usage_message = "Usage: ob_repl [options]"
 
 let params =
   Arg.align
@@ -384,6 +384,12 @@ struct
     Hashtbl.fold (fun name _ l -> name :: l) directive_tbl []
 end
 
+exception Keyspace_not_set
+
+let get = function
+    None -> raise Keyspace_not_set
+  | Some ks -> ks
+
 let execute ?(fmt=Format.std_formatter) ks db loop r =
   let open Request in
   let ret f v = return (fun () -> f v) in
@@ -405,15 +411,15 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       ret (fun _ -> printf "Raw dump saved\n%!")
   | List_keyspaces _ -> D.list_keyspaces db >>= ret (print_list (sprintf "%S"))
   | List_tables _ ->
-      (D.list_tables ks :> string list Lwt.t) >>= ret (print_list (sprintf "%S"))
+      (D.list_tables (get ks) :> string list Lwt.t) >>= ret (print_list (sprintf "%S"))
   | Table_size_on_disk { Table_size_on_disk.table; _ } ->
-      D.table_size_on_disk ks table >>= ret (printf "%Ld\n%!")
+      D.table_size_on_disk (get ks) table >>= ret (printf "%Ld\n%!")
   | Key_range_size_on_disk { Key_range_size_on_disk.table; range; _ } ->
-      D.key_range_size_on_disk ks table ?first:range.first ?up_to:range.up_to >>=
+      D.key_range_size_on_disk (get ks) table ?first:range.first ?up_to:range.up_to >>=
       ret (printf "%Ld\n%!")
   | Begin _ ->
       begin try_lwt
-        D.repeatable_read_transaction ks
+        D.repeatable_read_transaction (get ks)
           (fun ks ->
              incr tx_level;
              try_lwt
@@ -433,17 +439,17 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       ret_nothing
   | Abort _ -> raise_lwt Abort_exn
   | Commit _ -> raise_lwt Commit_exn
-  | Lock { Lock.names; shared; _ } -> D.lock ks ~shared names >>= ret_nothing
+  | Lock { Lock.names; shared; _ } -> D.lock (get ks) ~shared names >>= ret_nothing
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
-      lwt keys = D.get_keys ks table ?max_keys (krange' key_range) in
+      lwt keys = D.get_keys (get ks) table ?max_keys (krange' key_range) in
         Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));
         ret (pp_lines (pp_datum ~strict) fmt) keys
   | Count_keys { Count_keys.table; key_range; } ->
-      D.count_keys ks table (krange' key_range) >>= ret (printf "%Ld\n%!")
+      D.count_keys (get ks) table (krange' key_range) >>= ret (printf "%Ld\n%!")
   | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range;
                 predicate; } ->
       lwt slice =
-        D.get_slice ks table ?max_keys ?max_columns (krange' key_range)
+        D.get_slice (get ks) table ?max_keys ?max_columns (krange' key_range)
           ?predicate (crange' column_range) in
       let nkeys = List.length (snd slice) in
       let ncols =
@@ -462,22 +468,22 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       let columns = List.fold_left (fun s (_, l) -> List.length l + s) 0 data in
         Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys (Int64.of_int keys);
         Timing.cnt_put_cols := Int64.(add !Timing.cnt_put_cols (of_int columns));
-        D.put_multi_columns ks table data >>=
+        D.put_multi_columns (get ks) table data >>=
         ret_nothing
   | Delete_columns { Delete_columns.table; key; columns; } ->
       Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys 1L;
       Timing.cnt_put_cols :=
         Int64.(add !Timing.cnt_put_cols (of_int (List.length columns)));
-      D.delete_columns ks table key columns >>=
+      D.delete_columns (get ks) table key columns >>=
       ret_nothing
   | Delete_key { Delete_key.table; key; } ->
       Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys 1L;
-      D.delete_key ks table key >>=
+      D.delete_key (get ks) table key >>=
       ret_nothing
   | Stats _ ->
       let open Load_stats_ in
       let open Rates in
-      lwt stats = D.load_stats ks in
+      lwt stats = D.load_stats (get ks) in
       let pr_avg (period, r) =
         puts "";
         puts "%d-second average rates" period;
@@ -508,11 +514,11 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
           (Int64.to_float stats.total_near_seeks /. dt);
         List.iter pr_avg stats.averages;
         ret_nothing ()
-    | Listen { Listen.topic } -> D.listen ks topic >>= ret_nothing
-    | Unlisten { Unlisten.topic } -> D.unlisten ks topic >>= ret_nothing
-    | Notify { Notify.topic } -> D.notify ks topic >>= ret_nothing
+    | Listen { Listen.topic } -> D.listen (get ks) topic >>= ret_nothing
+    | Unlisten { Unlisten.topic } -> D.unlisten (get ks) topic >>= ret_nothing
+    | Notify { Notify.topic } -> D.notify (get ks) topic >>= ret_nothing
     | Await _ ->
-        lwt l = D.await_notifications ks in
+        lwt l = D.await_notifications (get ks) in
           ret (print_list (sprintf "%S")) l
 
 let execute ?(fmt = Format.std_formatter) ks db loop req =
@@ -899,10 +905,6 @@ let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
-  if !keyspace = "" then begin
-    Arg.usage params usage_message;
-    exit 1
-  end;
   Lwt_unix.run begin
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
@@ -910,8 +912,12 @@ let () =
     let get_db_and_ks () =
       lwt ich, och = Lwt_io.open_connection addr in
       let db = D.make ~data_address ich och in
-      lwt ks = D.register_keyspace db !keyspace in
-        return (db, ks) in
+        if !keyspace = "" then
+          return (db, None)
+        else begin
+          lwt ks = D.register_keyspace db !keyspace in
+            return (db, Some ks)
+        end in
 
     let rec outer_loop ?phrase db ks =
       try_lwt
@@ -929,7 +935,7 @@ let () =
                   keyspace := new_ks;
                   lwt ks = D.register_keyspace db !keyspace in
                     curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
-                    outer_loop db ks
+                    outer_loop db (Some ks)
           end
         | Need_reconnect phrase ->
             let rec reconnect retry_phrase =
@@ -946,7 +952,7 @@ let () =
               outer_loop ?phrase db ks in
 
     lwt db, ks = get_db_and_ks () in
-      curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
+      curr_keyspace := Option.map (fun ks -> (D.keyspace_name ks, D.keyspace_id ks)) ks;
       puts "ob_repl";
       puts "Enter \".help\" for instructions.";
       outer_loop db ks

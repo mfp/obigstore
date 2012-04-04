@@ -31,12 +31,12 @@ let curr_keyspace : (string * int) option ref = ref None
 
 let with_ks f =
   match !curr_keyspace with
-    None -> Error "Select a keyspace first with   keyspace xxx"
+    None -> Error "Select a keyspace first with  .keyspace KEYSPACE"
   | Some (_, ks) -> Command (f ks, None)
 
 let with_ks_unwrap f =
   match !curr_keyspace with
-    None -> Error "Select a keyspace first with   keyspace xxx"
+    None -> Error "Select a keyspace first with  .keyspace KEYSPACE"
   | Some (_, ks) -> f ks
 
 let key_codecs :
