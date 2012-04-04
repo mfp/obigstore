@@ -138,6 +138,43 @@ struct
         f raw_dump
     with Not_found -> return default
 
+  let rec pp_list pp fmt = function
+      [] -> ()
+    | x :: tl -> Format.fprintf fmt "%a,@ " pp x;
+                 pp_list pp fmt tl
+
+  let pp_request_id fmt id =
+    if Obs_protocol.is_sync_req id then
+      Format.fprintf fmt "<sync>"
+    else
+      Format.fprintf fmt "%s" Cryptokit.(transform_string (Hexa.encode ()) id)
+
+  let pp_slice fmt (lastkey, kds) =
+    let open Obs_data_model in
+    let pp_col fmt col =
+      Format.fprintf fmt
+        "{ @[name: %S;@ data: %S;@ timestamp: %s@]}"
+        col.name col.data
+        (match col.timestamp with
+             No_timestamp -> "auto"
+           | Timestamp x -> Int64.to_string x) in
+    let pp_kd fmt kd =
+      Format.fprintf fmt
+        "{ @[key: %S;@ last_column: %S;@ columns: @[%a@] }@]"
+        kd.key kd.last_column (pp_list pp_col) kd.columns
+    in
+      Format.fprintf fmt "(@[%s,@ %a)@]"
+        (match lastkey with None -> "None" | Some x -> sprintf "Some %S" x)
+        (pp_list pp_kd) kds
+
+  let maybe_pp c pp ~request_id x =
+    if c.debug then begin
+      Format.eprintf
+        "Sending response for %a to %d:@\n @[%a@]@."
+        pp_request_id request_id c.id pp x;
+    end;
+    return x
+
   let rec service c =
     !auto_yielder () >>
     lwt request_id, len, crc =
@@ -215,7 +252,9 @@ struct
       end
 
   and respond ?buf c ~request_id r =
-    if c.debug then Format.eprintf "Got request from %d %a@." c.id Request.pp r;
+    if c.debug then
+      Format.eprintf "Got request %a from %d@\n @[%a@]@."
+        pp_request_id request_id c.id Request.pp r;
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks = D.register_keyspace c.server.db name in
@@ -345,6 +384,7 @@ struct
           (fun ks ->
              D.get_slice ks table ?max_keys ?max_columns ~decode_timestamps
                (krange' key_range) ?predicate (crange' column_range) >>=
+             maybe_pp c pp_slice ~request_id >>=
              P.return_slice ?buf c.och ~request_id)
     | Get_slice_values { Get_slice_values.keyspace; table; max_keys;
                          key_range; columns; } ->
