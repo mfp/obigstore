@@ -50,37 +50,70 @@ let make_server () =
   let db = Obs_storage.open_db dir in
     SERVER.make db
 
-let test_notifications () =
-  let server = make_server () in
-     with_conn server
-       (fun c1 ->
-          with_conn server
-            (fun c2 ->
-               lwt ks = CLIENT.register_keyspace c1 "ks" in
-               lwt ks' = CLIENT.register_keyspace c2 "ks" in
-                 CLIENT.listen ks "foo" >>
-                 CLIENT.notify ks' "foobar" >>
-                 CLIENT.notify ks' "foo" >>
-                 expect ks ["foo"] >>
-                 CLIENT.unlisten ks "foo" >>
-                 CLIENT.listen ks "bar" >>
-                 CLIENT.listen ks "foobar" >>
-                 CLIENT.listen ks "babar" >>
-                 CLIENT.listen ks' "bar" >>
-                 CLIENT.notify ks' "bar" >>
-                 CLIENT.notify ks' "babar" >>
-                 expect ~msg:"first ks" ks ["bar"; "babar"] >>
-                 expect ~msg:"second ks" ks' ["bar"]) >>
-          with_conn server
-            (fun c2 ->
-               lwt ks = CLIENT.register_keyspace c1 "ks" in
-               lwt ks' = CLIENT.register_keyspace c2 "ks" in
-               lwt ks2' = CLIENT.register_keyspace c2 "ks2" in
-                 CLIENT.notify ks2' "bar" >>
-                 CLIENT.notify ks' "babar" >>
-                   expect ks ["babar"]))
+let do_test_notifications ks1a ks1b ks2 =
+  CLIENT.listen ks1a "foo" >>
+  CLIENT.notify ks1b "foobar" >>
+  CLIENT.notify ks1b "foo" >>
+  expect ks1a ["foo"] >>
+  CLIENT.unlisten ks1a "foo" >>
+  CLIENT.listen ks1a "bar" >>
+  CLIENT.listen ks1a "foobar" >>
+  CLIENT.listen ks1a "babar" >>
+  CLIENT.listen ks1b "bar" >>
+  CLIENT.notify ks1b "bar" >>
+  CLIENT.notify ks1b "babar" >>
+  expect ~msg:"ks1a" ks1a ["bar"; "babar"] >>
+  expect ~msg:"ks1b" ks1b ["bar"] >>
+  CLIENT.notify ks2 "bar" >>
+  CLIENT.notify ks1b "babar" >>
+  expect ks1a ["babar"]
 
-let test_notifications_in_tx () =
+let do_test_notifications_in_tx ks ks' =
+  CLIENT.listen ks "foo" >>
+  CLIENT.listen ks "bar" >>
+  CLIENT.listen ks "baz" >>
+  CLIENT.notify ks' "bar" >>
+  CLIENT.read_committed_transaction ks'
+    (fun ks' ->
+       CLIENT.notify ks' "baz" >>
+       try_lwt
+         CLIENT.read_committed_transaction ks'
+           (fun ks' ->
+              CLIENT.notify ks' "foo" >>
+              (* abort the tx *)
+              raise_lwt Exit)
+       with Exit -> return ()) >>
+  expect ks ["bar"; "baz"]
+
+let test_notifications_same_conn () =
+  let server = make_server () in
+    with_conn server
+      (fun c1 ->
+         lwt ks1a = CLIENT.register_keyspace c1 "ks" in
+         lwt ks1b = CLIENT.register_keyspace c1 "ks" in
+         lwt ks2 = CLIENT.register_keyspace c1 "ks2" in
+           do_test_notifications ks1a ks1b ks2)
+
+let test_notifications_in_tx_same_conn () =
+  let server = make_server () in
+     with_conn server
+       (fun c1 ->
+          lwt ks = CLIENT.register_keyspace c1 "ks" in
+          lwt ks' = CLIENT.register_keyspace c1 "ks" in
+            do_test_notifications_in_tx ks ks')
+
+let test_notifications_diff_conn () =
+  let server = make_server () in
+    with_conn server
+      (fun c1 ->
+         with_conn server
+           (fun c2 ->
+              lwt ks1a = CLIENT.register_keyspace c1 "ks" in
+              lwt ks1b = CLIENT.register_keyspace c2 "ks" in
+              lwt ks2 = CLIENT.register_keyspace c1 "ks2" in
+                do_test_notifications ks1a ks1b ks2))
+
+let test_notifications_in_tx_diff_conn () =
   let server = make_server () in
      with_conn server
        (fun c1 ->
@@ -88,20 +121,7 @@ let test_notifications_in_tx () =
             (fun c2 ->
                lwt ks = CLIENT.register_keyspace c1 "ks" in
                lwt ks' = CLIENT.register_keyspace c2 "ks" in
-                 CLIENT.listen ks "foo" >>
-                 CLIENT.listen ks "bar" >>
-                 CLIENT.listen ks "baz" >>
-                 CLIENT.notify ks' "bar" >>
-                 CLIENT.read_committed_transaction ks'
-                   (fun ks' ->
-                      CLIENT.notify ks' "baz" >>
-                      try_lwt
-                        CLIENT.read_committed_transaction ks'
-                          (fun ks' ->
-                             CLIENT.notify ks' "foo" >>
-                             raise_lwt Exit)
-                      with Exit -> return ()) >>
-                 expect ks ["bar"; "baz"]))
+                 do_test_notifications_in_tx ks ks'))
 
 let column_without_timestamp (name, data) =
   { DM.name; data; timestamp = DM.No_timestamp }
@@ -144,8 +164,10 @@ let tests =
     (fun (k, f) ->
        k >:: (fun () -> Lwt_unix.run (Lwt_unix.with_timeout 0.1 f)))
     [
-      "simple notifications", test_notifications;
-      "notify in transaction", test_notifications_in_tx;
+      "simple notifications, same conn", test_notifications_same_conn;
+      "notify in transaction, same conn", test_notifications_in_tx_same_conn;
+      "simple notifications, diff conn", test_notifications_diff_conn;
+      "notify in transaction, diff conn", test_notifications_in_tx_diff_conn;
       "notification follows data commit", test_notification_follows_commit;
     ]
 

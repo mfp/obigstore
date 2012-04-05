@@ -36,7 +36,11 @@ sig
   (** [listen ks topìc] allows to receive notifications sent to the specified
     * [topic] in the keyspace [ks]. Note that [listen] is not affected by
     * surrounding transactions, i.e., the subscription is performed even if
-    * the surrounding transaction is canceled. *)
+    * the surrounding transaction is canceled.
+    * Note that subscriptions are per [keyspace], not per keyspace name: it is
+    * possible to subscribe to different topics in two different [keyspace]
+    * objects which operate on the same DB keyspace.
+    * *)
   val listen : keyspace -> string -> unit Lwt.t
 
   (** [unlisten ks topìc] signals that further notifications sent to the [topic]
@@ -56,7 +60,7 @@ sig
     * *)
   val notify : keyspace -> string -> unit Lwt.t
 
-  (** Returned queued notifications, blocking if there is none yet.
+  (** Return queued notifications, blocking if there is none yet.
     * An empty list will be returned when there are no more queued
     * notifications and the underlying connection is closed.
     * *)
