@@ -27,9 +27,23 @@ let data_protocol_version = (0, 0, 0)
 
 type replication_wait = Await_reception | Await_commit
 
-let new_unique_id =
-  let n = ref 0 in
-    (fun () -> incr n; !n)
+module TY : sig
+  type ks_id = private int
+
+  val ks_id_of_int : int -> ks_id
+  val new_unique_id : unit -> ks_id
+end =
+struct
+  type ks_id = int
+
+  let new_unique_id =
+    let n = ref 0 in
+      (fun () -> incr n; !n)
+
+  let ks_id_of_int n = n
+end
+
+open TY
 
 module Make
   (D : sig
@@ -53,6 +67,12 @@ struct
                             let hash n = n
                             let equal a b = (a == b)
                           end)
+
+  module HID = Hashtbl.Make(struct
+                              type t = ks_id
+                              let hash (n : ks_id) = (n :> int)
+                              let equal a b = (a == b)
+                            end)
 
   module Notif_queue : sig
     type 'a t
@@ -102,7 +122,7 @@ struct
   type client_state =
       {
         id : client_id;
-        keyspaces : keyspace H.t;
+        keyspaces : keyspace HID.t;
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         server : t;
@@ -115,7 +135,7 @@ struct
       }
 
   and keyspace =
-    { ks_unique_id : int;
+    { ks_unique_id : ks_id;
       ks_tx_key : tx_data Lwt.key;
       ks_ks : D.keyspace;
   }
@@ -266,18 +286,18 @@ struct
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
         let ks_unique_id = new_unique_id () in
-          H.add c.keyspaces ks_unique_id
+          HID.add c.keyspaces ks_unique_id
             { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); };
-          P.return_keyspace ?buf c.och ~request_id ks_unique_id
+          P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.server.db name with
             None -> P.return_keyspace_maybe ?buf c.och ~request_id None
           | Some ks_ks ->
               let ks_unique_id = new_unique_id () in
-                H.add c.keyspaces ks_unique_id
+                HID.add c.keyspaces ks_unique_id
                   { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); };
                 P.return_keyspace_maybe ?buf c.och ~request_id
-                  (Some ks_unique_id)
+                  (Some ks_unique_id :> int option)
       end
     | List_keyspaces _ ->
         D.list_keyspaces c.server.db >>=
@@ -544,7 +564,10 @@ struct
       with _ -> () end
 
   and with_keyspace c ks_idx ~request_id f =
-    let ks = try Some (H.find c.keyspaces ks_idx) with Not_found -> None in
+    let ks =
+      try Some (HID.find c.keyspaces (ks_id_of_int ks_idx))
+      with Not_found -> None
+    in
       match ks with
           None -> P.unknown_keyspace c.och ~request_id ()
         | Some ks -> f ks
@@ -589,7 +612,7 @@ struct
     let c =
       {
         id = (incr client_id; !client_id);
-        keyspaces = H.create 13;
+        keyspaces = HID.create 13;
         ich; och; server; debug;
         out_buf = Obs_bytea.create 1024;
         in_buf = String.create 128;
