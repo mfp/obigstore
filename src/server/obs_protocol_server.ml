@@ -63,12 +63,6 @@ struct
   exception Commit_exn
 
   module H = Hashtbl.Make(struct
-                            type t = int
-                            let hash n = n
-                            let equal a b = (a == b)
-                          end)
-
-  module HID = Hashtbl.Make(struct
                               type t = ks_id
                               let hash (n : ks_id) = (n :> int)
                               let equal a b = (a == b)
@@ -111,8 +105,8 @@ struct
   type t =
       {
         db : D.db;
-        subscriptions : (subscription_descriptor, subs_stream HID.t) Hashtbl.t;
-        rev_subscriptions : (subs_stream * mutable_string_set) HID.t;
+        subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
+        rev_subscriptions : (subs_stream * mutable_string_set) H.t;
         raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
         mutable raw_dump_seqno : Int64.t;
         replication_wait : replication_wait;
@@ -121,7 +115,7 @@ struct
   type client_state =
       {
         id : client_id;
-        keyspaces : keyspace HID.t;
+        keyspaces : keyspace H.t;
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         server : t;
@@ -285,7 +279,7 @@ struct
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
         let ks_unique_id = new_unique_id () in
-          HID.add c.keyspaces ks_unique_id
+          H.add c.keyspaces ks_unique_id
             { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); };
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
@@ -293,7 +287,7 @@ struct
             None -> P.return_keyspace_maybe ?buf c.och ~request_id None
           | Some ks_ks ->
               let ks_unique_id = new_unique_id () in
-                HID.add c.keyspaces ks_unique_id
+                H.add c.keyspaces ks_unique_id
                   { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); };
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
@@ -471,20 +465,20 @@ struct
              let tbl =
                find_or_add
                  Hashtbl.find
-                 (fun h k -> let v = HID.create 13 in Hashtbl.add h k v; v)
+                 (fun h k -> let v = H.create 13 in Hashtbl.add h k v; v)
                  c.server.subscriptions k
              in
-               if not (HID.mem tbl ks.ks_unique_id) then begin
+               if not (H.mem tbl ks.ks_unique_id) then begin
                  let stream, topics =
                     find_or_add
-                      HID.find
+                      H.find
                       (fun h k ->
                          let v = (Lwt_stream.create (), Hashtbl.create 13) in
-                           HID.add h k v; v)
+                           H.add h k v; v)
                       c.server.rev_subscriptions ks.ks_unique_id
                  in
                    Hashtbl.replace topics topic ();
-                   HID.add tbl ks.ks_unique_id stream;
+                   H.add tbl ks.ks_unique_id stream;
                end;
                P.return_ok ?buf c.och ~request_id ())
     | Unlisten { Unlisten.keyspace; topic; } ->
@@ -493,9 +487,9 @@ struct
              let ks_name = D.keyspace_name ks.ks_ks in
              let k = { subs_ks = ks_name; subs_topic = topic} in
                begin try
-                 HID.remove (Hashtbl.find c.server.subscriptions k) ks.ks_unique_id;
+                 H.remove (Hashtbl.find c.server.subscriptions k) ks.ks_unique_id;
                  Hashtbl.remove
-                   (snd (HID.find c.server.rev_subscriptions ks.ks_unique_id))
+                   (snd (H.find c.server.rev_subscriptions ks.ks_unique_id))
                    ks_name;
                with Not_found -> () end;
                P.return_ok ?buf c.och ~request_id ())
@@ -513,7 +507,7 @@ struct
         with_keyspace c keyspace ~request_id
           (fun ks ->
              try_lwt
-               let ((stream, _), _) = HID.find c.server.rev_subscriptions
+               let ((stream, _), _) = H.find c.server.rev_subscriptions
                                         ks.ks_unique_id in
                (* we use get_available_up_to to limit the stack footprint
                 * (get_available is not tail-recursive) *)
@@ -555,12 +549,12 @@ struct
     let k = { subs_ks = ks_name; subs_topic = topic; } in
       begin try
         let subs = Hashtbl.find server.subscriptions k in
-          HID.iter (fun _ (_, pushf) -> pushf (Some topic)) subs
+          H.iter (fun _ (_, pushf) -> pushf (Some topic)) subs
       with _ -> () end
 
   and with_keyspace c ks_idx ~request_id f =
     let ks =
-      try Some (HID.find c.keyspaces (ks_id_of_int ks_idx))
+      try Some (H.find c.keyspaces (ks_id_of_int ks_idx))
       with Not_found -> None
     in
       match ks with
@@ -595,7 +589,7 @@ struct
     {
       db;
       subscriptions = Hashtbl.create 13;
-      rev_subscriptions = HID.create 13;
+      rev_subscriptions = H.create 13;
       raw_dump_seqno = 0L;
       raw_dumps = Hashtbl.create 13;
       replication_wait;
@@ -607,7 +601,7 @@ struct
     let c =
       {
         id = (incr client_id; !client_id);
-        keyspaces = HID.create 13;
+        keyspaces = H.create 13;
         ich; och; server; debug;
         out_buf = Obs_bytea.create 1024;
         in_buf = String.create 128;
@@ -622,27 +616,27 @@ struct
          raise_lwt End_of_file
        finally
          let empty_topics =
-           HID.fold
+           H.fold
              (fun ks_id ks l ->
                 let subs_ks = D.keyspace_name ks.ks_ks in
                   try
                     let ((_, pushf), topics) =
-                      HID.find server.rev_subscriptions ks_id
+                      H.find server.rev_subscriptions ks_id
                     in
                       pushf None;
                       Hashtbl.fold
                         (fun subs_topic _ l ->
                            let k =  { subs_ks; subs_topic; } in
                            let t = Hashtbl.find server.subscriptions k in
-                             HID.remove t ks_id;
-                             if HID.length t = 0 then k :: l
+                             H.remove t ks_id;
+                             if H.length t = 0 then k :: l
                              else l)
                         topics l
                   with Not_found -> l)
              c.keyspaces []
          in
-           HID.iter
-             (fun ks_id _ -> HID.remove server.rev_subscriptions ks_id)
+           H.iter
+             (fun ks_id _ -> H.remove server.rev_subscriptions ks_id)
              c.keyspaces;
            List.iter (Hashtbl.remove server.subscriptions) empty_topics;
            return ()
