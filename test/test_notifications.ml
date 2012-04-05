@@ -159,6 +159,18 @@ let test_notification_follows_commit () =
                  | `Wrong_data ->
                      assert_failure "Wrong data committed before notification"))
 
+let test_await_before_subscription () =
+  let server = make_server () in
+    with_conn server
+      (fun c1 ->
+         lwt ks = CLIENT.register_keyspace c1 "ks" in
+         lwt ks' = CLIENT.register_keyspace c1 "ks" in
+         let ok = expect ~msg:"foo subscribed to after await" ks ["foo"] in
+           CLIENT.listen ks "foo" >>
+           CLIENT.listen ks "bar" >>
+           CLIENT.notify ks' "foo" >>
+           ok)
+
 let tests =
   List.map
     (fun (k, f) ->
@@ -169,6 +181,7 @@ let tests =
       "simple notifications, diff conn", test_notifications_diff_conn;
       "notify in transaction, diff conn", test_notifications_in_tx_diff_conn;
       "notification follows data commit", test_notification_follows_commit;
+      "await before subscription", test_await_before_subscription;
     ]
 
 let () =

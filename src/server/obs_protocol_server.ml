@@ -506,7 +506,7 @@ struct
     | Await { Await.keyspace; } ->
         with_keyspace c keyspace ~request_id
           (fun ks ->
-             try_lwt
+             let attempt () =
                let ((stream, _), _) = H.find c.server.rev_subscriptions
                                         ks.ks_unique_id in
                (* we use get_available_up_to to limit the stack footprint
@@ -518,9 +518,17 @@ struct
                        | Some x -> return [x]
                    end
                  | l -> return l
-               in P.return_notifications ?buf c.och ~request_id l
-             with Not_found ->
-               P.return_notifications ?buf c.och ~request_id [])
+               in P.return_notifications ?buf c.och ~request_id l in
+             (* if there's no subscription yet, wait until there's one *)
+             (* TODO: use a condition to wait for a subscription without
+              * polling *)
+             let rec retry_await_if_needed () =
+               try_lwt
+                 attempt ()
+               with Not_found ->
+                 Lwt_unix.sleep 0.05 >>
+                 retry_await_if_needed ()
+             in retry_await_if_needed ())
     | Trigger_raw_dump { Trigger_raw_dump.record; } ->
       (* FIXME: catch errors in Raw_dump.dump, signal to client *)
       lwt raw_dump = D.Raw_dump.dump c.server.db in
