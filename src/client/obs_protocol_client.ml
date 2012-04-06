@@ -259,8 +259,17 @@ struct
     lwt ks_id =
       sync_request t
         (Register_keyspace { Register_keyspace.name; })
-        P.read_keyspace
-    in return { ks_id; ks_name = name; ks_db = t; }
+        P.read_keyspace in
+    let ks = { ks_id; ks_name = name; ks_db = t; } in
+      Lwt_gc.finalise
+        (fun _ ->
+           try_lwt
+             async_request t
+             (Release_keyspace { Release_keyspace.keyspace = ks_id })
+             P.read_ok
+           with _ -> return ())
+        ks;
+      return ks
 
   let get_keyspace t name =
     match_lwt

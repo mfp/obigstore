@@ -299,6 +299,14 @@ struct
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
       end
+    | Release_keyspace { Release_keyspace.keyspace } -> begin
+        try_lwt
+          let keyspace = H.find c.keyspaces (ks_id_of_int keyspace) in
+            terminate_keyspace_subs c.server keyspace;
+            return ()
+        finally
+          P.return_ok ?buf c.och ~request_id ()
+      end
     | List_keyspaces _ ->
         D.list_keyspaces c.server.db >>=
           P.return_keyspace_list ?buf c.och ~request_id
@@ -577,6 +585,22 @@ struct
       Lwt_condition.wait c.wait_for_pending_reqs
     end
 
+  and terminate_keyspace_subs server ks =
+    let empty_topics =
+      snd ks.ks_subs_stream None;
+      let subs_ks = D.keyspace_name ks.ks_ks in
+        Hashtbl.fold
+          (fun subs_topic _ l ->
+             let k =  { subs_ks; subs_topic; } in
+             try
+               let t = Hashtbl.find server.subscriptions k in
+                 H.remove t ks.ks_unique_id;
+                 if H.length t = 0 then k :: l
+                 else l
+             with Not_found -> l)
+          ks.ks_subscriptions []
+    in List.iter (Hashtbl.remove server.subscriptions) empty_topics
+
   let setup_auto_yield t c =
     incr num_clients;
     if !num_clients >= 2 then begin
@@ -623,25 +647,8 @@ struct
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
          raise_lwt End_of_file
        finally
-         let empty_topics =
-           H.fold
-             (fun ks_id ks l ->
-                snd ks.ks_subs_stream None;
-                let subs_ks = D.keyspace_name ks.ks_ks in
-                  try
-                    Hashtbl.fold
-                      (fun subs_topic _ l ->
-                         let k =  { subs_ks; subs_topic; } in
-                         let t = Hashtbl.find server.subscriptions k in
-                           H.remove t ks_id;
-                           if H.length t = 0 then k :: l
-                           else l)
-                      ks.ks_subscriptions l
-                  with Not_found -> l)
-             c.keyspaces []
-         in
-           List.iter (Hashtbl.remove server.subscriptions) empty_topics;
-           return ()
+         H.iter (fun _ ks -> terminate_keyspace_subs server ks) c.keyspaces;
+         return ()
 
   let send_response_code code och =
     write_checksummed_int32_le och (data_response_code code)

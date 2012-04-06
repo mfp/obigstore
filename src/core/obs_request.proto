@@ -150,5 +150,6 @@ message request =
   | Raw_dump_release { id : raw_dump_id; }
   | Raw_dump_list_files { id : raw_dump_id; }
   | Raw_dump_file_digest { id : raw_dump_id; file : string; }
+  | Release_keyspace { keyspace : keyspace }
 
 (* vim:set ft=omlet: *) 
