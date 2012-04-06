@@ -106,7 +106,6 @@ struct
       {
         db : D.db;
         subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
-        rev_subscriptions : (subs_stream * mutable_string_set) H.t;
         raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
         mutable raw_dump_seqno : Int64.t;
         replication_wait : replication_wait;
@@ -131,6 +130,8 @@ struct
     { ks_unique_id : ks_id;
       ks_tx_key : tx_data Lwt.key;
       ks_ks : D.keyspace;
+      ks_subs_stream : subs_stream;
+      ks_subscriptions : mutable_string_set;
   }
 
   and tx_data =
@@ -280,7 +281,10 @@ struct
         lwt ks_ks = D.register_keyspace c.server.db name in
         let ks_unique_id = new_unique_id () in
           H.add c.keyspaces ks_unique_id
-            { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); };
+            { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key ();
+              ks_subs_stream = Lwt_stream.create ();
+              ks_subscriptions = Hashtbl.create 13;
+            };
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.server.db name with
@@ -288,7 +292,10 @@ struct
           | Some ks_ks ->
               let ks_unique_id = new_unique_id () in
                 H.add c.keyspaces ks_unique_id
-                  { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); };
+                  { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key ();
+                    ks_subs_stream = Lwt_stream.create ();
+                    ks_subscriptions = Hashtbl.create 13;
+                  };
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
       end
@@ -469,16 +476,8 @@ struct
                  c.server.subscriptions k
              in
                if not (H.mem tbl ks.ks_unique_id) then begin
-                 let stream, topics =
-                    find_or_add
-                      H.find
-                      (fun h k ->
-                         let v = (Lwt_stream.create (), Hashtbl.create 13) in
-                           H.add h k v; v)
-                      c.server.rev_subscriptions ks.ks_unique_id
-                 in
-                   Hashtbl.replace topics topic ();
-                   H.add tbl ks.ks_unique_id stream;
+                 Hashtbl.replace ks.ks_subscriptions topic ();
+                 H.add tbl ks.ks_unique_id ks.ks_subs_stream;
                end;
                P.return_ok ?buf c.och ~request_id ())
     | Unlisten { Unlisten.keyspace; topic; } ->
@@ -488,9 +487,7 @@ struct
              let k = { subs_ks = ks_name; subs_topic = topic} in
                begin try
                  H.remove (Hashtbl.find c.server.subscriptions k) ks.ks_unique_id;
-                 Hashtbl.remove
-                   (snd (H.find c.server.rev_subscriptions ks.ks_unique_id))
-                   ks_name;
+                 Hashtbl.remove ks.ks_subscriptions ks_name;
                with Not_found -> () end;
                P.return_ok ?buf c.och ~request_id ())
     | Notify { Notify.keyspace; topic; } ->
@@ -507,8 +504,7 @@ struct
         with_keyspace c keyspace ~request_id
           (fun ks ->
              let attempt () =
-               let ((stream, _), _) = H.find c.server.rev_subscriptions
-                                        ks.ks_unique_id in
+               let stream = fst ks.ks_subs_stream in
                (* we use get_available_up_to to limit the stack footprint
                 * (get_available is not tail-recursive) *)
                lwt l = match Lwt_stream.get_available_up_to 500 stream with
@@ -597,7 +593,6 @@ struct
     {
       db;
       subscriptions = Hashtbl.create 13;
-      rev_subscriptions = H.create 13;
       raw_dump_seqno = 0L;
       raw_dumps = Hashtbl.create 13;
       replication_wait;
@@ -626,26 +621,20 @@ struct
          let empty_topics =
            H.fold
              (fun ks_id ks l ->
+                snd ks.ks_subs_stream None;
                 let subs_ks = D.keyspace_name ks.ks_ks in
                   try
-                    let ((_, pushf), topics) =
-                      H.find server.rev_subscriptions ks_id
-                    in
-                      pushf None;
-                      Hashtbl.fold
-                        (fun subs_topic _ l ->
-                           let k =  { subs_ks; subs_topic; } in
-                           let t = Hashtbl.find server.subscriptions k in
-                             H.remove t ks_id;
-                             if H.length t = 0 then k :: l
-                             else l)
-                        topics l
+                    Hashtbl.fold
+                      (fun subs_topic _ l ->
+                         let k =  { subs_ks; subs_topic; } in
+                         let t = Hashtbl.find server.subscriptions k in
+                           H.remove t ks_id;
+                           if H.length t = 0 then k :: l
+                           else l)
+                      ks.ks_subscriptions l
                   with Not_found -> l)
              c.keyspaces []
          in
-           H.iter
-             (fun ks_id _ -> H.remove server.rev_subscriptions ks_id)
-             c.keyspaces;
            List.iter (Hashtbl.remove server.subscriptions) empty_topics;
            return ()
 
