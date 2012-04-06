@@ -567,12 +567,10 @@ let open_db
         IM.iter
           (fun id slave -> WRITEBATCH.add_slave ~unregister db.writebatch slave)
           db.slaves;
-        lldb in
-    let keyspaces = read_keyspaces db lldb in
+        lldb
+    in
       Gc.finalise (fun db -> ignore (close_db db)) db;
-      Hashtbl.iter
-        (fun name proto -> Hashtbl.add db.keyspaces name (Proto proto, WKS.create 13))
-        keyspaces;
+      reload_keyspaces db lldb;
       db
 
 let reset_iter_pool t =
