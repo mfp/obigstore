@@ -486,8 +486,13 @@ struct
              let ks_name = D.keyspace_name ks.ks_ks in
              let k = { subs_ks = ks_name; subs_topic = topic} in
                begin try
-                 H.remove (Hashtbl.find c.server.subscriptions k) ks.ks_unique_id;
-                 Hashtbl.remove ks.ks_subscriptions ks_name;
+                 let tbl = Hashtbl.find c.server.subscriptions k in
+                   H.remove tbl ks.ks_unique_id;
+                   (* if there are no more listeners, remove the empty
+                    * subscriber table *)
+                   if H.length tbl = 0 then
+                     Hashtbl.remove c.server.subscriptions k;
+                   Hashtbl.remove ks.ks_subscriptions ks_name;
                with Not_found -> () end;
                P.return_ok ?buf c.och ~request_id ())
     | Notify { Notify.keyspace; topic; } ->
