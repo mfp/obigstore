@@ -364,53 +364,80 @@ module TM = EXTMAP(struct
                      let compare = cmp_table
                    end)
 
-type db =
+module TY : sig
+  type keyspace_id = private int
+  val new_keyspace_id : unit -> keyspace_id
+end =
+struct
+  type keyspace_id = int
+
+  let new_keyspace_id =
+    let n = ref 0 in
+      (fun () -> incr n; !n)
+end
+
+open TY
+
+module rec TYPES : sig
+  type db =
+      {
+        basedir : string;
+        db : L.db Miniregion.t;
+        keyspace_prototypes : (string, keyspace) Hashtbl.t;
+        keyspaces : (string, WKS.t) Hashtbl.t;
+        mutable use_thread_pool : bool;
+        load_stats : Obs_load_stats.t;
+        mutable writebatch : WRITEBATCH.t;
+        db_iter_pool : L.iterator Lwt_pool.t ref;
+        (* We use an iterator pool to reuse iterators for read committed
+         * transactions whenever possible. After an update, the db_iter_pool is
+         * replaced by a new one (so that only new iterators are used). *)
+
+        reopen : ?new_slave:slave -> unit -> L.db;
+        mutable slaves : slave IM.t;
+
+        (* Mandates whether even "short requests" are to be detached when
+         * use_thread_pool is set. *)
+        assume_page_fault : bool;
+        fsync : bool;
+      }
+
+  and keyspace =
     {
-      basedir : string;
-      db : L.db Miniregion.t;
-      keyspaces : (string, keyspace) Hashtbl.t;
-      mutable use_thread_pool : bool;
-      load_stats : Obs_load_stats.t;
-      mutable writebatch : WRITEBATCH.t;
-      db_iter_pool : L.iterator Lwt_pool.t ref;
-      (* We use an iterator pool to reuse iterators for read committed
-       * transactions whenever possible. After an update, the db_iter_pool is
-       * replaced by a new one (so that only new iterators are used). *)
-
-      reopen : ?new_slave:slave -> unit -> L.db;
-      mutable slaves : slave IM.t;
-
-      (* Mandates whether even "short requests" are to be detached when
-       * use_thread_pool is set. *)
-      assume_page_fault : bool;
-      fsync : bool;
+      ks_db : db; ks_name : string; ks_id : int;
+      ks_unique_id : keyspace_id;
+      mutable ks_tables : (table, int) Hashtbl.t;
+      mutable ks_rev_tables : (int, table) Hashtbl.t;
+      ks_locks : LOCKS.t;
+      ks_tx_key : transaction Lwt.key;
     }
 
-and keyspace =
-  {
-    ks_db : db; ks_name : string; ks_id : int;
-    mutable ks_tables : (table, int) Hashtbl.t;
-    mutable ks_rev_tables : (int, table) Hashtbl.t;
-    ks_locks : LOCKS.t;
-    ks_tx_key : transaction Lwt.key;
-  }
+  and transaction =
+      {
+        mutable deleted_keys : S.t TM.t; (* table -> key set *)
+        mutable added_keys : S.t TM.t; (* table -> key set *)
+        mutable added : string M.t M.t TM.t; (* table -> key -> column -> value *)
+        mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
+        repeatable_read : bool;
+        iter_pool : L.iterator Lwt_pool.t ref;
+        ks : keyspace;
+        mutable backup_writebatch : L.writebatch Lazy.t;
+        (* approximate size of data written in current backup_writebatch *)
+        mutable backup_writebatch_size : int;
+        outermost_tx : transaction;
+        mutable locks : (string * Obs_shared_mutex.t option) M.t;
+        dump_buffer : Obs_bytea.t;
+      }
+end = TYPES
 
-and transaction =
-    {
-      mutable deleted_keys : S.t TM.t; (* table -> key set *)
-      mutable added_keys : S.t TM.t; (* table -> key set *)
-      mutable added : string M.t M.t TM.t; (* table -> key -> column -> value *)
-      mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
-      repeatable_read : bool;
-      iter_pool : L.iterator Lwt_pool.t ref;
-      ks : keyspace;
-      mutable backup_writebatch : L.writebatch Lazy.t;
-      (* approximate size of data written in current backup_writebatch *)
-      mutable backup_writebatch_size : int;
-      outermost_tx : transaction;
-      mutable locks : (string * Obs_shared_mutex.t option) M.t;
-      dump_buffer : Obs_bytea.t;
-    }
+and WKS : Weak.S with type data = TYPES.keyspace =
+  Weak.Make(struct
+              type t = TYPES.keyspace
+              let hash t = (t.TYPES.ks_unique_id :> int)
+              let equal t1 t2 = TYPES.(t1.ks_unique_id = t2.ks_unique_id)
+            end)
+
+include TYPES
 
 type backup_cursor = Obs_backup.cursor
 
@@ -440,6 +467,7 @@ let read_keyspaces db lldb =
              None -> false
            | Some keyspace_name ->
                let ks_db = db in
+               let ks_unique_id = new_keyspace_id () in
                let ks_name = keyspace_name in
                let ks_id = int_of_string v in
                let ks_tables = read_keyspace_tables lldb ks_name in
@@ -451,7 +479,8 @@ let read_keyspaces db lldb =
                    ks_tables;
                  Hashtbl.add h keyspace_name
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
-                     ks_locks; ks_tx_key; };
+                     ks_unique_id; ks_locks; ks_tx_key;
+                   };
                  true)
       lldb
       Obs_datum_encoding.keyspace_table_prefix;
@@ -465,7 +494,13 @@ let reload_keyspaces t lldb =
     Hashtbl.iter
       (fun name ks ->
          try
-           let old_kss = Hashtbl.find_all t.keyspaces name in
+           (* replace the proto *)
+           Hashtbl.replace t.keyspace_prototypes name ks;
+           (* and then update ks_tables and ks_rev_tables in actual keyspaces
+            * in use *)
+           let old_kss = WKS.fold (fun ks l -> ks :: l)
+                           (Hashtbl.find t.keyspaces name) []
+           in
              (* we must assume that ks_name and ks_id are unchanged;
               * anything else would mean very bad news *)
              List.iter
@@ -474,8 +509,9 @@ let reload_keyspaces t lldb =
                   old_ks.ks_rev_tables <- ks.ks_rev_tables)
                old_kss
          with Not_found ->
-           (* entirely new keyspace *)
-           Hashtbl.add t.keyspaces name ks)
+           (* there are no actual keyspaces in use *)
+           (* we already registered the proto so nothing to do *)
+           ())
       new_keyspaces
 
 let close_db t =
@@ -507,6 +543,7 @@ let open_db
       L.put ~sync:true lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
     let rec db =
       { basedir; db = Miniregion.make lldb;
+        keyspace_prototypes = Hashtbl.create 13;
         keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
@@ -535,7 +572,7 @@ let open_db
         lldb in
     let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
-      Hashtbl.iter (Hashtbl.add db.keyspaces) keyspaces;
+      Hashtbl.iter (Hashtbl.add db.keyspace_prototypes) keyspaces;
       db
 
 let reset_iter_pool t =
@@ -563,26 +600,35 @@ let short_request x f =
   Lwt.with_value expect_short_request_key (Some x) f
 
 let list_keyspaces t =
-  Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>
+  Hashtbl.fold (fun k v l -> k :: l) t.keyspace_prototypes [] |>
   S.of_list (* removes duplicates *) |> S.to_list |> return
+
+let get_keyspace_set t ks_name =
+  try Hashtbl.find t.keyspaces ks_name
+  with Not_found ->
+    let s = WKS.create 13 in
+      Hashtbl.add t.keyspaces ks_name s;
+      s
+
+let clone_keyspace proto =
+  { (* we copy explicitly so we get a compile-time complaint if we add a
+     * new field to the record  *)
+    ks_db = proto.ks_db; ks_id = proto.ks_id; ks_name = proto.ks_name;
+    ks_unique_id = new_keyspace_id ();
+    ks_tables = proto.ks_tables; ks_rev_tables = proto.ks_rev_tables;
+    ks_locks = LOCKS.create 13;
+    ks_tx_key = Lwt.new_key ();
+  }
 
 let register_keyspace t ks_name =
   try
-    let prev = Hashtbl.find t.keyspaces ks_name in
-      (* we must create a new keyspace with new tx_key and lock table *)
-    let new_ks =
-      { (* we copy explicitly so we get a compile-time complaint if we add a
-         * new field to the record  *)
-        ks_db = prev.ks_db; ks_id = prev.ks_id; ks_name = prev.ks_name;
-        ks_tables = prev.ks_tables; ks_rev_tables = prev.ks_rev_tables;
-        ks_locks = LOCKS.create 13;
-        ks_tx_key = Lwt.new_key ();
-      }
-    in
-      Hashtbl.add t.keyspaces ks_name new_ks;
+    let proto = Hashtbl.find t.keyspace_prototypes ks_name in
+    (* we must create a new keyspace with new tx_key and lock table *)
+    let new_ks = clone_keyspace proto in
+      WKS.add (get_keyspace_set t ks_name) new_ks;
       return new_ks
   with Not_found ->
-    let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspaces 0 in
+    let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspace_prototypes 0 in
     let ks_id = max_id + 1 in
     lwt wait_sync =
       WRITEBATCH.perform t.writebatch begin fun b ->
@@ -593,16 +639,18 @@ let register_keyspace t ks_name =
         return ()
       end in
     lwt () = wait_sync in
-    let ks =
+    let proto =
       { ks_db = t; ks_id; ks_name;
+        ks_unique_id = new_keyspace_id ();
         ks_tables = Hashtbl.create 13;
         ks_rev_tables = Hashtbl.create 13;
         ks_locks = LOCKS.create 31;
         ks_tx_key = Lwt.new_key ();
-      }
-    in
-      Hashtbl.add t.keyspaces ks_name ks;
-      return ks
+      } in
+    let new_ks = clone_keyspace proto in
+      Hashtbl.add t.keyspace_prototypes ks_name proto;
+      WKS.add (get_keyspace_set t ks_name) new_ks;
+      return new_ks
 
 let register_keyspace =
   (* concurrent register_keyspace ops for the same name would be problematic:
@@ -615,7 +663,7 @@ let register_keyspace t ks_name =
   Miniregion.use t.db (fun lldb -> register_keyspace t ks_name)
 
 let get_keyspace t ks_name =
-  if Hashtbl.mem t.keyspaces ks_name then begin
+  if Hashtbl.mem t.keyspace_prototypes ks_name then begin
     lwt ks = register_keyspace t ks_name in
       return (Some ks)
   end else
