@@ -383,8 +383,7 @@ module rec TYPES : sig
       {
         basedir : string;
         db : L.db Miniregion.t;
-        keyspace_prototypes : (string, keyspace) Hashtbl.t;
-        keyspaces : (string, WKS.t) Hashtbl.t;
+        keyspaces : (string, keyspace_proto * WKS.t) Hashtbl.t;
         mutable use_thread_pool : bool;
         load_stats : Obs_load_stats.t;
         mutable writebatch : WRITEBATCH.t;
@@ -411,6 +410,8 @@ module rec TYPES : sig
       ks_locks : LOCKS.t;
       ks_tx_key : transaction Lwt.key;
     }
+
+  and keyspace_proto = Proto of keyspace
 
   and transaction =
       {
@@ -494,24 +495,22 @@ let reload_keyspaces t lldb =
     Hashtbl.iter
       (fun name ks ->
          try
+           let (_, set) = Hashtbl.find t.keyspaces name in
            (* replace the proto *)
-           Hashtbl.replace t.keyspace_prototypes name ks;
-           (* and then update ks_tables and ks_rev_tables in actual keyspaces
-            * in use *)
-           let old_kss = WKS.fold (fun ks l -> ks :: l)
-                           (Hashtbl.find t.keyspaces name) []
-           in
-             (* we must assume that ks_name and ks_id are unchanged;
-              * anything else would mean very bad news *)
-             List.iter
-               (fun old_ks ->
-                  old_ks.ks_tables <- ks.ks_tables;
-                  old_ks.ks_rev_tables <- ks.ks_rev_tables)
-               old_kss
+             Hashtbl.replace t.keyspaces name (Proto ks, set);
+             (* and then update ks_tables and ks_rev_tables in actual
+              * keyspaces in use *)
+             let old_kss = WKS.fold (fun ks l -> ks :: l) set [] in
+               (* we must assume that ks_name and ks_id are unchanged;
+                * anything else would mean very bad news *)
+               List.iter
+                 (fun old_ks ->
+                    old_ks.ks_tables <- ks.ks_tables;
+                    old_ks.ks_rev_tables <- ks.ks_rev_tables)
+                 old_kss
          with Not_found ->
-           (* there are no actual keyspaces in use *)
-           (* we already registered the proto so nothing to do *)
-           ())
+           (* new keyspace: register proto and new WKS set *)
+           Hashtbl.add t.keyspaces name (Proto ks, WKS.create 13))
       new_keyspaces
 
 let close_db t =
@@ -543,7 +542,6 @@ let open_db
       L.put ~sync:true lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
     let rec db =
       { basedir; db = Miniregion.make lldb;
-        keyspace_prototypes = Hashtbl.create 13;
         keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
@@ -572,7 +570,9 @@ let open_db
         lldb in
     let keyspaces = read_keyspaces db lldb in
       Gc.finalise (fun db -> ignore (close_db db)) db;
-      Hashtbl.iter (Hashtbl.add db.keyspace_prototypes) keyspaces;
+      Hashtbl.iter
+        (fun name proto -> Hashtbl.add db.keyspaces name (Proto proto, WKS.create 13))
+        keyspaces;
       db
 
 let reset_iter_pool t =
@@ -600,17 +600,17 @@ let short_request x f =
   Lwt.with_value expect_short_request_key (Some x) f
 
 let list_keyspaces t =
-  Hashtbl.fold (fun k v l -> k :: l) t.keyspace_prototypes [] |>
+  Hashtbl.fold (fun k v l -> k :: l) t.keyspaces [] |>
   S.of_list (* removes duplicates *) |> S.to_list |> return
 
-let get_keyspace_set t ks_name =
-  try Hashtbl.find t.keyspaces ks_name
+let get_keyspace_set t ks_name proto =
+  try snd (Hashtbl.find t.keyspaces ks_name)
   with Not_found ->
     let s = WKS.create 13 in
-      Hashtbl.add t.keyspaces ks_name s;
+      Hashtbl.add t.keyspaces ks_name (proto, s);
       s
 
-let clone_keyspace proto =
+let clone_keyspace (Proto proto) =
   { (* we copy explicitly so we get a compile-time complaint if we add a
      * new field to the record  *)
     ks_db = proto.ks_db; ks_id = proto.ks_id; ks_name = proto.ks_name;
@@ -622,13 +622,13 @@ let clone_keyspace proto =
 
 let register_keyspace t ks_name =
   try
-    let proto = Hashtbl.find t.keyspace_prototypes ks_name in
+    let proto = fst (Hashtbl.find t.keyspaces ks_name) in
     (* we must create a new keyspace with new tx_key and lock table *)
     let new_ks = clone_keyspace proto in
-      WKS.add (get_keyspace_set t ks_name) new_ks;
+      WKS.add (get_keyspace_set t ks_name proto) new_ks;
       return new_ks
   with Not_found ->
-    let max_id = Hashtbl.fold (fun _ ks id -> max ks.ks_id id) t.keyspace_prototypes 0 in
+    let max_id = Hashtbl.fold (fun _ (Proto p, _) id -> max p.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
     lwt wait_sync =
       WRITEBATCH.perform t.writebatch begin fun b ->
@@ -640,16 +640,16 @@ let register_keyspace t ks_name =
       end in
     lwt () = wait_sync in
     let proto =
-      { ks_db = t; ks_id; ks_name;
-        ks_unique_id = new_keyspace_id ();
-        ks_tables = Hashtbl.create 13;
-        ks_rev_tables = Hashtbl.create 13;
-        ks_locks = LOCKS.create 31;
-        ks_tx_key = Lwt.new_key ();
-      } in
+      Proto
+        { ks_db = t; ks_id; ks_name;
+          ks_unique_id = new_keyspace_id ();
+          ks_tables = Hashtbl.create 13;
+          ks_rev_tables = Hashtbl.create 13;
+          ks_locks = LOCKS.create 31;
+          ks_tx_key = Lwt.new_key ();
+        } in
     let new_ks = clone_keyspace proto in
-      Hashtbl.add t.keyspace_prototypes ks_name proto;
-      WKS.add (get_keyspace_set t ks_name) new_ks;
+      WKS.add (get_keyspace_set t ks_name proto) new_ks;
       return new_ks
 
 let register_keyspace =
@@ -663,7 +663,7 @@ let register_keyspace t ks_name =
   Miniregion.use t.db (fun lldb -> register_keyspace t ks_name)
 
 let get_keyspace t ks_name =
-  if Hashtbl.mem t.keyspace_prototypes ks_name then begin
+  if Hashtbl.mem t.keyspaces ks_name then begin
     lwt ks = register_keyspace t ks_name in
       return (Some ks)
   end else
