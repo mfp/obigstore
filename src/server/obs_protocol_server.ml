@@ -59,8 +59,10 @@ module Make
 struct
   open Request
 
-  exception Abort_exn
-  exception Commit_exn
+  type request_id = string
+
+  exception Abort_exn of request_id
+  exception Commit_exn of request_id
 
   module H = Hashtbl.Make(struct
                               type t = ks_id
@@ -114,7 +116,7 @@ struct
   type client_state =
       {
         id : client_id;
-        keyspaces : keyspace H.t;
+        keyspaces : (keyspace * req_handler Stack.t) H.t;
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         server : t;
@@ -124,6 +126,7 @@ struct
         mutable pending_reqs : int;
         wait_for_pending_reqs : unit Lwt_condition.t;
         async_req_region : Lwt_util.region;
+        signal_error : Request.request option Lwt.t * Request.request option Lwt.u;
       }
 
   and keyspace =
@@ -133,6 +136,8 @@ struct
       ks_subs_stream : subs_stream;
       ks_subscriptions : mutable_string_set;
   }
+
+  and req_handler = request_id:request_id -> Request.request -> unit Lwt.t
 
   and tx_data =
       {
@@ -206,46 +211,93 @@ struct
              * dropping the connection *)
             raise_lwt (Error Corrupted_frame)
     in
-      match_lwt read_request c ~request_id len crc with
+      match_lwt
+        Lwt.choose [fst c.signal_error; read_request c ~request_id len crc]
+      with
           None -> service c
         | Some r ->
-            if Obs_protocol.is_sync_req request_id then begin
-              begin try_lwt
-                respond c ~buf:c.out_buf ~request_id r
-              with
-                | Abort_exn | Commit_exn | End_of_file as e -> raise_lwt e
-                (* catch exns that indicate that the connection is gone,
-                 * and signal End_of_file *)
-                | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
-                    raise_lwt End_of_file
-                | e ->
-                Format.eprintf
-                  "Internal error %s@\n\
-                   request:@\n\
-                   %a@."
-                  (Printexc.to_string e)
-                  Request.pp r;
-                P.internal_error c.och ~request_id ()
-              end >>
-              service c
-            end else begin
-              ignore begin
-                c.pending_reqs <- c.pending_reqs + 1;
-                try_lwt
-                  Lwt_util.run_in_region c.async_req_region
-                    (request_slot_cost r)
-                    (fun () -> respond c ~request_id r)
-                finally
-                  c.pending_reqs <- c.pending_reqs - 1;
-                  if c.pending_reqs = 0 then
-                    Lwt_condition.broadcast c.wait_for_pending_reqs ();
-                  return ()
-              end;
-              (* here we block if the allowed number of async reqs is reached
-               * until one of them is done *)
-              Lwt_util.run_in_region c.async_req_region 1 (fun () -> return ()) >>
-              service c
+            ignore begin
+              c.pending_reqs <- c.pending_reqs + 1;
+              try_lwt
+                Lwt_util.run_in_region c.async_req_region
+                  (request_slot_cost r)
+                  (fun () ->
+                     begin try_lwt
+                       relay_to_handler c ~request_id r
+                     with
+                       | End_of_file
+                       | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
+                           (* catch exns that indicate that the connection
+                            * is gone, and signal End_of_file *)
+                           begin try
+                             Lwt.wakeup_exn (snd c.signal_error) End_of_file
+                           with _ -> ()
+                           end;
+                           return ()
+                       | e ->
+                           Format.eprintf
+                             "Internal error %s@\n\
+                              request:@\n\
+                              %a@."
+                             (Printexc.to_string e)
+                             Request.pp r;
+                           P.internal_error c.och ~request_id ()
+                     end)
+              finally
+                c.pending_reqs <- c.pending_reqs - 1;
+                if c.pending_reqs = 0 then
+                  Lwt_condition.broadcast c.wait_for_pending_reqs ();
+                return ()
+            end;
+            (* here we block if the allowed number of async reqs is reached
+             * until one of them is done *)
+            Lwt_util.run_in_region c.async_req_region 1 (fun () -> return ()) >>
+            service c
+
+  and relay_to_handler c ~request_id = function
+    | List_tables { List_tables.keyspace; _ }
+    | Table_size_on_disk { Table_size_on_disk.keyspace; _ }
+    | Key_range_size_on_disk { Key_range_size_on_disk.keyspace; _ }
+    | Begin { Begin.keyspace; _ }
+    | Commit { Commit.keyspace; _ }
+    | Abort { Abort.keyspace; _ }
+    | Lock { Lock.keyspace; _ }
+    | Exist_keys { Exist_keys.keyspace; _ }
+    | Get_keys { Get_keys.keyspace; _ }
+    | Count_keys { Count_keys.keyspace; _ }
+    | Get_slice { Get_slice.keyspace; _ }
+    | Get_slice_values { Get_slice_values.keyspace; _ }
+    | Get_slice_values_timestamps { Get_slice_values_timestamps.keyspace; _ }
+    | Get_columns { Get_columns.keyspace; _ }
+    | Get_column_values { Get_column_values.keyspace; _ }
+    | Get_column { Get_column.keyspace; _ }
+    | Put_columns { Put_columns.keyspace; _ }
+    | Delete_columns { Delete_columns.keyspace; _ }
+    | Delete_key { Delete_key.keyspace; _ }
+    | Dump { Dump.keyspace; _ }
+    | Load { Load.keyspace; _ }
+    | Stats { Stats.keyspace; _ }
+    | Listen { Listen.keyspace; _ }
+    | Unlisten { Unlisten.keyspace; _ }
+    | Notify { Notify.keyspace; _ }
+    | Await { Await.keyspace; _ }
+    | Release_keyspace { Release_keyspace.keyspace; _ } as r ->
+        begin try
+          let handlers = snd (H.find c.keyspaces (ks_id_of_int keyspace)) in
+            if Stack.is_empty handlers then
+              respond c ~request_id r
+            else begin
+              let handler = Stack.top handlers in
+                handler ~request_id r
             end
+        with Not_found ->
+          (* will usually respond with a unknown_keyspace error *)
+          respond c ~request_id r
+        end
+    | Register_keyspace _ | Get_keyspace _ | List_keyspaces _
+    | Trigger_raw_dump _ | Raw_dump_release _ | Raw_dump_list_files _
+    | Raw_dump_file_digest _ as r ->
+        respond c ~request_id r
 
   and read_request c ~request_id len crc =
     if String.length c.in_buf < len then c.in_buf <- String.create len;
@@ -279,29 +331,33 @@ struct
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
-        let ks_unique_id = new_unique_id () in
-          H.add c.keyspaces ks_unique_id
-            { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key ();
-              ks_subs_stream = Lwt_stream.create ();
-              ks_subscriptions = Hashtbl.create 13;
-            };
+        let ks_unique_id = ks_id_of_int (D.keyspace_id ks_ks) in
+        let ks =
+          { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key ();
+            ks_subs_stream = Lwt_stream.create ();
+            ks_subscriptions = Hashtbl.create 13;
+          }
+        in
+          H.add c.keyspaces ks_unique_id (ks, Stack.create ());
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.server.db name with
             None -> P.return_keyspace_maybe ?buf c.och ~request_id None
           | Some ks_ks ->
-              let ks_unique_id = new_unique_id () in
-                H.add c.keyspaces ks_unique_id
-                  { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key ();
-                    ks_subs_stream = Lwt_stream.create ();
-                    ks_subscriptions = Hashtbl.create 13;
-                  };
+              let ks_unique_id = ks_id_of_int (D.keyspace_id ks_ks) in
+              let ks =
+                { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key ();
+                  ks_subs_stream = Lwt_stream.create ();
+                  ks_subscriptions = Hashtbl.create 13;
+                }
+              in
+                H.add c.keyspaces ks_unique_id (ks, Stack.create ());
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
       end
     | Release_keyspace { Release_keyspace.keyspace } -> begin
         try_lwt
-          let keyspace = H.find c.keyspaces (ks_id_of_int keyspace) in
+          let keyspace = fst (H.find c.keyspaces (ks_id_of_int keyspace)) in
             terminate_keyspace_subs c.server keyspace;
             return ()
         finally
@@ -327,7 +383,6 @@ struct
                ?first:range.first ?up_to:range.up_to >>=
              P.return_key_range_size_on_disk ?buf c.och ~request_id)
     | Begin { Begin.keyspace; tx_type; } ->
-        wait_for_pending_reqs c >>
         with_keyspace c keyspace ~request_id
           (fun ks ->
              let is_outermost, parent_tx_data, tx_data =
@@ -338,20 +393,58 @@ struct
                  | Some d -> (false, d, { tx_notifications = d.tx_notifications; }) in
              let transaction_f = match tx_type with
                  Tx_type.Repeatable_read -> D.repeatable_read_transaction
-               | Tx_type.Read_committed -> D.read_committed_transaction
-             in
+               | Tx_type.Read_committed -> D.read_committed_transaction in
+             let handlers = snd (H.find c.keyspaces (ks_id_of_int keyspace)) in
                try_lwt
+                 (* we'll put the request_id from the request that forced the
+                  * commit (carried by Commit_exn) in finishing_reqid *)
+                 let finishing_reqid = ref "" in
                  lwt () =
                    transaction_f ks.ks_ks
                      (fun _ ->
                         Lwt.with_value ks.ks_tx_key (Some tx_data)
                           (fun () ->
                              try_lwt
-                               P.return_ok ?buf c.och ~request_id () >>
-                               service c
-                             with Commit_exn ->
-                               wait_for_pending_reqs c)) >>
-                     P.return_ok ?buf c.och ~request_id ()
+                               (* install handler *)
+                               let req_stream, pushf = Lwt_stream.create () in
+                               let handler ~request_id r =
+                                 (* we keep a ref to the stream because
+                                  * otherwise it can be collected! pushf
+                                  * only has a weak ref to it *)
+                                 ignore req_stream;
+                                 pushf (Some (`Req (request_id, r)));
+                                 return ()
+                               in
+                                 Stack.push handler handlers;
+                                 P.return_ok ?buf c.och ~request_id () >>
+                                 let rec handle_reqs () =
+                                   match_lwt Lwt_stream.get req_stream with
+                                       (Some `Req (request_id, r)) ->
+                                         (* we respond in a background thread
+                                          * so as to process reqs in parallel
+                                          * but need to capture exns (in
+                                          * particular, Abort_exn and
+                                          * Commit_exn) *)
+                                         ignore begin
+                                           try_lwt
+                                             respond c ~request_id r
+                                           with e ->
+                                             pushf (Some (`Exn e));
+                                             return ()
+                                         end;
+                                         handle_reqs ()
+                                     | Some (`Exn e) ->
+                                         raise_lwt e
+                                     | None -> return ()
+                                 in handle_reqs () >>
+                                    return ()
+                             with Commit_exn req_id ->
+                               finishing_reqid := req_id;
+                               return ()
+                             finally
+                               let _ : req_handler = Stack.pop handlers in
+                                 return ())) >>
+                     P.return_ok ?buf c.och ~request_id:!finishing_reqid ()
                  in
                    (* we deliver notifications _after_ actual commit
                     * (otherwise, new data wouldn't be found if another client
@@ -361,16 +454,15 @@ struct
                    else parent_tx_data.tx_notifications <- tx_data.tx_notifications
                    end;
                    return ()
-               with Abort_exn ->
-                 wait_for_pending_reqs c >>
-                 P.return_ok ?buf c.och ~request_id ())
+               with Abort_exn request_id ->
+                   P.return_ok ?buf c.och ~request_id ())
     | Commit { Commit.keyspace; _ } ->
         (* only commit if we're inside a tx *)
         with_keyspace c keyspace ~request_id
           (fun ks ->
              begin match Lwt.get ks.ks_tx_key with
                  None -> P.return_ok ?buf c.och ~request_id ()
-               | Some _ -> raise_lwt Commit_exn
+               | Some _ -> raise_lwt (Commit_exn request_id)
              end)
     | Abort { Abort.keyspace; _ } ->
         (* only abort if we're inside a tx *)
@@ -378,7 +470,7 @@ struct
           (fun ks ->
              begin match Lwt.get ks.ks_tx_key with
                  None -> P.return_ok ?buf c.och ~request_id ()
-               | Some _ -> raise_lwt Abort_exn
+               | Some _ -> raise_lwt (Abort_exn request_id)
              end)
     | Lock { Lock.keyspace; names; shared; } ->
         with_keyspace c keyspace ~request_id
@@ -388,7 +480,7 @@ struct
                P.return_ok ?buf c.och ~request_id ()
              with Error Deadlock ->
                P.deadlock ?buf c.och ~request_id () >>
-               raise_lwt Abort_exn)
+               raise_lwt (Abort_exn request_id))
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_keyspace c keyspace ~request_id
           (fun ks -> D.get_keys ks.ks_ks table ?max_keys (krange' key_range) >>=
@@ -571,7 +663,7 @@ struct
 
   and with_keyspace c ks_idx ~request_id f =
     let ks =
-      try Some (H.find c.keyspaces (ks_id_of_int ks_idx))
+      try Some (fst (H.find c.keyspaces (ks_id_of_int ks_idx)))
       with Not_found -> None
     in
       match ks with
@@ -640,6 +732,7 @@ struct
         pending_reqs = 0;
         wait_for_pending_reqs = Lwt_condition.create ();
         async_req_region = Lwt_util.make_region max_async_reqs;
+        signal_error = Lwt.task ();
       }
     in setup_auto_yield server c;
        try_lwt
@@ -647,7 +740,7 @@ struct
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
          raise_lwt End_of_file
        finally
-         H.iter (fun _ ks -> terminate_keyspace_subs server ks) c.keyspaces;
+         H.iter (fun _ (ks, _) -> terminate_keyspace_subs server ks) c.keyspaces;
          return ()
 
   let send_response_code code och =
