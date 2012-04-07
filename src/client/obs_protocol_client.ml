@@ -195,24 +195,6 @@ struct
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     Obs_protocol.write_msg t.och request_id t.buf
 
-  let sync_get_response (type a) t (f : Lwt_io.input_channel -> a Lwt.t) =
-    let wait, wakeup = Lwt.task () in
-    let module R =
-      struct
-        type result = a
-        let read_result = f
-        let wakeup = wakeup
-        let is_notification_wait = false
-      end
-    in H.replace t.pending_reqs Obs_protocol.sync_req_id (module R : PENDING_RESPONSE);
-       wait
-
-  let sync_request t req f =
-    check_closed t >>
-    Lwt_mutex.with_lock t.mutex
-      (fun () -> send_request t ~request_id:Obs_protocol.sync_req_id req >>
-                 sync_get_response t f)
-
   let incr_async_req_id t =
     let rec loop_incr s n =
       if n >= String.length s then begin
@@ -251,13 +233,13 @@ struct
       wait
 
   let list_keyspaces t =
-    sync_request t
+    async_request t
       (List_keyspaces { List_keyspaces.prefix = "" })
       P.read_keyspace_list
 
   let register_keyspace t name =
     lwt ks_id =
-      sync_request t
+      async_request t
         (Register_keyspace { Register_keyspace.name; })
         P.read_keyspace in
     let ks = { ks_id; ks_name = name; ks_db = t; } in
@@ -273,7 +255,7 @@ struct
 
   let get_keyspace t name =
     match_lwt
-      sync_request t (Get_keyspace { Get_keyspace.name; }) P.read_keyspace_maybe
+      async_request t (Get_keyspace { Get_keyspace.name; }) P.read_keyspace_maybe
     with
         None -> return None
       | Some ks_id -> return (Some { ks_id; ks_name = name; ks_db = t; })
@@ -281,44 +263,33 @@ struct
   let keyspace_name ks = ks.ks_name
   let keyspace_id ks = ks.ks_id
 
-  let sync_request_ks ks req f = sync_request ks.ks_db req f
+  let sync_request_ks ks req f = async_request ks.ks_db req f
   let async_request_ks ks req f = async_request ks.ks_db req f
 
   let list_tables ks =
-    sync_request_ks ks (List_tables { List_tables.keyspace = ks.ks_id; })
+    async_request_ks ks (List_tables { List_tables.keyspace = ks.ks_id; })
     P.read_table_list >|= List.map table_of_string
 
   let table_size_on_disk ks table =
-    sync_request_ks ks
+    async_request_ks ks
       (Table_size_on_disk { Table_size_on_disk.keyspace = ks.ks_id; table; })
       P.read_table_size_on_disk
 
   let key_range_size_on_disk ks ?first ?up_to table =
-    sync_request_ks ks
+    async_request_ks ks
       (Key_range_size_on_disk
          { Key_range_size_on_disk.keyspace = ks.ks_id; table;
            range = { first; up_to; reverse = false; } }; )
       P.read_key_range_size_on_disk
 
-  let wait_for_pending_responses t =
-    check_closed t >>
-    if H.length t.pending_reqs - t.num_notification_waiters <> 0 then begin
-      match_lwt Lwt_condition.wait t.wait_for_pending_responses with
-          `OK -> return ()
-        | `EXN e -> raise_lwt e
-    end else return ()
-
   let transaction_aux tx_type ks f =
-    wait_for_pending_responses ks.ks_db >>
-    sync_request_ks ks (Begin { Begin.keyspace = ks.ks_id; tx_type }) P.read_ok >>
+    async_request_ks ks (Begin { Begin.keyspace = ks.ks_id; tx_type }) P.read_ok >>
     try_lwt
       lwt y = f ks in
-        wait_for_pending_responses ks.ks_db >>
-        sync_request_ks ks (Commit { Commit.keyspace = ks.ks_id }) P.read_ok >>
+        async_request_ks ks (Commit { Commit.keyspace = ks.ks_id }) P.read_ok >>
         return y
     with e ->
-      wait_for_pending_responses ks.ks_db >>
-      sync_request_ks ks (Abort { Abort.keyspace = ks.ks_id }) P.read_ok >>
+      async_request_ks ks (Abort { Abort.keyspace = ks.ks_id }) P.read_ok >>
       raise_lwt e
 
   let read_committed_transaction ks f =
@@ -328,18 +299,18 @@ struct
     transaction_aux Tx_type.Repeatable_read ks f
 
   let lock ks ~shared names =
-    sync_request_ks ks
+    async_request_ks ks
       (Lock { Lock.keyspace = ks.ks_id; names; shared; })
       P.read_ok
 
   let get_keys ks table ?max_keys key_range =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_keys { Get_keys.keyspace = ks.ks_id; table; max_keys;
                   key_range = krange key_range; })
       P.read_keys
 
   let count_keys ks table key_range =
-    sync_request_ks ks
+    async_request_ks ks
       (Count_keys { Count_keys.keyspace = ks.ks_id; table;
                     key_range = krange key_range; })
       P.read_key_count
@@ -368,13 +339,13 @@ struct
       P.read_exist_result
 
   let get_slice_values ks table ?max_keys key_range columns =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_slice_values { Get_slice_values.keyspace = ks.ks_id; table;
                           max_keys; key_range = krange key_range; columns; })
       P.read_slice_values
 
   let get_slice_values_with_timestamps ks table ?max_keys key_range columns =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_slice_values_timestamps
          { Get_slice_values_timestamps.keyspace = ks.ks_id; table;
            max_keys; key_range = krange key_range; columns; })
@@ -382,14 +353,14 @@ struct
 
   let get_columns ks table ?max_columns ?(decode_timestamps=false)
         key column_range =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_columns { Get_columns.keyspace = ks.ks_id; table;
                      max_columns; decode_timestamps; key;
                      column_range = crange column_range; })
       P.read_columns
 
   let get_column_values ks table key columns =
-    sync_request_ks ks
+    async_request_ks ks
       (Get_column_values { Get_column_values.keyspace = ks.ks_id; table;
                            key; columns; })
       P.read_column_values
@@ -411,12 +382,12 @@ struct
       P.read_ok
 
   let delete_columns ks table key columns =
-    sync_request_ks ks
+    async_request_ks ks
       (Delete_columns { Delete_columns.keyspace = ks.ks_id; table; key; columns; })
       P.read_ok
 
   let delete_key ks table key =
-    sync_request_ks ks
+    async_request_ks ks
       (Delete_key { Delete_key.keyspace = ks.ks_id; table; key; })
       P.read_ok
 
@@ -468,12 +439,12 @@ struct
 
     let dump t =
       lwt id, timestamp =
-        sync_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
+        async_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
           P.read_raw_dump_id_and_timestamp
       in return { db = t; id; timestamp; }
 
     let release d =
-      sync_request d.db
+      async_request d.db
         (Raw_dump_release { Raw_dump_release.id = d.id; })
         P.read_ok
 
