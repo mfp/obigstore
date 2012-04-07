@@ -241,7 +241,9 @@ struct
                               %a@."
                              (Printexc.to_string e)
                              Request.pp r;
-                           P.internal_error c.och ~request_id ()
+                           try_lwt
+                             P.internal_error c.och ~request_id ()
+                           with _ -> return ()
                      end)
               finally
                 c.pending_reqs <- c.pending_reqs - 1;
