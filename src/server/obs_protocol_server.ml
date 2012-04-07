@@ -229,7 +229,7 @@ struct
                      begin try_lwt
                        relay_to_handler c ~request_id r
                      with
-                       | End_of_file
+                       | End_of_file | Lwt_io.Channel_closed _
                        | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
                            (* catch exns that indicate that the connection
                             * is gone, and signal End_of_file *)
