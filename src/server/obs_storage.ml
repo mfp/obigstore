@@ -36,12 +36,30 @@ struct
     Obs_string_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
 
-module LOCKS =
-  Weak.Make(struct
-              type t = (string * Obs_shared_mutex.t option)
-              let hash (s, _) = Hashtbl.hash s
-              let equal (s1, _) (s2, _) = String.compare s1 s2 = 0
-            end)
+module WeakTbl : sig
+  type ('a, 'b) t
+
+  val create : ?cmp:('a -> 'a -> int) -> unit -> ('a, 'b) t
+  val get : ('a, 'b) t -> 'a -> 'b option
+  val add : ('a, 'b) t -> 'a -> 'b -> unit
+  val remove : ('a, 'b) t -> 'a -> unit
+end =
+struct
+  module M = BatMap
+  type ('a, 'b) t = ('a, 'b Obs_weak_ref.t) M.t ref
+
+  let create ?(cmp = compare) () = ref (M.create cmp)
+
+  let get t k =
+    try
+      Obs_weak_ref.get (M.find k !t)
+    with Not_found -> None
+
+  let add t k v =
+    t := M.add k (Obs_weak_ref.make v) !t
+
+  let remove t k = t := M.remove k !t
+end
 
 let make_iter_pool db =
   Lwt_pool.create 100 (* FIXME: which limit? *)
@@ -399,6 +417,9 @@ module rec TYPES : sig
          * use_thread_pool is set. *)
         assume_page_fault : bool;
         fsync : bool;
+
+        mutable locks : (string, Obs_shared_mutex.t) WeakTbl.t M.t;
+        (* keyspace name -> lock name -> weak ref to lock *)
       }
 
   and keyspace =
@@ -407,7 +428,6 @@ module rec TYPES : sig
       ks_unique_id : keyspace_id;
       mutable ks_tables : (table, int) Hashtbl.t;
       mutable ks_rev_tables : (int, table) Hashtbl.t;
-      ks_locks : LOCKS.t;
       ks_tx_key : transaction Lwt.key;
     }
 
@@ -426,7 +446,7 @@ module rec TYPES : sig
         (* approximate size of data written in current backup_writebatch *)
         mutable backup_writebatch_size : int;
         outermost_tx : transaction;
-        mutable locks : (string * Obs_shared_mutex.t option) M.t;
+        mutable tx_locks : Obs_shared_mutex.t M.t;
         dump_buffer : Obs_bytea.t;
       }
 end = TYPES
@@ -473,14 +493,13 @@ let read_keyspaces db lldb =
                let ks_id = int_of_string v in
                let ks_tables = read_keyspace_tables lldb ks_name in
                let ks_rev_tables = Hashtbl.create (Hashtbl.length ks_tables) in
-               let ks_locks = LOCKS.create 13 in
                let ks_tx_key = Lwt.new_key () in
                  Hashtbl.iter
                    (fun k v -> Hashtbl.add ks_rev_tables v k)
                    ks_tables;
                  Hashtbl.add h keyspace_name
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
-                     ks_unique_id; ks_locks; ks_tx_key;
+                     ks_unique_id; ks_tx_key;
                    };
                  true)
       lldb
@@ -510,7 +529,9 @@ let reload_keyspaces t lldb =
                  old_kss
          with Not_found ->
            (* new keyspace: register proto and new WKS set *)
-           Hashtbl.add t.keyspaces name (Proto ks, WKS.create 13))
+           Hashtbl.add t.keyspaces name (Proto ks, WKS.create 13);
+           (* also initialize the entry in the lock table *)
+           t.locks <- M.add name (WeakTbl.create ()) t.locks)
       new_keyspaces
 
 let close_db t =
@@ -547,6 +568,7 @@ let open_db
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
         writebatch; db_iter_pool; reopen; slaves = IM.empty;
         assume_page_fault; fsync = fsync;
+        locks = M.empty;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -614,7 +636,6 @@ let clone_keyspace (Proto proto) =
     ks_db = proto.ks_db; ks_id = proto.ks_id; ks_name = proto.ks_name;
     ks_unique_id = new_keyspace_id ();
     ks_tables = proto.ks_tables; ks_rev_tables = proto.ks_rev_tables;
-    ks_locks = LOCKS.create 13;
     ks_tx_key = Lwt.new_key ();
   }
 
@@ -643,11 +664,13 @@ let register_keyspace t ks_name =
           ks_unique_id = new_keyspace_id ();
           ks_tables = Hashtbl.create 13;
           ks_rev_tables = Hashtbl.create 13;
-          ks_locks = LOCKS.create 31;
           ks_tx_key = Lwt.new_key ();
         } in
     let new_ks = clone_keyspace proto in
       WKS.add (get_keyspace_set t ks_name proto) new_ks;
+      (* be careful not to overwrite t.locks entry if already present *)
+      if not (M.mem ks_name t.locks) then
+        t.locks <- M.add ks_name (WeakTbl.create ()) t.locks;
       return new_ks
 
 let register_keyspace =
@@ -669,7 +692,7 @@ let get_keyspace t ks_name =
 
 let keyspace_name ks = ks.ks_name
 
-let keyspace_id ks = ks.ks_id
+let keyspace_id ks = (ks.ks_unique_id :> int)
 
 let it_next ks it =
   Obs_load_stats.record_near_seeks ks.ks_db.load_stats 1;
@@ -793,7 +816,7 @@ let rec transaction_aux with_iter_pool ks f =
               repeatable_read; iter_pool; ks;
               backup_writebatch = lazy (L.Batch.make ());
               backup_writebatch_size = 0;
-              outermost_tx = tx; locks = M.empty;
+              outermost_tx = tx; tx_locks = M.empty;
               dump_buffer = Obs_bytea.create 16;
             } in
           try_lwt
@@ -801,8 +824,8 @@ let rec transaction_aux with_iter_pool ks f =
               commit_outermost_transaction ks tx >>
               return y
           finally
-            (* release locks *)
-            M.iter (fun _ (_, m) -> Option.may Obs_shared_mutex.unlock m) tx.locks;
+            (* release tx_locks *)
+            M.iter (fun name m -> Obs_shared_mutex.unlock m) tx.tx_locks;
             return ()
         end
     | Some parent_tx ->
@@ -937,22 +960,23 @@ let lock_one ks ~shared name =
   match Lwt.get ks.ks_tx_key with
       None -> return ()
     | Some tx ->
-      (* we use tx.outermost_tx.locks instead of tx.locks because locks are
+      (* we use tx.outermost_tx.tx_locks instead of tx.tx_locks because tx_locks are
        * always associated to the outermost transaction! *)
-      if M.mem name tx.outermost_tx.locks then return ()
+      if M.mem name tx.outermost_tx.tx_locks then return ()
       else
-        let ks = tx.ks in
-        let k, mutex =
-          try
-            let k = LOCKS.find ks.ks_locks (name, None) in
-              (k, Option.get (snd k))
-          with Not_found ->
-            let m = Obs_shared_mutex.create () in
-            let k = (name, Some m) in
-              LOCKS.add ks.ks_locks k;
-              (k, m)
+        (* try to get mutex from global (per keyspace-name) map *)
+        let mutex =
+          let tbl = M.find ks.ks_name ks.ks_db.locks in
+            match WeakTbl.get tbl name with
+                Some mutex -> mutex
+              | None ->
+                  (* not found (maybe GCed because no refs left to it), create
+                   * a new one *)
+                  let mutex = Obs_shared_mutex.create () in
+                    WeakTbl.add tbl name mutex;
+                    mutex
         in
-          tx.outermost_tx.locks <- M.add name k tx.outermost_tx.locks;
+          tx.outermost_tx.tx_locks <- M.add name mutex tx.outermost_tx.tx_locks;
           Obs_shared_mutex.lock ~shared mutex
 
 let lock ks ~shared names = Lwt_list.iter_s (lock_one ks ~shared) names

@@ -22,7 +22,6 @@ open Lwt
 open Test_00util
 open OUnit
 
-
 module D = Obs_storage
 module DM = Obs_data_model
 
@@ -1192,6 +1191,34 @@ struct
                 D.lock ks ~shared:false ["test_lock_nested"] >>
                 D.lock ks ~shared:false ["test_lock_nested"]))
 
+  let test_lock_exclusion db1 db2 =
+    lwt ks1 = D.register_keyspace db1 "test_lock_exclusion" in
+    let get_val ks k =
+      match_lwt D.get_column ks T.tbl k "v" with
+          None -> assert_failure_fmt "Should have found tbl[%s][v]" k
+        | Some (v, _) -> return (int_of_string v) in
+    let transfer ks =
+      D.read_committed_transaction ks
+        (fun _ ->
+           D.lock ks ~shared:false ["transfer a:b"] >>
+           lwt a = get_val ks "a" >|= succ in
+           lwt b = get_val ks "b" >|= pred in
+             put_slice ks T.tbl ["a", ["v", string_of_int a];
+                                 "b", ["v", string_of_int b]]) in
+    let kss =
+      List.init 10
+        (fun i -> D.register_keyspace [|db1; db2|].(i mod 2) "test_lock_exclusion")
+    in
+      put_slice ks1 T.tbl ["a", ["v", "0"]; "b", ["v", "0"]] >>
+      Lwt.join (List.map (fun ks -> ks >>= transfer) kss) >>
+      get_val ks1 "a" >|= aeq_int ~msg:"value of a" 10 >>
+      get_val ks1 "b" >|= aeq_int ~msg:"value of b" ~-10
+
+  let test_lock_exclusion_same_db db = test_lock_exclusion db db
+
+  let test_lock_exclusion p =
+    Lwt_pool.use p (fun db1 -> Lwt_pool.use p (test_lock_exclusion db1))
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1290,12 +1317,14 @@ struct
       "exist_keys", test_exist_keys;
       "lock recursive", test_lock_recursive;
       "lock nested", test_lock_nested;
+      "lock exclusion", test_lock_exclusion_same_db;
       "interlocked txs", test_interlocked_txs_same_db;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [
       "commit before return", test_commit_before_return;
-      "interlocked txs from diff ks", test_interlocked_txs;
+      "interlocked txs from diff conns", test_interlocked_txs;
+      "lock exclusion from diff conns", test_lock_exclusion;
     ]
 
   let () =

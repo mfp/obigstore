@@ -146,9 +146,12 @@ sig
 
   val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
-  (** Acquire locks with the given names. The locks will be released
-    * automatically when the outermost transaction is committed or aborted.
-    * This is a NOP unless inside a transaction.
+  (** [lock ks ~shared l] acquire locks with names given in [l] for the DB
+    * keyspace [keyspace_name ks]. Each DB keyspace defines a different
+    * lock namespace; therefore different [keyspace] values for the same
+    * underlying DB keyspace share the same namespace.
+    * The locks will be released automatically when the outermost transaction
+    * is committed or aborted.  [lock] is a NOP unless inside a transaction.
     *
     * @param shared indicates whether shared or exclusive locks are to be
     * acquired *)
