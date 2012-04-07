@@ -29,12 +29,10 @@ module TEST =
        let with_db f =
          let dir = make_temp_dir () in
          let db = Obs_storage.open_db dir in
-           Lwt_unix.run begin
-             try_lwt
-               f db
-             finally
-               Obs_storage.close_db db
-           end
+           try_lwt
+             f db
+           finally
+             Obs_storage.close_db db
 
        let with_db_pool f =
          with_db

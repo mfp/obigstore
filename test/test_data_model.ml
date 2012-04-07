@@ -41,8 +41,8 @@ module Run_test
   (D : Obs_data_model.S)
   (C : sig
      val id : string
-     val with_db : (D.db -> unit Lwt.t) -> unit
-     val with_db_pool : (D.db Lwt_pool.t -> unit Lwt.t) -> unit
+     val with_db : (D.db -> unit Lwt.t) -> unit Lwt.t
+     val with_db_pool : (D.db Lwt_pool.t -> unit Lwt.t) -> unit Lwt.t
    end) =
 struct
   let string_of_key_range = function
@@ -304,9 +304,12 @@ struct
     D.read_committed_transaction ks
       (fun tx -> D.get_keys tx tbl (`Discrete l))
 
-  let test_get_keys_ranges db =
-    lwt ks1 = D.register_keyspace db "test_get_keys_ranges" in
-    lwt ks2 = D.register_keyspace db "test_get_keys_ranges2" in
+  let register_keyspace dbs =
+    D.register_keyspace (List.nth dbs (Random.int (List.length dbs)))
+
+  let test_get_keys_ranges dbs =
+    lwt ks1 = register_keyspace dbs "test_get_keys_ranges" in
+    lwt ks2 = register_keyspace dbs "test_get_keys_ranges2" in
 
       get_key_range ks1 T.tbl1 >|= aeq_string_list [] >>
       get_key_range ks2 T.tbl1 >|= aeq_string_list [] >>
@@ -354,8 +357,8 @@ struct
            get_key_range ks1 T.tbl1 ~first:"e" >|=
              aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
-  let test_get_keys_reverse_ranges db =
-    lwt ks = D.register_keyspace db "test_get_keys_ranges" in
+  let test_get_keys_reverse_ranges dbs =
+    lwt ks = register_keyspace dbs "test_get_keys_ranges" in
 
     let expect ?first ?up_to expected =
       lwt actual = D.get_keys ks T.tbl (rev_key_range ?first ?up_to ()) in
@@ -390,8 +393,8 @@ struct
            expect ~first:"e" ~up_to:"a" ["c"; "a"] >>
            expect ~first:"e" ~up_to:"e" [])
 
-  let test_get_keys_with_del_put db =
-    lwt ks = D.register_keyspace db "test_get_keys_with_del_put" in
+  let test_get_keys_with_del_put dbs =
+    lwt ks = register_keyspace dbs "test_get_keys_with_del_put" in
     let key_name i = sprintf "%03d" i in
       get_key_range ks T.tbl >|= aeq_string_list [] >>
       put_slice ks T.tbl
@@ -406,8 +409,8 @@ struct
            get_key_range ks T.tbl >|= aeq_string_list ["000"; "002"; "004"]) >>
       get_key_range ks T.tbl >|= aeq_string_list ["000"; "002"; "004"]
 
-  let test_get_keys_discrete db =
-    lwt ks1 = D.register_keyspace db "test_get_keys_discrete" in
+  let test_get_keys_discrete dbs =
+    lwt ks1 = register_keyspace dbs "test_get_keys_discrete" in
       get_keys ks1 T.tbl ["a"; "b"] >|= aeq_string_list [] >>
       D.read_committed_transaction ks1
         (fun tx ->
@@ -427,8 +430,8 @@ struct
       with Exit -> return () end >>
       get_keys ks1 T.tbl ["c"; "x"; "b"] >|= aeq_string_list ["b"; "c"]
 
-  let test_get_keys_max_keys db =
-    lwt ks = D.register_keyspace db "test_get_keys_max_keys" in
+  let test_get_keys_max_keys dbs =
+    lwt ks = register_keyspace dbs "test_get_keys_max_keys" in
     let key_name i = sprintf "%03d" i in
       put_slice ks T.tbl
         (List.init 10 (fun i -> (key_name i, [ "x", ""; "y", "" ]))) >>
@@ -452,9 +455,9 @@ struct
            get_key_range ks T.tbl ~max_keys:4 >|=
              aeq_string_list ["000"; "002"; "004"; "005"])
 
-  let test_count_keys db =
-    lwt ks1 = D.register_keyspace db "test_get_keys_ranges" in
-    lwt ks2 = D.register_keyspace db "test_get_keys_ranges2" in
+  let test_count_keys dbs =
+    lwt ks1 = register_keyspace dbs "test_get_keys_ranges" in
+    lwt ks2 = register_keyspace dbs "test_get_keys_ranges2" in
 
     let count_key_range ks ?first ?last tbl =
       D.read_committed_transaction ks
@@ -545,8 +548,8 @@ struct
   let aeq_slice_columns ?msg x actual =
     aeq ?msg string_of_slice_columns x actual
 
-  let test_get_slice_discrete db =
-    lwt ks = D.register_keyspace db "test_get_slice_discrete" in
+  let test_get_slice_discrete dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_discrete" in
       put_slice ks T.tbl
         [
          "a", ["k", "kk"; "v", "vv"];
@@ -576,8 +579,8 @@ struct
                 ["a", "v2", [ "k", "kk"; "v2", "v2"; ];
                  "c", "w", [ "w", "ww" ]]))
 
-  let test_get_slice_discrete_rev_col_range db =
-    lwt ks = D.register_keyspace db "test_get_slice_discrete_rev_col_range" in
+  let test_get_slice_discrete_rev_col_range dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_discrete_rev_col_range" in
 
     let expect tx =
       get_slice tx T.tbl
@@ -600,8 +603,8 @@ struct
              expect tx) >>
         D.read_committed_transaction ks expect
 
-  let test_get_slice_key_range db =
-    lwt ks = D.register_keyspace db "test_get_slice_key_range" in
+  let test_get_slice_key_range dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_key_range" in
     let all = `All in
       put_slice ks T.tbl
         [
@@ -626,8 +629,8 @@ struct
                 [ "b", "k1", [ "k1", "kk1" ];
                   "c", "w", [ "w", "ww" ] ]))
 
-  let test_get_slice_key_range_reverse db =
-    lwt ks = D.register_keyspace db "test_get_slice_key_range_reverse" in
+  let test_get_slice_key_range_reverse dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_key_range_reverse" in
     let all = `All in
     let expect1 tx =
       let e1 =
@@ -668,8 +671,8 @@ struct
              `All >|=
            aeq_slice (Some "a", [ "a", "k", [ "v", "vv"; "k", "new" ] ]))
 
-  let test_get_slice_max_keys db =
-    lwt ks = D.register_keyspace db "test_get_slice_max_keys" in
+  let test_get_slice_max_keys dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_max_keys" in
     let all = `All in
       put_slice ks T.tbl
         (List.init 100 (fun i -> (sprintf "%03d" i, [ "x", "" ]))) >>
@@ -709,8 +712,8 @@ struct
                         [ "001", "x", ["x", ""];
                           "002", "x", ["x", ""]]))
 
-  let test_get_slice_max_columns db =
-    lwt ks = D.register_keyspace db "test_get_slice_max_columns" in
+  let test_get_slice_max_columns dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_max_columns" in
       put_slice ks T.tbl
         (List.init 10
            (fun i -> (sprintf "%02d" i,
@@ -756,8 +759,8 @@ struct
                (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
                             "01", "10", ["0", ""; "10", "a"]]))
 
-  let test_get_slice_column_ranges db =
-    lwt ks = D.register_keyspace db "test_get_slice_column_ranges" in
+  let test_get_slice_column_ranges dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_column_ranges" in
     let expect tx =
       get_slice tx T.tbl ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
@@ -803,8 +806,8 @@ struct
            expect tx) >>
       D.read_committed_transaction ks expect
 
-  let test_get_slice_column_range_union db =
-    lwt ks = D.register_keyspace db "test_get_slice_column_range_union" in
+  let test_get_slice_column_range_union dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_column_range_union" in
     let expect tx =
       get_slice tx T.tbl ~max_keys:1
         (key_range ~first:"02" ~last:"03" ())
@@ -871,8 +874,8 @@ struct
            end) >>
       D.read_committed_transaction ks expect
 
-  let test_get_slice_nested_transactions db =
-    lwt ks = D.register_keyspace db "test_get_slice_nested_transactions" in
+  let test_get_slice_nested_transactions dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_nested_transactions" in
     let all = `All in
       put_slice ks T.tbl
         [
@@ -908,8 +911,8 @@ struct
                  "b", "c2", ["c1", ""; "c2", ""];
                  "c", "c2", ["c1", ""; "c2", ""]]))
 
-  let test_get_slice_read_tx_data db =
-    lwt ks = D.register_keyspace db "test_get_slice_read_tx_data" in
+  let test_get_slice_read_tx_data dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_read_tx_data" in
       put_slice ks T.tbl [ "a", ["0", ""; "1", ""]; "b", ["0", ""; "1", ""] ] >>
       D.read_committed_transaction ks
         (fun tx ->
@@ -932,8 +935,8 @@ struct
    * should precede
    *   key "foo\000" column "0"
    * *)
-  let test_get_slice_tricky_columns db =
-    lwt ks = D.register_keyspace db "test_get_slice_tricky_columns" in
+  let test_get_slice_tricky_columns dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_tricky_columns" in
       put_slice ks T.tbl
         [ "k", [ "\0003", "" ];
           "k\000", [ "2", "" ] ] >>
@@ -944,9 +947,9 @@ struct
            get_slice tx T.tbl (`Discrete ["k\000"]) `All >|=
              aeq_slice (Some "k\000", [ "k\000", "2", [ "2", "" ] ]))
 
-  let test_get_slice_with_keyspaces db =
-    lwt ks1 = D.register_keyspace db "test_get_slice_with_keyspaces" in
-    lwt ks2 = D.register_keyspace db "test_get_slice_with_keyspaces2" in
+  let test_get_slice_with_keyspaces dbs =
+    lwt ks1 = register_keyspace dbs "test_get_slice_with_keyspaces" in
+    lwt ks2 = register_keyspace dbs "test_get_slice_with_keyspaces2" in
       put_slice ks1 T.tbl [ "a", ["x", "y"] ] >>
       put_slice ks2 T.tbl [ "b", ["w", "z"] ] >>
       D.read_committed_transaction ks1
@@ -954,8 +957,8 @@ struct
            get_slice tx T.tbl (key_range ()) `All >|=
            aeq_slice (Some "a", ["a", "x", ["x", "y"]]))
 
-  let test_get_slice_predicates db =
-    lwt ks = D.register_keyspace db "test_get_slice_predicates" in
+  let test_get_slice_predicates dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_predicates" in
     let tbl = T.tbl in
     let all l = DM.Satisfy_all l in
     let any l = DM.Satisfy_any l in
@@ -1016,8 +1019,8 @@ struct
            in return expect)
     in D.read_committed_transaction ks expect
 
-  let test_get_slice_values db =
-    lwt ks = D.register_keyspace db "test_get_slice_values" in
+  let test_get_slice_values dbs =
+    lwt ks = register_keyspace dbs "test_get_slice_values" in
     let add_data () =
       put_slice ks T.tbl
         [ "a", (List.init 10 (fun n -> (sprintf "%d" n, sprintf "a%d" n)));
@@ -1042,8 +1045,8 @@ struct
       (* also after commit *)
       D.read_committed_transaction ks assertions
 
-  let test_get_column_values db =
-    lwt ks = D.register_keyspace db "test_get_column_values" in
+  let test_get_column_values dbs =
+    lwt ks = register_keyspace dbs "test_get_column_values" in
     let aeq ?msg =
       aeq ?msg (string_of_list (string_of_option (sprintf "%S")))
     in
@@ -1063,8 +1066,8 @@ struct
            D.get_column_values tx T.tbl "b" ["1"; "2"] >|=
              aeq [Some "b1"; None])
 
-  let test_delete_key db =
-    lwt ks = D.register_keyspace db "test_delete_key" in
+  let test_delete_key dbs =
+    lwt ks = register_keyspace dbs "test_delete_key" in
     let get_all tx = get_slice tx T.tbl (key_range ()) `All in
       put_slice ks T.tbl
         [ "a", [ "x", ""; "y", ""; "z", "" ];
@@ -1090,8 +1093,8 @@ struct
              aeq_slice ~msg:"after delete, after transaction commit"
                (Some "a", [ "a", "z", [ "x", ""; "y", ""; "z", "" ]]))
 
-  let test_exists_key db =
-    lwt ks = D.register_keyspace db "test_exists_key" in
+  let test_exists_key dbs =
+    lwt ks = register_keyspace dbs "test_exists_key" in
       put_slice ks T.t1 [ "1", ["1", ""] ] >>
       D.read_committed_transaction ks
         (fun ks ->
@@ -1107,8 +1110,8 @@ struct
            D.exists_key ks T.t1 "1" >|= aeq_bool ~msg:"key 1" false >>
            D.exists_key ks T.t1 "2" >|= aeq_bool ~msg:"key 2" true)
 
-  let test_exist_keys db =
-    lwt ks = D.register_keyspace db "test_exist_key" in
+  let test_exist_keys dbs =
+    lwt ks = register_keyspace dbs "test_exist_key" in
     let aeq = aeq (string_of_list (sprintf "%b")) in
       put_slice ks T.t1 [ "1", ["1", ""] ] >>
       D.read_committed_transaction ks
@@ -1125,8 +1128,8 @@ struct
   let get_all tx tbl =
     get_slice tx tbl (key_range ()) `All
 
-  let test_delete_columns db =
-    lwt ks = D.register_keyspace db "test_delete_columns" in
+  let test_delete_columns dbs =
+    lwt ks = register_keyspace dbs "test_delete_columns" in
       put_slice ks T.tbl
         [ "a", [ "x", ""; "y", ""; "z", "" ];
           "b", [ "x", ""; "y", ""; "z", "" ]] >>
@@ -1148,8 +1151,8 @@ struct
              aeq_slice ~msg:"after transaction commit"
                (Some "a", ["a", "y", ["y", ""]]))
 
-  let test_put_columns db =
-    lwt ks = D.register_keyspace db "test_put_columns" in
+  let test_put_columns dbs =
+    lwt ks = register_keyspace dbs "test_put_columns" in
       put_slice ks T.tbl
         [ "a", [ "x", ""; "y", ""; "z", "" ];
           "b", [ "x", ""; "y", ""; "z", "" ]] >>
@@ -1277,8 +1280,28 @@ struct
 
   let test_interlocked_txs_same_db db = do_test_interlocked_txs db db
 
-  let test_with_db f () = C.with_db f
-  let test_with_pool f () = C.with_db_pool f
+  let test_with_db f () = Lwt_unix.run (C.with_db f)
+  let test_with_pool f () = Lwt_unix.run (C.with_db_pool f)
+
+  let gen_concurrent_and_diff_conn_tests l =
+    let normal =
+      List.map
+        (fun (n, f) -> (n, (fun () -> C.with_db (fun db -> f [db]))))
+        l in
+    let multiconn =
+      List.map
+        (fun (n, f) ->
+           let test () =
+             C.with_db_pool
+               (fun p ->
+                  let rec with_conns conns = function
+                      0 -> f conns
+                    | n -> Lwt_pool.use p
+                             (fun db -> with_conns (db :: conns) (n-1))
+                  in with_conns [] 3)
+           in (n ^ " with diff conns", test))
+        l
+    in lwt_tests (normal @ multiconn)
 
   let tests =
     List.map (fun (n, f) -> n >:: test_with_db f)
@@ -1289,6 +1312,13 @@ struct
       "keyspace management", test_keyspace_management;
       "list tables", test_list_tables;
       "list tables with diff keyspaces", test_list_tables_with_keyspaces;
+      "lock recursive", test_lock_recursive;
+      "lock nested", test_lock_nested;
+      "lock exclusion", test_lock_exclusion_same_db;
+      "interlocked txs", test_interlocked_txs_same_db;
+    ] @
+    gen_concurrent_and_diff_conn_tests
+    [
       "get_keys ranges", test_get_keys_ranges;
       "get_keys reverse ranges", test_get_keys_reverse_ranges;
       "get_keys discrete keys", test_get_keys_discrete;
@@ -1315,10 +1345,6 @@ struct
       "delete_columns", test_delete_columns;
       "exists_key", test_exists_key;
       "exist_keys", test_exist_keys;
-      "lock recursive", test_lock_recursive;
-      "lock nested", test_lock_nested;
-      "lock exclusion", test_lock_exclusion_same_db;
-      "interlocked txs", test_interlocked_txs_same_db;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [

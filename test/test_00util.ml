@@ -19,6 +19,7 @@
 
 open Printf
 open OUnit
+open Lwt
 
 module List = struct include List include BatList end
 module String = struct include String include BatString end
@@ -135,4 +136,51 @@ let register_tests name tests =
     all_tests := (name >::: tests) :: !all_tests
 
 let get_all_tests () = List.rev !all_tests
+
+let lwt_tests
+      ?(sequential_timeout = 30.0) ?(concurrent_timeout = 60.0)
+      ?(sequential=[]) concurrent =
+  let concurrent =
+    List.map
+      (fun (name, f) ->
+         let t, u = Lwt.task () in
+         let init_t, init_u = Lwt.task () in
+         let g () =
+           ignore begin try_lwt
+             lwt () = init_t in
+             lwt () = f () in
+               Lwt.wakeup u ();
+               return ()
+           with e -> Lwt.wakeup_exn u e;
+                     return ()
+           end
+         in (name, t, g, init_u))
+      concurrent in
+
+  let now () = Unix.gettimeofday () in
+  let max_time = ref (now ()) in
+  let launch_concurrent =
+    lazy begin
+      max_time := now () +. concurrent_timeout;
+      List.iter (fun (_, _, g, _) -> g ()) concurrent
+    end in
+
+  let test_func t () =
+    Lazy.force launch_concurrent;
+    Lwt_unix.run
+      (let timeout = max (!max_time -. now ()) 0.01 in
+           Lwt_unix.with_timeout timeout (fun () -> t)) in
+
+  let concurrent_test_launcher (name, _, _, u) =
+    sprintf "Launch %s" name >:: (fun () -> Lwt.wakeup u ()) in
+  let concurrent_test (name, t, _, _) = name >:: test_func t in
+
+  let sequential_tests =
+    List.map
+      (fun (name, f) -> name >:: run_lwt ~timeout:sequential_timeout f)
+      sequential
+  in
+    sequential_tests @
+    List.map concurrent_test_launcher concurrent @
+    List.map concurrent_test concurrent
 

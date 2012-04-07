@@ -37,17 +37,15 @@ struct
     let ch2_in, ch2_out = Lwt_io.pipe () in
     let server = SERVER.make db in
     let client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out in
-      Lwt_unix.run begin
-        try_lwt
-          ignore
-            (try_lwt
-               SERVER.service_client server ch1_in ch2_out
-             with _ -> return ());
-          f client
-        finally
-          CLIENT.close client;
-          Obs_storage.close_db db
-      end
+      try_lwt
+        ignore
+          (try_lwt
+             SERVER.service_client server ch1_in ch2_out
+           with _ -> return ());
+        f client
+      finally
+        CLIENT.close client;
+        Obs_storage.close_db db
 
   let with_db_pool f =
     let dir = make_temp_dir () in
@@ -65,13 +63,11 @@ struct
            with _ -> return ());
         return  client in
     let pool = Lwt_pool.create 100 mk_client in
-      Lwt_unix.run begin
-        try_lwt
-          f pool
-        finally
-          List.iter CLIENT.close !clients;
-          Obs_storage.close_db db
-      end
+      try_lwt
+        f pool
+      finally
+        List.iter CLIENT.close !clients;
+        Obs_storage.close_db db
 end
 
 module TEST = Test_data_model.Run_test(CLIENT)(C)
