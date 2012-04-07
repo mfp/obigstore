@@ -399,66 +399,61 @@ struct
                | Tx_type.Read_committed -> D.read_committed_transaction in
              let handlers = snd (H.find c.keyspaces (ks_id_of_int keyspace)) in
                try_lwt
-                 (* we'll put the request_id from the request that forced the
-                  * commit (carried by Commit_exn) in finishing_reqid *)
-                 let finishing_reqid = ref "" in
-                 lwt () =
+                 (* we get the request_id from the request that forced the
+                  * commit (carried by Commit_exn) *)
+                 lwt commit_reqid =
                    transaction_f ks.ks_ks
                      (fun _ ->
-                        Lwt.with_value ks.ks_tx_key (Some tx_data)
-                          (fun () ->
-                             try_lwt
-                               (* install handler *)
-                               let req_stream, pushf = Lwt_stream.create () in
-                               let handler ~request_id r =
-                                 (* we keep a ref to the stream because
-                                  * otherwise it can be collected! pushf
-                                  * only has a weak ref to it *)
-                                 ignore req_stream;
-                                 pushf (Some (`Req (request_id, r)));
-                                 return ()
-                               in
-                                 Stack.push handler handlers;
-                                 P.return_ok ?buf c.och ~request_id () >>
-                                 let rec handle_reqs () =
-                                   match_lwt Lwt_stream.get req_stream with
-                                       (Some `Req (request_id, r)) ->
-                                         (* we respond in a background thread
-                                          * so as to process reqs in parallel
-                                          * but need to capture exns (in
-                                          * particular, Abort_exn and
-                                          * Commit_exn) *)
-                                         ignore begin
-                                           try_lwt
-                                             respond c ~request_id r
-                                           with e ->
-                                             pushf (Some (`Exn e));
-                                             return ()
-                                         end;
-                                         handle_reqs ()
-                                     | Some (`Exn e) ->
-                                         raise_lwt e
-                                     | None -> return ()
-                                 in handle_reqs () >>
-                                    return ()
-                             with Commit_exn req_id ->
-                               finishing_reqid := req_id;
-                               return ()
-                             finally
-                               let _ : req_handler = Stack.pop handlers in
-                                 return ())) >>
-                     P.return_ok ?buf c.och ~request_id:!finishing_reqid ()
+                        try_lwt
+                          (* install handler *)
+                          let req_stream, pushf = Lwt_stream.create () in
+                          let handler ~request_id r =
+                            (* we keep a ref to the stream because
+                             * otherwise it can be collected! pushf
+                             * only has a weak ref to it *)
+                            ignore req_stream;
+                            pushf (Some (`Req (request_id, r)));
+                            return ()
+                          in
+                            Stack.push handler handlers;
+                            P.return_ok ?buf c.och ~request_id () >>
+                            let rec handle_reqs () =
+                              match_lwt Lwt_stream.get req_stream with
+                                  (Some `Req (request_id, r)) ->
+                                    (* we respond in a background thread so as
+                                     * to process reqs in parallel but need to
+                                     * capture exns (in particular, Abort_exn
+                                     * and Commit_exn) *)
+                                    ignore begin
+                                      try_lwt
+                                        Lwt.with_value
+                                          ks.ks_tx_key (Some tx_data)
+                                          (fun () -> respond c ~request_id r)
+                                      with e ->
+                                        pushf (Some (`Exn e));
+                                        return ()
+                                    end;
+                                    handle_reqs ()
+                                | Some (`Exn (Commit_exn req_id)) -> return req_id
+                                | Some (`Exn e) -> raise_lwt e
+                                | None -> fail (Failure "TX request stream canceled")
+                            in handle_reqs ()
+                        finally
+                          let _ : req_handler = Stack.pop handlers in
+                                 return ())
                  in
+                   P.return_ok ?buf c.och ~request_id:commit_reqid () >>
                    (* we deliver notifications _after_ actual commit
                     * (otherwise, new data wouldn't be found if another client
                     *  performs a query right away) *)
-                   begin if is_outermost then
-                     Notif_queue.iter (notify c.server ks.ks_ks) tx_data.tx_notifications
-                   else parent_tx_data.tx_notifications <- tx_data.tx_notifications
-                   end;
-                   return ()
-               with Abort_exn request_id ->
-                   P.return_ok ?buf c.och ~request_id ())
+                   let () =
+                     begin if is_outermost then
+                       Notif_queue.iter (notify c.server ks.ks_ks)
+                         tx_data.tx_notifications
+                     else parent_tx_data.tx_notifications <- tx_data.tx_notifications
+                     end
+                   in return ()
+               with Abort_exn request_id -> P.return_ok ?buf c.och ~request_id ())
     | Commit { Commit.keyspace; _ } ->
         (* only commit if we're inside a tx *)
         with_keyspace c keyspace ~request_id
