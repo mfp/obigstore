@@ -137,7 +137,11 @@ struct
       ks_subscriptions : mutable_string_set;
   }
 
-  and req_handler = request_id:request_id -> Request.request -> unit Lwt.t
+  and req_handler = (tx_request Lwt_stream.t * (tx_request option -> unit))
+
+  and tx_request = (* request to be handler in TX context *)
+      Exception of exn
+    | Request of request_id * Request.request
 
   and tx_data =
       {
@@ -289,8 +293,9 @@ struct
             if Stack.is_empty handlers then
               respond c ~request_id r
             else begin
-              let handler = Stack.top handlers in
-                handler ~request_id r
+              let (_, push) = Stack.top handlers in
+                push (Some (Request (request_id, r)));
+                return ()
             end
         with Not_found ->
           (* will usually respond with a unknown_keyspace error *)
@@ -599,45 +604,37 @@ struct
       try_lwt
         (* we get the request_id from the request that forced the commit
          * (carried by Commit_exn) *)
+        let (req_stream, pushf) as handler = Lwt_stream.create () in
         lwt commit_reqid =
-          transaction_f ks.ks_ks
-            (fun _ ->
-               try_lwt
-                 (* install handler *)
-                 let req_stream, pushf = Lwt_stream.create () in
-                 let handler ~request_id r =
-                   (* we keep a ref to the stream because otherwise it can be
-                    * collected! pushf only has a weak ref to it *)
-                   ignore req_stream;
-                   pushf (Some (`Req (request_id, r)));
-                   return ()
-                 in
-                   Stack.push handler handlers;
-                   P.return_ok ?buf c.och ~request_id () >>
-                   let rec handle_reqs () =
-                     match_lwt Lwt_stream.get req_stream with
-                         (Some `Req (request_id, r)) ->
-                           (* we respond in a background thread so as to
-                            * process reqs in parallel but need to capture
-                            * exns (in particular, Abort_exn and Commit_exn)
-                            * *)
-                           ignore begin
-                             try_lwt
-                               Lwt.with_value
-                                 ks.ks_tx_key (Some tx_data)
-                                 (fun () -> respond c ~request_id r)
-                             with e ->
-                               pushf (Some (`Exn e));
-                               return ()
-                           end;
-                           handle_reqs ()
-                       | Some (`Exn (Commit_exn req_id)) -> return req_id
-                       | Some (`Exn e) -> raise_lwt e
-                       | None -> fail (Failure "TX request stream canceled")
-                   in handle_reqs ()
-               finally
-                 let _ : req_handler = Stack.pop handlers in
-                   return ())
+          transaction_f ks.ks_ks begin fun _ ->
+            try_lwt
+              (* install handler *)
+              Stack.push handler handlers;
+              P.return_ok ?buf c.och ~request_id () >>
+              let rec handle_reqs () =
+                match_lwt Lwt_stream.get req_stream with
+                  | Some (Request (request_id, r)) ->
+                      (* we respond in a background thread so as to process
+                       * reqs in parallel but need to capture exns (in
+                       * particular, Abort_exn and Commit_exn) *)
+                      ignore begin
+                        try_lwt
+                          Lwt.with_value
+                            ks.ks_tx_key (Some tx_data)
+                            (fun () -> respond c ~request_id r)
+                        with e ->
+                          pushf (Some (Exception e));
+                          return ()
+                      end;
+                      handle_reqs ()
+                  | Some (Exception (Commit_exn req_id)) -> return req_id
+                  | Some (Exception e) -> raise_lwt e
+                  | None -> fail (Failure "TX request stream canceled")
+              in handle_reqs ()
+            finally
+              let _ : req_handler = Stack.pop handlers in
+                return ()
+          end
         in
           P.return_ok ?buf c.och ~request_id:commit_reqid () >>
           (* we deliver notifications _after_ actual commit
