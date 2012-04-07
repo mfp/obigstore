@@ -362,6 +362,7 @@ struct
           let keyspace = fst (H.find c.keyspaces (ks_id_of_int keyspace)) in
             terminate_keyspace_subs c.server keyspace;
             return ()
+        with Not_found -> return ()
         finally
           P.return_ok ?buf c.och ~request_id ()
       end
