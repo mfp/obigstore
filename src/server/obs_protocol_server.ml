@@ -310,7 +310,7 @@ struct
     if String.length c.in_buf < len then c.in_buf <- String.create len;
     Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
     lwt crc2 = read_exactly c 4 in
-    let crc2' = Obs_crc32c.substring c.in_buf 0 len in
+    let crc2' = Obs_crc32c.substring_masked c.in_buf 0 len in
     let gb n = Char.code c.in_buf.[n] in
     let format_id = gb 0 + (gb 1 lsl 8) + (gb 2 lsl 16) + (gb 3 lsl 24) in
       Obs_crc32c.xor crc2 crc;
@@ -789,7 +789,7 @@ struct
 
                   let rec copy_data () =
                     write_and_update_crc crc och buf off len >>
-                    Lwt_io.write och (Obs_crc32c.unsafe_result crc) >>
+                    Lwt_io.write och (Obs_crc32c.unsafe_masked_result crc) >>
                     Lwt_io.flush och >>
                     match_lwt read_checksummed_int ich with
                         None -> raise_lwt Corrupted_data_header
@@ -828,7 +828,7 @@ struct
         | Some req_len ->
             lwt req = Obs_protocol.read_exactly ich req_len in
             lwt req_crc = Obs_protocol.read_exactly ich 4 in
-              if Obs_crc32c.string req <> req_crc then raise Corrupted_data_header;
+              if Obs_crc32c.string_masked req <> req_crc then raise Corrupted_data_header;
               let req_ch = Lwt_io.of_string Lwt_io.input req in
                 match_lwt Lwt_io.LE.read_int req_ch >|= data_request_of_code with
                     `Get_file -> handle_get_file ~debug server req_ch ich och

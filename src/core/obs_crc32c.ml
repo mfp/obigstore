@@ -22,8 +22,8 @@ type t = string
 let create () = String.copy "\000\000\000\000"
 
 external update_unsafe : t -> string -> int -> int -> unit = "obigstore_crc32c_update" "noalloc"
-external string : string -> string = "obigstore_crc32c_string"
 external fix_endianness : t -> unit = "obigstore_crc32c_ensure_lsb" "noalloc"
+external mask : t -> unit = "obigstore_crc32c_mask" "noalloc"
 
 let reset t =
   String.unsafe_set t 0 '\000';
@@ -41,12 +41,32 @@ let result t =
     fix_endianness s;
     s
 
+let masked_result t =
+  let s = String.copy t in
+    mask s;
+    fix_endianness s;
+    s
+
 let unsafe_result t = fix_endianness t; t
+
+let unsafe_masked_result t =
+  mask t;
+  fix_endianness t;
+  t
 
 let substring s off len =
   let crc = create () in
     update crc s off len;
     unsafe_result crc
+
+let string s = substring s 0 (String.length s)
+
+let substring_masked s off len =
+  let crc = create () in
+    update crc s off len;
+    unsafe_masked_result crc
+
+let string_masked s = substring_masked s 0 (String.length s)
 
 let gb s n = Char.code (String.unsafe_get s n)
 let sb s n b = String.unsafe_set s n (Char.unsafe_chr b)

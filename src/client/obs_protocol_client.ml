@@ -431,7 +431,7 @@ struct
     let buf = Obs_bytea.unsafe_string req in
       write_checksummed_int32_le och len >>
       Lwt_io.write_from_exactly och buf 0 len >>
-      Lwt_io.write och (Obs_crc32c.substring buf 0 len)
+      Lwt_io.write och (Obs_crc32c.substring_masked buf 0 len)
 
   module Raw_dump =
   struct

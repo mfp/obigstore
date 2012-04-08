@@ -32,10 +32,19 @@ val reset : t -> unit
   * corresponding to an unsigned 32-bit integer in lsb order. *)
 val string : string -> string
 
+(** Compute the masked CRC32C of a string: the result is returned as a 4-byte
+  * string corresponding to an unsigned 32-bit integer in lsb order. *)
+val string_masked : string -> string
+
 (** [substring s off len] computes the CRC32C of the substring of [s] starting
   * at [off] of length [len]. The result is returned as a 4-byte
   * string corresponding to an unsigned 32-bit integer in lsb order. *)
 val substring : string -> int -> int -> string
+
+(** [substring_masked s off len] computes the masked CRC32C of the substring
+  * of [s] starting at [off] of length [len]. The result is returned as a
+  * 4-byte string corresponding to an unsigned 32-bit integer in lsb order. *)
+val substring_masked : string -> int -> int -> string
 
 val update : t -> string -> int -> int -> unit
 val update_unsafe : t -> string -> int -> int -> unit
@@ -44,11 +53,21 @@ val update_unsafe : t -> string -> int -> int -> unit
   * integer in lsb order. *)
 val result : t -> string
 
+(** [masked_result t] returns a 4-byte string corresponding to a masked
+  * unsigned 32-bit integer in lsb order. *)
+val masked_result : t -> string
+
 (** [unsafe_result t] returns a 4-byte string corresponding to an unsigned
   * 32-bit integer in lsb order.  [t] cannot be used for any further
   * calculations (neither in the [update] nor the [result] families) until it
   * is {!reset}. *)
 val unsafe_result : t -> string
+
+(** [unsafe_masked_result t] returns a 4-byte string corresponding to a masked
+  * unsigned 32-bit integer in lsb order.  [t] cannot be used for any further
+  * calculations (neither in the [update] nor the [result] families) until it
+  * is {!reset}. *)
+val unsafe_masked_result : t -> string
 
 (** [xor a b] updates [a] so that it reflects the result of XORing [a] and
   * [b]. *)

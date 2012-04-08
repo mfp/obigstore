@@ -81,7 +81,7 @@ let head = String.create 16
 let read_header ich =
   Lwt_io.read_into_exactly ich head 0 16 >>
   let crc = String.sub head 12 4 in
-    if Obs_crc32c.substring head 0 12 <> crc then
+    if Obs_crc32c.substring_masked head 0 12 <> crc then
       return Corrupted_header
     else begin
       let req_id =
@@ -109,11 +109,11 @@ let write_msg ?(flush=false) och req_id msg =
       let len = Obs_bytea.length msg in
         Obs_bytea.add_string header req_id;
         Obs_bytea.add_int32_le header len;
-        let crc = Obs_crc32c.substring (Obs_bytea.unsafe_string header) 0 12 in
+        let crc = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string header) 0 12 in
           Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string header) 0 12 >>
           Lwt_io.write_from_exactly och crc 0 4 >>
           Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string msg) 0 len >>
-          let crc2 = Obs_crc32c.substring (Obs_bytea.unsafe_string msg) 0 len in
+          let crc2 = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string msg) 0 len in
             Obs_crc32c.xor crc2 crc;
             Lwt_io.write och crc2 >>
             (if flush then Lwt_io.flush och else return ()))
@@ -230,12 +230,12 @@ let read_exactly ich n =
 let crc32c_of_int_le n =
   let b = Obs_bytea.create 4 in
     Obs_bytea.add_int32_le b n;
-    Obs_crc32c.substring (Obs_bytea.unsafe_string b) 0 4
+    Obs_crc32c.substring_masked (Obs_bytea.unsafe_string b) 0 4
 
 let crc32c_of_int64_le n =
   let b = Obs_bytea.create 8 in
     Obs_bytea.add_int64_le b n;
-    Obs_crc32c.substring (Obs_bytea.unsafe_string b) 0 8
+    Obs_crc32c.substring_masked (Obs_bytea.unsafe_string b) 0 8
 
 let write_checksummed_int32_le och n =
   Lwt_io.LE.write_int och n >>

@@ -365,19 +365,11 @@ obigstore_crc32c_ensure_lsb(value t)
 }
 
 CAMLprim value
-obigstore_crc32c_string(value s)
+obigstore_crc32c_mask(value t)
 {
- CAMLparam1(s);
- CAMLlocal1(ret);
-
- ret = caml_alloc_string(4);
- uint32_t *p = (uint32_t *) String_val(ret);
- *p = update_crc32c(0, (char *)&Byte_u(s, 0), string_length(s));
- #ifndef IS_LITTLE_ENDIAN
- obigstore_crc32c_ensure_lsb(ret);
- #endif
- CAMLreturn(ret);
+ uint32_t *p = (uint32_t *) String_val(t);
+ *p = leveldb::crc32c::Mask(*p);
+ return Val_unit;
 }
-
 
 }
