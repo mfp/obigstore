@@ -19,7 +19,7 @@
 
 #include <leveldb/db.h>
 #include <leveldb/comparator.h>
-#include "crc.h"
+#include "../libs/ocaml-leveldb/leveldb/util/crc32c.h"
 
 #if defined(OS_MACOSX)
   #include <machine/endian.h>
@@ -338,21 +338,16 @@ obigstore_bytea_blit_int_as_i32_be(value dst, value off, value n)
 }
 
 static uint32_t
-update_crc32c(uint32_t crc, const uint8_t *buf, size_t size)
+update_crc32c(uint32_t crc, const char *buf, size_t size)
 {
- crc ^= 0xFFFFFFFF;
- while(size--) {
-     crc = (crc >> 8) ^ crc32ctable[(crc ^ *buf++) & 0xFF];
- }
- crc ^= 0xFFFFFFFF;
- return crc;
+ return leveldb::crc32c::Extend(crc, buf, size);
 }
 
 CAMLprim value
 obigstore_crc32c_update(value t, value s, value off, value len)
 {
  uint32_t *p = (uint32_t *)String_val(t);
- *p = update_crc32c(*p, &Byte_u(s, Long_val(off)), Long_val(len));
+ *p = update_crc32c(*p, (char *)&Byte_u(s, Long_val(off)), Long_val(len));
  return Val_unit;
 }
 
@@ -377,7 +372,7 @@ obigstore_crc32c_string(value s)
 
  ret = caml_alloc_string(4);
  uint32_t *p = (uint32_t *) String_val(ret);
- *p = update_crc32c(0, &Byte_u(s, 0), string_length(s));
+ *p = update_crc32c(0, (char *)&Byte_u(s, 0), string_length(s));
  #ifndef IS_LITTLE_ENDIAN
  obigstore_crc32c_ensure_lsb(ret);
  #endif
