@@ -1275,6 +1275,81 @@ struct
         get_all ks2 T.tbl >|= aeq_slice ~msg:"final ks2" expected >>
         get_all ks3 T.tbl >|= aeq_slice ~msg:"final ks3" expected
 
+  let test_notification_follows_commit dbs =
+    lwt ks = register_keyspace dbs "test_notification_follows_commit" in
+    lwt ks' = register_keyspace dbs "test_notification_follows_commit" in
+    D.listen ks "foo" >>
+    let t, u = Lwt.wait () in
+    ignore begin
+      D.await_notifications ks >>
+      match_lwt D.get_column ks T.tbl "a" "k" with
+          Some ("v", _) -> Lwt.wakeup u `OK; return ()
+        | Some _ -> Lwt.wakeup u `Wrong_data; return ()
+        | None -> Lwt.wakeup u `No_data; return ()
+    end;
+    D.read_committed_transaction ks'
+      (fun ks' ->
+         D.notify ks' "foo" >>
+         put ks' T.tbl "a" ["k", "v"]) >>
+    match_lwt t with
+        `OK -> return ()
+      | `No_data ->
+          assert_failure "Data was not committed before notification"
+      | `Wrong_data ->
+          assert_failure "Wrong data committed before notification"
+
+  let expect ?msg ks l =
+    D.await_notifications ks >|= aeq ?msg (string_of_list (sprintf "%S")) l
+
+  let test_await_before_subscription dbs =
+    lwt ks = register_keyspace dbs "test_await_before_subscription" in
+    lwt ks' = register_keyspace dbs "test_await_before_subscription" in
+    let ok = expect ~msg:"foo subscribed to after await" ks ["foo"] in
+      D.listen ks "foo" >>
+      D.listen ks "bar" >>
+      D.notify ks' "foo" >>
+      ok
+
+  let test_notifications_in_tx dbs =
+    lwt ks = register_keyspace dbs "test_notifications_in_tx" in
+    lwt ks' = register_keyspace dbs "test_notifications_in_tx" in
+      D.listen ks "foo" >>
+      D.listen ks "bar" >>
+      D.listen ks "baz" >>
+      D.notify ks' "bar" >>
+      D.read_committed_transaction ks'
+        (fun ks' ->
+           D.notify ks' "baz" >>
+           try_lwt
+             D.read_committed_transaction ks'
+               (fun ks' ->
+                  D.notify ks' "foo" >>
+                  (* abort the tx *)
+                  raise_lwt Exit)
+           with Exit -> return ()) >>
+      expect ks ["bar"; "baz"]
+
+  let test_notifications dbs =
+    lwt ks1a = register_keyspace dbs "test_notifications1" in
+    lwt ks1b = register_keyspace dbs "test_notifications1" in
+    lwt ks2  = register_keyspace dbs "test_notifications2" in
+      D.listen ks1a "foo" >>
+      D.notify ks1b "foobar" >>
+      D.notify ks1b "foo" >>
+      expect ks1a ["foo"] >>
+      D.unlisten ks1a "foo" >>
+      D.listen ks1a "bar" >>
+      D.listen ks1a "foobar" >>
+      D.listen ks1a "babar" >>
+      D.listen ks1b "bar" >>
+      D.notify ks1b "bar" >>
+      D.notify ks1b "babar" >>
+      expect ~msg:"ks1a" ks1a ["bar"; "babar"] >>
+      expect ~msg:"ks1b" ks1b ["bar"] >>
+      D.notify ks2 "bar" >>
+      D.notify ks1b "babar" >>
+      expect ks1a ["babar"]
+
   let test_interlocked_txs p =
     Lwt_pool.use p (fun db1 -> Lwt_pool.use p (do_test_interlocked_txs db1))
 
@@ -1345,6 +1420,10 @@ struct
       "delete_columns", test_delete_columns;
       "exists_key", test_exists_key;
       "exist_keys", test_exist_keys;
+      "notification follows data commit", test_notification_follows_commit;
+      "await before subscription", test_await_before_subscription;
+      "notify in transaction", test_notifications_in_tx;
+      "simple notifications", test_notifications;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [
