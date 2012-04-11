@@ -78,8 +78,9 @@ let encode_key_list table l =
 %token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
 %token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
-%start input
+%start input printer
 %type <Obs_repl_common.req> input
+%type <Obs_repl_common.codec> printer
 
 %%
 

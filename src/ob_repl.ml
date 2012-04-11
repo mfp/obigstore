@@ -613,6 +613,11 @@ module Printer =
 struct
   open Obs_key_encoding
 
+  let rec string_of_desc = function
+      Simple_codec s -> s
+    | Complex_codec (s, l) ->
+        sprintf "%s(%s)" s (String.concat ", " (List.map string_of_desc l))
+
   let failwithfmt fmt = Printf.ksprintf failwith fmt
 
   module type PRIM_OPS =
@@ -810,6 +815,15 @@ end
 
 exception Need_reconnect of string option
 
+let save_printer ks table desc =
+  match ks with
+      None -> return ()
+    | Some ks ->
+        D.put_columns ks (table_of_string "@meta.printers") table
+          [ { name = "@printer";
+              data = Printer.string_of_desc desc;
+              timestamp = No_timestamp; } ]
+
 let rec inner_exec_loop get_phrase ?phrase db ks =
   let last_phrase = ref None in
   begin try_lwt
@@ -878,7 +892,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
               | `OK c ->
                   install_key_codec (table_of_string table)
                     (pretty_printer_of_codec c) (Printer.parse_value desc);
-                  return ()
+                  save_printer ks table desc
   with
     | Parsing.Parse_error ->
         print_endline "Parse error";
@@ -900,6 +914,34 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
         return ()
   end >>
   inner_exec_loop get_phrase db ks
+
+let recover_saved_printers ks =
+  lwt saved_printers =
+    D.get_slice_values ks (table_of_string "@meta.printers")
+      (`Continuous { first = None; up_to = None; reverse = false; })
+      [ "@printer" ]
+  in
+    List.iter
+      (function
+         | (table, [Some printer]) -> begin
+             let lexbuf = Lexing.from_string printer in
+               try
+                 let desc = Obs_repl_gram.printer
+                              Obs_repl_lex.token lexbuf
+                 in match Printer.build_codec desc with
+                     `Error s -> raise Parsing.Parse_error
+                   | `OK c ->
+                      install_key_codec (table_of_string table)
+                        (pretty_printer_of_codec c) (Printer.parse_value desc);
+                      printf "Recovered printer for table %s\n%!" table;
+               with Parsing.Parse_error ->
+                 printf "Invalid printer expression for table %S, ignoring \
+                         (fix with .printer).\n%!"
+                   table
+           end
+         | _ -> ())
+      (snd saved_printers);
+    return ()
 
 let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
@@ -935,6 +977,10 @@ let () =
                   keyspace := new_ks;
                   lwt ks = D.register_keyspace db !keyspace in
                     curr_keyspace := Some (D.keyspace_name ks, D.keyspace_id ks);
+                    (* clear codec table, load those saved in @meta.printers
+                     * table *)
+                    Hashtbl.clear key_codecs;
+                    recover_saved_printers ks >>
                     outer_loop db (Some ks)
           end
         | Need_reconnect phrase ->
