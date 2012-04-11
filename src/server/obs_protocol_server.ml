@@ -321,6 +321,7 @@ struct
                   (Some ks_unique_id :> int option)
       end
     | Release_keyspace { Release_keyspace.keyspace } ->
+        H.remove c.keyspaces (ks_id_of_int keyspace);
         P.return_ok ?buf c.och ~request_id ()
     | List_keyspaces _ ->
         D.list_keyspaces c.server.db >>=
