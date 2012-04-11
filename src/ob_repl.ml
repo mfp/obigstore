@@ -441,9 +441,13 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
   | Commit _ -> raise_lwt Commit_exn
   | Lock { Lock.names; shared; _ } -> D.lock (get ks) ~shared names >>= ret_nothing
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
-      lwt keys = D.get_keys (get ks) table ?max_keys (krange' key_range) in
-        Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));
-        ret (pp_lines (pp_datum ~strict) fmt) keys
+      let pp_keys =
+        try (fst (Hashtbl.find Obs_repl_common.key_codecs table))
+        with Not_found -> pp_datum
+      in
+        lwt keys = D.get_keys (get ks) table ?max_keys (krange' key_range) in
+          Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));
+          ret (pp_lines (pp_keys ~strict) fmt) keys
   | Count_keys { Count_keys.table; key_range; } ->
       D.count_keys (get ks) table (krange' key_range) >>= ret (printf "%Ld\n%!")
   | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range;
