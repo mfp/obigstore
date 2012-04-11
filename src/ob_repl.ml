@@ -957,7 +957,9 @@ let () =
         if !keyspace = "" then
           return (db, None)
         else begin
+          printf "Switching to keyspace %S\n%!" !keyspace;
           lwt ks = D.register_keyspace db !keyspace in
+            recover_saved_printers ks >>
             return (db, Some ks)
         end in
 
@@ -997,9 +999,11 @@ let () =
             let phrase = if retry_phrase then phrase else None in
               outer_loop ?phrase db ks in
 
-    lwt db, ks = get_db_and_ks () in
-      curr_keyspace := Option.map (fun ks -> (D.keyspace_name ks, D.keyspace_id ks)) ks;
+    let () =
       puts "ob_repl";
       puts "Enter \".help\" for instructions.";
+    in
+    lwt db, ks = get_db_and_ks () in
+      curr_keyspace := Option.map (fun ks -> (D.keyspace_name ks, D.keyspace_id ks)) ks;
       outer_loop db ks
   end
