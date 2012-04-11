@@ -396,6 +396,38 @@ end
 
 open TY
 
+module H = Hashtbl.Make(struct
+                            type t = keyspace_id
+                            let hash (n : keyspace_id) = (n :> int)
+                            let equal a b = (a == b)
+                          end)
+
+module Notif_queue : sig
+  type 'a t
+  val empty : 'a t
+  val push : 'a -> 'a t -> 'a t
+  val iter : ('a -> unit) -> 'a t  -> unit
+end =
+struct
+  type 'a t = 'a list
+
+  let empty = []
+
+  (* TODO: further "compression" by keeping set of previous notifications? *)
+  let push x = function
+      y :: _ as l when y = x -> l
+    | l -> x :: l
+
+  let iter f t = List.iter f (List.rev t)
+end
+
+type keyspace_name = string
+type topic = string
+type subscription_descriptor = { subs_ks : keyspace_name; subs_topic : topic }
+
+type subs_stream = string Lwt_stream.t * (string option -> unit)
+type mutable_string_set = (string, unit) Hashtbl.t
+
 module rec TYPES : sig
   type db =
       {
@@ -420,6 +452,8 @@ module rec TYPES : sig
 
         mutable locks : (string, Obs_shared_mutex.t) WeakTbl.t M.t;
         (* keyspace name -> lock name -> weak ref to lock *)
+
+        subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
       }
 
   and keyspace =
@@ -429,6 +463,8 @@ module rec TYPES : sig
       mutable ks_tables : (table, int) Hashtbl.t;
       mutable ks_rev_tables : (int, table) Hashtbl.t;
       ks_tx_key : transaction Lwt.key;
+      ks_subs_stream : subs_stream;
+      ks_subscriptions : mutable_string_set;
     }
 
   and keyspace_proto = Proto of keyspace
@@ -448,6 +484,7 @@ module rec TYPES : sig
         outermost_tx : transaction;
         mutable tx_locks : Obs_shared_mutex.t M.t;
         dump_buffer : Obs_bytea.t;
+        mutable tx_notifications : string Notif_queue.t;
       }
 end = TYPES
 
@@ -494,12 +531,14 @@ let read_keyspaces db lldb =
                let ks_tables = read_keyspace_tables lldb ks_name in
                let ks_rev_tables = Hashtbl.create (Hashtbl.length ks_tables) in
                let ks_tx_key = Lwt.new_key () in
+               let ks_subs_stream = Lwt_stream.create () in
+               let ks_subscriptions = Hashtbl.create 13 in
                  Hashtbl.iter
                    (fun k v -> Hashtbl.add ks_rev_tables v k)
                    ks_tables;
                  Hashtbl.add h keyspace_name
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
-                     ks_unique_id; ks_tx_key;
+                     ks_unique_id; ks_tx_key; ks_subs_stream; ks_subscriptions;
                    };
                  true)
       lldb
@@ -569,6 +608,7 @@ let open_db
         writebatch; db_iter_pool; reopen; slaves = IM.empty;
         assume_page_fault; fsync = fsync;
         locks = M.empty;
+        subscriptions = Hashtbl.create 13;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -630,14 +670,35 @@ let get_keyspace_set t ks_name proto =
       Hashtbl.add t.keyspaces ks_name (proto, s);
       s
 
+let terminate_keyspace_subs ks =
+  let empty_topics =
+    snd ks.ks_subs_stream None;
+    let subs_ks = ks.ks_name in
+      Hashtbl.fold
+        (fun subs_topic _ l ->
+           let k =  { subs_ks; subs_topic; } in
+           try
+             let t = Hashtbl.find ks.ks_db.subscriptions k in
+               H.remove t ks.ks_unique_id;
+               if H.length t = 0 then k :: l
+               else l
+           with Not_found -> l)
+        ks.ks_subscriptions []
+  in List.iter (Hashtbl.remove ks.ks_db.subscriptions) empty_topics
+
 let clone_keyspace (Proto proto) =
-  { (* we copy explicitly so we get a compile-time complaint if we add a
-     * new field to the record  *)
-    ks_db = proto.ks_db; ks_id = proto.ks_id; ks_name = proto.ks_name;
-    ks_unique_id = new_keyspace_id ();
-    ks_tables = proto.ks_tables; ks_rev_tables = proto.ks_rev_tables;
-    ks_tx_key = Lwt.new_key ();
-  }
+  let ks =
+    { (* we copy explicitly so we get a compile-time complaint if we add a
+       * new field to the record  *)
+      ks_db = proto.ks_db; ks_id = proto.ks_id; ks_name = proto.ks_name;
+      ks_unique_id = new_keyspace_id ();
+      ks_tables = proto.ks_tables; ks_rev_tables = proto.ks_rev_tables;
+      ks_tx_key = Lwt.new_key ();
+      ks_subs_stream = Lwt_stream.create ();
+      ks_subscriptions = Hashtbl.create 13;
+    }
+  in Gc.finalise terminate_keyspace_subs ks;
+     ks
 
 let register_keyspace t ks_name =
   try
@@ -665,6 +726,8 @@ let register_keyspace t ks_name =
           ks_tables = Hashtbl.create 13;
           ks_rev_tables = Hashtbl.create 13;
           ks_tx_key = Lwt.new_key ();
+          ks_subs_stream = Lwt_stream.create ();
+          ks_subscriptions = Hashtbl.create 13;
         } in
     let new_ks = clone_keyspace proto in
       WKS.add (get_keyspace_set t ks_name proto) new_ks;
@@ -818,6 +881,7 @@ let rec transaction_aux with_iter_pool ks f =
               backup_writebatch_size = 0;
               outermost_tx = tx; tx_locks = M.empty;
               dump_buffer = Obs_bytea.create 16;
+              tx_notifications = Notif_queue.empty;
             } in
           try_lwt
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
@@ -837,6 +901,7 @@ let rec transaction_aux with_iter_pool ks f =
               parent_tx.added <- tx.added;
               parent_tx.deleted <- tx.deleted;
               parent_tx.added_keys <- tx.added_keys;
+              parent_tx.tx_notifications <- tx.tx_notifications;
               return y
           end
 
@@ -847,7 +912,10 @@ and commit_outermost_transaction ks tx =
    * * no columns have been added / deleted *)
   if not (Lazy.lazy_is_val tx.backup_writebatch) &&
      TM.is_empty tx.deleted && TM.is_empty tx.added
-  then return ()
+  then begin
+    Notif_queue.iter (notify ks) tx.tx_notifications;
+    return ()
+  end
 
   else begin
     (* normal procedure *)
@@ -929,8 +997,19 @@ and commit_outermost_transaction ks tx =
       Obs_load_stats.record_writes stats 1;
       Obs_load_stats.record_bytes_wr stats !bytes_written;
       Obs_load_stats.record_cols_wr stats !cols_written;
+      (* we deliver notifications _after_ actual commit
+       * (otherwise, new data wouldn't be found if another client
+       *  performs a query right away) *)
+      Notif_queue.iter (notify tx.ks) tx.tx_notifications;
       return ()
   end
+
+and notify ks topic =
+  let k = { subs_ks = ks.ks_name; subs_topic = topic; } in
+    begin try
+      let subs = Hashtbl.find ks.ks_db.subscriptions k in
+        H.iter (fun _ (_, pushf) -> pushf (Some topic)) subs
+    with _ -> () end
 
 let read_committed_transaction ks f =
   Miniregion.use ks.ks_db.db
@@ -2341,6 +2420,56 @@ let delete_key tx table key =
         in
           tx.deleted_keys <- TM.modify (S.add key) S.empty table tx.deleted_keys;
           return ()
+
+let find_or_add find add h k =
+  try find h k with Not_found -> add h k
+
+let listen ks topic =
+  let ks_name = ks.ks_name in
+  let k = { subs_ks = ks_name; subs_topic = topic} in
+  let tbl =
+    find_or_add
+      Hashtbl.find
+      (fun h k -> let v = H.create 13 in Hashtbl.add h k v; v)
+      ks.ks_db.subscriptions k
+  in
+    if not (H.mem tbl ks.ks_unique_id) then begin
+      Hashtbl.replace ks.ks_subscriptions topic ();
+      H.add tbl ks.ks_unique_id ks.ks_subs_stream;
+    end;
+    return ()
+
+let unlisten ks topic =
+  let ks_name = ks.ks_name in
+  let k = { subs_ks = ks_name; subs_topic = topic} in
+    begin try
+      let tbl = Hashtbl.find ks.ks_db.subscriptions k in
+        H.remove tbl ks.ks_unique_id;
+        (* if there are no more listeners, remove the empty
+         * subscriber table *)
+        if H.length tbl = 0 then Hashtbl.remove ks.ks_db.subscriptions k;
+        Hashtbl.remove ks.ks_subscriptions ks_name;
+    with Not_found -> () end;
+    return ()
+
+let notify ks topic =
+  match Lwt.get ks.ks_tx_key with
+    | None -> notify ks topic; return ()
+    | Some tx ->
+        tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
+        return ()
+
+let await_notifications ks =
+  let stream = fst ks.ks_subs_stream in
+  (* we use get_available_up_to to limit the stack footprint
+   * (get_available is not tail-recursive) *)
+  match Lwt_stream.get_available_up_to 500 stream with
+      [] -> begin
+        match_lwt Lwt_stream.get stream with
+            None -> return []
+          | Some x -> return [x]
+      end
+    | l -> return l
 
 let dump tx ?(format = 0) ?only_tables ?offset () =
   let open Obs_backup in

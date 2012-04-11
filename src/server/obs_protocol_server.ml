@@ -70,25 +70,6 @@ struct
                               let equal a b = (a == b)
                             end)
 
-  module Notif_queue : sig
-    type 'a t
-    val empty : 'a t
-    val push : 'a -> 'a t -> 'a t
-    val iter : ('a -> unit) -> 'a t  -> unit
-  end =
-  struct
-    type 'a t = 'a list
-
-    let empty = []
-
-    (* TODO: further "compression" by keeping set of previous notifications? *)
-    let push x = function
-        y :: _ as l when y = x -> l
-      | l -> x :: l
-
-    let iter f t = List.iter f (List.rev t)
-  end
-
   let num_clients = ref 0
 
   let dummy_auto_yield () = return ()
@@ -96,18 +77,10 @@ struct
   let auto_yielder = ref dummy_auto_yield
 
   type client_id = int
-  type topic = string
-  type keyspace_name = string
-
-  type subscription_descriptor = { subs_ks : keyspace_name; subs_topic : topic }
-
-  type subs_stream = string Lwt_stream.t * (string option -> unit)
-  type mutable_string_set = (string, unit) Hashtbl.t
 
   type t =
       {
         db : D.db;
-        subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
         raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
         mutable raw_dump_seqno : Int64.t;
         replication_wait : replication_wait;
@@ -133,9 +106,7 @@ struct
     { ks_unique_id : ks_id;
       ks_tx_key : tx_data Lwt.key;
       ks_ks : D.keyspace;
-      ks_subs_stream : subs_stream;
-      ks_subscriptions : mutable_string_set;
-  }
+    }
 
   and req_handler = (tx_request Lwt_stream.t * (tx_request option -> unit))
 
@@ -143,10 +114,7 @@ struct
       Exception of exn
     | Request of request_id * Request.request
 
-  and tx_data =
-      {
-        mutable tx_notifications : string Notif_queue.t;
-      }
+  and tx_data = unit
 
   let find_or_add find add h k =
     try find h k with Not_found -> add h k
@@ -339,12 +307,7 @@ struct
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
         let ks_unique_id = ks_id_of_int (D.keyspace_id ks_ks) in
-        let ks =
-          { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key ();
-            ks_subs_stream = Lwt_stream.create ();
-            ks_subscriptions = Hashtbl.create 13;
-          }
-        in
+        let ks = { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); } in
           H.add c.keyspaces ks_unique_id (ks, Stack.create ());
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
@@ -352,25 +315,13 @@ struct
             None -> P.return_keyspace_maybe ?buf c.och ~request_id None
           | Some ks_ks ->
               let ks_unique_id = ks_id_of_int (D.keyspace_id ks_ks) in
-              let ks =
-                { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key ();
-                  ks_subs_stream = Lwt_stream.create ();
-                  ks_subscriptions = Hashtbl.create 13;
-                }
-              in
+              let ks = { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); } in
                 H.add c.keyspaces ks_unique_id (ks, Stack.create ());
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
       end
-    | Release_keyspace { Release_keyspace.keyspace } -> begin
-        try_lwt
-          let keyspace = fst (H.find c.keyspaces (ks_id_of_int keyspace)) in
-            terminate_keyspace_subs c.server keyspace;
-            return ()
-        with Not_found -> return ()
-        finally
-          P.return_ok ?buf c.och ~request_id ()
-      end
+    | Release_keyspace { Release_keyspace.keyspace } ->
+        P.return_ok ?buf c.och ~request_id ()
     | List_keyspaces _ ->
         D.list_keyspaces c.server.db >>=
           P.return_keyspace_list ?buf c.och ~request_id
@@ -504,69 +455,23 @@ struct
     | Listen { Listen.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
           (fun (ks, _) ->
-             let ks_name = D.keyspace_name ks.ks_ks in
-             let k = { subs_ks = ks_name; subs_topic = topic} in
-             let tbl =
-               find_or_add
-                 Hashtbl.find
-                 (fun h k -> let v = H.create 13 in Hashtbl.add h k v; v)
-                 c.server.subscriptions k
-             in
-               if not (H.mem tbl ks.ks_unique_id) then begin
-                 Hashtbl.replace ks.ks_subscriptions topic ();
-                 H.add tbl ks.ks_unique_id ks.ks_subs_stream;
-               end;
-               P.return_ok ?buf c.och ~request_id ())
+             D.listen ks.ks_ks topic >>
+             P.return_ok ?buf c.och ~request_id ())
     | Unlisten { Unlisten.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
           (fun (ks, _) ->
-             let ks_name = D.keyspace_name ks.ks_ks in
-             let k = { subs_ks = ks_name; subs_topic = topic} in
-               begin try
-                 let tbl = Hashtbl.find c.server.subscriptions k in
-                   H.remove tbl ks.ks_unique_id;
-                   (* if there are no more listeners, remove the empty
-                    * subscriber table *)
-                   if H.length tbl = 0 then
-                     Hashtbl.remove c.server.subscriptions k;
-                   Hashtbl.remove ks.ks_subscriptions ks_name;
-               with Not_found -> () end;
-               P.return_ok ?buf c.och ~request_id ())
+             D.unlisten ks.ks_ks topic >>
+             P.return_ok ?buf c.och ~request_id ())
     | Notify { Notify.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
           (fun (ks, _) ->
-             begin match Lwt.get ks.ks_tx_key with
-                 None -> notify c.server ks.ks_ks topic
-               | Some tx_data ->
-                   tx_data.tx_notifications <-
-                     Notif_queue.push topic tx_data.tx_notifications;
-             end;
+             D.notify ks.ks_ks topic >>
              P.return_ok ?buf c.och ~request_id ())
     | Await { Await.keyspace; } ->
         with_keyspace c keyspace ~request_id
           (fun (ks, _) ->
-             let attempt () =
-               let stream = fst ks.ks_subs_stream in
-               (* we use get_available_up_to to limit the stack footprint
-                * (get_available is not tail-recursive) *)
-               lwt l = match Lwt_stream.get_available_up_to 500 stream with
-                   [] -> begin
-                     match_lwt Lwt_stream.get stream with
-                         None -> return []
-                       | Some x -> return [x]
-                   end
-                 | l -> return l
-               in P.return_notifications ?buf c.och ~request_id l in
-             (* if there's no subscription yet, wait until there's one *)
-             (* TODO: use a condition to wait for a subscription without
-              * polling *)
-             let rec retry_await_if_needed () =
-               try_lwt
-                 attempt ()
-               with Not_found ->
-                 Lwt_unix.sleep 0.05 >>
-                 retry_await_if_needed ()
-             in retry_await_if_needed ())
+             D.await_notifications ks.ks_ks >>=
+             P.return_notifications ?buf c.och ~request_id)
     | Trigger_raw_dump { Trigger_raw_dump.record; } ->
       (* FIXME: catch errors in Raw_dump.dump, signal to client *)
       lwt raw_dump = D.Raw_dump.dump c.server.db in
@@ -591,12 +496,6 @@ struct
         P.return_raw_dump_file_digest ?buf c.och ~request_id
 
   and respond_to_begin ?buf c (ks, handlers) ~request_id tx_type =
-    let is_outermost, parent_tx_data, tx_data =
-      match Lwt.get ks.ks_tx_key with
-          None ->
-            let d = { tx_notifications = Notif_queue.empty } in
-              (true, d, d)
-        | Some d -> (false, d, { tx_notifications = d.tx_notifications; }) in
     let transaction_f = match tx_type with
         Tx_type.Repeatable_read -> D.repeatable_read_transaction
       | Tx_type.Read_committed -> D.read_committed_transaction
@@ -619,8 +518,7 @@ struct
                        * particular, Abort_exn and Commit_exn) *)
                       ignore begin
                         try_lwt
-                          Lwt.with_value
-                            ks.ks_tx_key (Some tx_data)
+                          Lwt.with_value ks.ks_tx_key (Some ())
                             (fun () -> respond c ~request_id r)
                         with e ->
                           pushf (Some (Exception e));
@@ -635,27 +533,8 @@ struct
               let _ : req_handler = Stack.pop handlers in
                 return ()
           end
-        in
-          P.return_ok ?buf c.och ~request_id:commit_reqid () >>
-          (* we deliver notifications _after_ actual commit
-           * (otherwise, new data wouldn't be found if another client
-           *  performs a query right away) *)
-          let () =
-            begin if is_outermost then
-              Notif_queue.iter (notify c.server ks.ks_ks)
-                tx_data.tx_notifications
-            else parent_tx_data.tx_notifications <- tx_data.tx_notifications
-            end
-          in return ()
+        in P.return_ok ?buf c.och ~request_id:commit_reqid ()
       with Abort_exn request_id -> P.return_ok ?buf c.och ~request_id ()
-
-  and notify server ks topic =
-    let ks_name = D.keyspace_name ks in
-    let k = { subs_ks = ks_name; subs_topic = topic; } in
-      begin try
-        let subs = Hashtbl.find server.subscriptions k in
-          H.iter (fun _ (_, pushf) -> pushf (Some topic)) subs
-      with _ -> () end
 
   and with_keyspace c ks_idx ~request_id f =
     let ks =
@@ -672,22 +551,6 @@ struct
     else begin
       Lwt_condition.wait c.wait_for_pending_reqs
     end
-
-  and terminate_keyspace_subs server ks =
-    let empty_topics =
-      snd ks.ks_subs_stream None;
-      let subs_ks = D.keyspace_name ks.ks_ks in
-        Hashtbl.fold
-          (fun subs_topic _ l ->
-             let k =  { subs_ks; subs_topic; } in
-             try
-               let t = Hashtbl.find server.subscriptions k in
-                 H.remove t ks.ks_unique_id;
-                 if H.length t = 0 then k :: l
-                 else l
-             with Not_found -> l)
-          ks.ks_subscriptions []
-    in List.iter (Hashtbl.remove server.subscriptions) empty_topics
 
   let setup_auto_yield t c =
     incr num_clients;
@@ -709,7 +572,6 @@ struct
   let make ?(replication_wait = Await_commit) db =
     {
       db;
-      subscriptions = Hashtbl.create 13;
       raw_dump_seqno = 0L;
       raw_dumps = Hashtbl.create 13;
       replication_wait;
@@ -735,9 +597,6 @@ struct
          service c
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
          raise_lwt End_of_file
-       finally
-         H.iter (fun _ (ks, _) -> terminate_keyspace_subs server ks) c.keyspaces;
-         return ()
 
   let send_response_code code och =
     write_checksummed_int32_le och (data_response_code code)

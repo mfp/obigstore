@@ -259,6 +259,41 @@ sig
 
   val delete_key : keyspace -> table -> key -> unit Lwt.t
 
+  (** {3} Asynchronous notifications *)
+
+  (** [listen ks topìc] allows to receive notifications sent to the specified
+    * [topic] in the keyspace [ks]. Note that [listen] is not affected by
+    * surrounding transactions, i.e., the subscription is performed even if
+    * the surrounding transaction is canceled.
+    * Note that subscriptions are per [keyspace], not per keyspace name: it is
+    * possible to subscribe to different topics in two different [keyspace]
+    * objects which operate on the same DB keyspace.
+    * *)
+  val listen : keyspace -> string -> unit Lwt.t
+
+  (** [unlisten ks topìc] signals that further notifications sent to the [topic]
+    * in the keyspace [ks] will not be received. Notifications that were
+    * already queued in the server will not be discarded, however.
+    * Note that [unlisten] is not affected by surrounding transactions, i.e.,
+    * the unsubscription is performed even if the surrounding transaction is
+    * canceled. *)
+  val unlisten : keyspace -> string -> unit Lwt.t
+
+  (** [notify ks topic] sends a notification associated to the given [topic]
+    * in keyspace [ks], which will be received by all the connections that
+    * performed [listen] on the same [ks]/[topic]. [notify] honors surrounding
+    * transactions, i.e., the notification will be actually performed only
+    * when/if the outermost surrounding transaction is committed, and no
+    * notification is sent if any of the surrounding transactions is aborted.
+    * *)
+  val notify : keyspace -> string -> unit Lwt.t
+
+  (** Return queued notifications, blocking if there is none yet.
+    * An empty list will be returned when there are no more queued
+    * notifications and the underlying connection is closed.
+    * *)
+  val await_notifications : keyspace -> string list Lwt.t
+
   (** {3} Obs_backup *)
   type backup_cursor
 
