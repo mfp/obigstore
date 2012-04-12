@@ -878,7 +878,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
         | Directive (directive, args) ->
             Directives.eval_directive directive args;
             return ()
-        | Nothing -> print_endline "Nothing"; return ()
+        | Nothing -> return ()
         | Error s -> printf "Error: %s\n%!" s; return ()
         | Dump_local destdir ->
             let module DUMP = Obs_dump.Make(struct
