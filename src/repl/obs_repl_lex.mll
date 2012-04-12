@@ -92,5 +92,6 @@ rule token = parse
   | "x\"" (['0'-'9' 'a'-'f' 'A'-'F']* as lxm) '"'
         { ID lxm (* FIXME hex to string *) }
   | ';'            { EOF }
+  | '#' [^'\n']*   { token lexbuf }
   | _              { token lexbuf }
   | eof            { EOF }
