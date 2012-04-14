@@ -261,6 +261,7 @@ open Obs_request
 
 let range = function
     `Continuous c -> Key_range.Key_range c
+  | `All -> Key_range.Key_range { first = None; up_to = None; reverse = false }
   | `Discrete l -> Key_range.Keys l
 
 let krange = range

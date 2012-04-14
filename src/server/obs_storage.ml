@@ -1343,6 +1343,10 @@ let fold_over_data tx table f ?first_column acc ~reverse ~first_key ~up_to_key =
     (fun it -> fold_over_data_aux it tx table f acc ?first_column
                  ~reverse ~first_key ~up_to_key)
 
+let expand_key_range = function
+    `Discrete _ | `Continuous _ as x -> x
+  | `All -> `Continuous { first = None; up_to = None; reverse = false; }
+
 let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
     `Discrete l ->
       with_exists_key tx table
@@ -1403,6 +1407,7 @@ let get_keys_aux init_f map_f fold_f tx table ?(max_keys = max_int) = function
           ~reverse ~first_key:first ~up_to_key:up_to
 
 let get_keys tx table ?(max_keys = max_int) range =
+  let range = expand_key_range range in
   lwt keys_in_lexicographic_order =
     get_keys_aux
       (fun s -> s)
@@ -1436,6 +1441,7 @@ let exists_key tx table key =
          | _ -> return false)
 
 let count_keys tx table range =
+  let range = expand_key_range range in
   let s = ref S.empty in
   get_keys_aux
     (fun _s -> s := _s; S.cardinal _s)
@@ -2226,6 +2232,7 @@ let record_column_reads load_stats key last_column columns =
 let get_slice tx table
       ?(max_keys = max_int) ?max_columns
       ?(decode_timestamps = false) key_range ?predicate column_range =
+  let key_range = expand_key_range key_range in
   let max_columns_ = Option.default max_int max_columns in
   let postproc_keydata ~guaranteed_cols_ok (key, rev_cols) =
     match rev_cols with
@@ -2274,6 +2281,7 @@ let get_slice tx table
 
 let get_slice_values tx table
       ?(max_keys = max_int) key_range columns =
+  let key_range = expand_key_range key_range in
   let bytes_read = ref 0 in
   let cols_read = ref 0 in
   let postproc_keydata ~guaranteed_cols_ok (key, cols) =
@@ -2305,6 +2313,7 @@ let get_slice_values tx table
 
 let get_slice_values_with_timestamps tx table
       ?(max_keys = max_int) key_range columns =
+  let key_range = expand_key_range key_range in
   let bytes_read = ref 0 in
   let cols_read = ref 0 in
   let now = Int64.of_float (Unix.gettimeofday () *. 1e6) in

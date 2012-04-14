@@ -62,11 +62,11 @@ type 'key range =
     reverse : bool;
   }
 
-type 'key key_range = [ `Continuous of 'key range | `Discrete of 'key list ]
+type 'key cont_or_discrete_range = [ `Continuous of 'key range | `Discrete of 'key list ]
 
-type simple_column_range = string key_range
+type 'key key_range = [ 'key cont_or_discrete_range | `All]
 
-type column_range = [ string key_range | `All | `Union of simple_column_range list ]
+type column_range = [ string key_range | `Union of string cont_or_discrete_range list ]
 
 (** Predicate on the value of a colum *)
 type column_val_rel =
