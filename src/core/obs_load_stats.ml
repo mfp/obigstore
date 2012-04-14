@@ -82,7 +82,7 @@ let update t =
       cols_wr = float t.curr_cols_wr /. dt;
       cols_rd = float t.curr_cols_rd /. dt;
       seeks = float t.curr_seeks /. dt;
-      near_seeks = float t.curr_seeks /. dt;
+      near_seeks = float t.curr_near_seeks /. dt;
     } in
   let prev = t.stats in
   let stats =
