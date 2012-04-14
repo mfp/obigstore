@@ -1175,7 +1175,7 @@ let advance_until_next_key ~reverse next it
  * { reverse; first = first_key; up_to = up_to_key }
  * with the semantics defined in Obs_data_model
  * *)
-let fold_over_data_aux it tx table_name f acc ?(first_column="")
+let fold_over_data_aux it tx table_name f acc ?first_column
       ~reverse ~first_key ~up_to_key =
   let buf = ref "" in
   let table_r = ref (-1) in
@@ -1300,7 +1300,8 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
         if not reverse then begin
           let first_datum_key =
             Obs_datum_encoding.encode_datum_key_to_string tx.ks.ks_id ~table
-              ~key:(Option.default "" first_key) ~column:first_column
+              ~key:(Option.default "" first_key)
+              ~column:(Option.default "" first_column)
               ~timestamp:Int64.min_int
           in
             it_seek tx.ks it first_datum_key 0 (String.length first_datum_key);
@@ -1316,11 +1317,12 @@ let fold_over_data_aux it tx table_name f acc ?(first_column="")
                   it_seek tx.ks it datum_key 0 (String.length datum_key);
                   if IT.valid it then it_prev tx.ks it
             | Some k ->
-                (* we go to the datum for the key, then back (it's exclusive) *)
+                (* we go to the datum for the key+col, then back (it's exclusive) *)
                 let datum_key =
                   Obs_datum_encoding.encode_datum_key_to_string tx.ks.ks_id
                     ~table
-                    ~key:k ~column:"" ~timestamp:Int64.min_int
+                    ~key:k ~column:(Option.default "" first_column)
+                    ~timestamp:Int64.min_int
                 in
                   it_seek tx.ks it datum_key 0 (String.length datum_key);
                   if IT.valid it then it_prev tx.ks it
@@ -1591,6 +1593,52 @@ let row_predicate_func = function
           (fun cols -> List.exists (fun f -> f cols) fs)
       in eval_or (eval_and eval_simple) pred
 
+(* return the ?first_column to give to fold_over_data based on the wanted
+ * predicate columns and column range *)
+let rec column_range_first_column ~reverse ~pred_columns_wanted_from_disk
+      (column_range : column_range) : string option =
+  let pick = if reverse then max else min in
+  let bound =
+    match column_range with
+        `Discrete (c :: cols) ->
+          Some (List.fold_left (fun c1 c2 -> pick c1 c2) c cols)
+      | `Discrete [] -> None
+      | `All -> None
+      | `Continuous { first; up_to; reverse = col_rev; } ->
+          begin
+            match reverse, col_rev with
+                false, false -> first
+              | false, true -> up_to
+              | true, false -> up_to
+              | true, true -> first
+          end
+      | `Union r ->
+          match
+            List.map
+              (fun r ->
+                 column_range_first_column
+                   ~reverse ~pred_columns_wanted_from_disk
+                   (r :> column_range))
+              r
+          with
+            | [] | None :: _ -> None
+            | (Some _ as fst_col) :: fst_cols ->
+                List.fold_left
+                  (fun prev v -> match prev, v with
+                       None, _ | _, None -> None
+                     | Some prev, Some v -> Some (pick prev v))
+                  fst_col fst_cols
+  in
+    if S.is_empty pred_columns_wanted_from_disk then begin
+      if not reverse then bound
+      else Option.map (fun s -> s ^ "\x00") bound
+    end else match reverse, bound with
+        _, None -> None
+      | false, Some v ->
+          Some (min v (S.min_elt pred_columns_wanted_from_disk))
+      | true, Some v ->
+          Some (max v (S.max_elt pred_columns_wanted_from_disk) ^ "\x00")
+
 let get_slice_aux_discrete
       postproc_keydata get_keydata_key ~keep_columnless_keys
       tx table
@@ -1681,12 +1729,17 @@ let get_slice_aux_discrete
                       ({ name; data; timestamp = No_timestamp; } :: l, S.add name s)
                     else acc)
                  cols_in_mem_map
-                 ([], S.empty)
+                 ([], S.empty) in
+             let pred_columns_wanted_from_disk =
+               S.diff columns_needed_for_predicate pred_cols_in_mem_set
              in
                fold_over_data tx table fold_datum
-                  ([], pred_cols_in_mem,
-                   S.diff columns_needed_for_predicate pred_cols_in_mem_set)
-                  ~reverse ~first_key ~up_to_key in
+                  ([], pred_cols_in_mem, pred_columns_wanted_from_disk)
+                  ~reverse ~first_key ~up_to_key
+                  ?first_column:(column_range_first_column
+                                   ~reverse
+                                   ~pred_columns_wanted_from_disk
+                                   column_range) in
 
            let rev_cols2 =
              M.fold
