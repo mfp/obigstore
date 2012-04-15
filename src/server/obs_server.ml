@@ -90,8 +90,9 @@ struct
 
   let rec run_server
         ?(replication_wait = Obs_protocol_server.Await_commit)
+        ?(max_async_reqs = 5000)
         ?(debug=false) db ~address ~data_address =
-    let server = S.make ~replication_wait db in
+    let server = S.make ~max_async_reqs ~replication_wait db in
       Lwt.join
         [ accept_loop handle_connection ~debug ~server (make_sock address);
           accept_loop handle_data_connection ~debug ~server (make_sock data_address);

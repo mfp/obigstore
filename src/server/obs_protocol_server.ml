@@ -84,6 +84,7 @@ struct
         raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
         mutable raw_dump_seqno : Int64.t;
         replication_wait : replication_wait;
+        async_req_region : Lwt_util.region;
       }
 
   type client_state =
@@ -98,7 +99,6 @@ struct
         debug : bool;
         mutable pending_reqs : int;
         wait_for_pending_reqs : unit Lwt_condition.t;
-        async_req_region : Lwt_util.region;
         signal_error : Request.request option Lwt.t * Request.request option Lwt.u;
       }
 
@@ -191,7 +191,7 @@ struct
             ignore begin
               c.pending_reqs <- c.pending_reqs + 1;
               try_lwt
-                Lwt_util.run_in_region c.async_req_region
+                Lwt_util.run_in_region c.server.async_req_region
                   (request_slot_cost r)
                   (fun () ->
                      begin try_lwt
@@ -225,7 +225,7 @@ struct
             end;
             (* here we block if the allowed number of async reqs is reached
              * until one of them is done *)
-            Lwt_util.run_in_region c.async_req_region 1 (fun () -> return ()) >>
+            Lwt_util.run_in_region c.server.async_req_region 1 (fun () -> return ()) >>
             service c
 
   and relay_to_handler c ~request_id = function
@@ -573,17 +573,18 @@ struct
            end)
         c
 
-  let make ?(replication_wait = Await_commit) db =
+  let make ?(replication_wait = Await_commit) ?(max_async_reqs = 5000) db =
     {
       db;
       raw_dump_seqno = 0L;
       raw_dumps = Hashtbl.create 13;
       replication_wait;
+      async_req_region = Lwt_util.make_region (max 1 max_async_reqs);
     }
 
   let client_id = ref 0
 
-  let service_client server ?(max_async_reqs = 5000) ?(debug=false) ich och =
+  let service_client server ?(debug=false) ich och =
     let c =
       {
         id = (incr client_id; !client_id);
@@ -593,7 +594,6 @@ struct
         in_buf = String.create 128;
         pending_reqs = 0;
         wait_for_pending_reqs = Lwt_condition.create ();
-        async_req_region = Lwt_util.make_region max_async_reqs;
         signal_error = Lwt.task ();
       }
     in setup_auto_yield server c;
