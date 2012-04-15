@@ -244,7 +244,7 @@ struct
     t.closed <- true;
     if t.dirty then fst t.wait_last_sync else return ()
 
-  let set_period t dt = t.flush_period <- (max 0.001 dt)
+  let set_period t dt = t.flush_period <- (max 0.00005 dt)
 
   let perform t f =
     if t.closed then
