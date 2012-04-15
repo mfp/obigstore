@@ -34,6 +34,7 @@ let master = ref None
 let assume_page_fault = ref false
 let unsafe_mode = ref false
 let replication_wait = ref Obs_protocol_server.Await_commit
+let max_concurrency = ref 5000
 
 let set_await_recv () =
   replication_wait := Obs_protocol_server.Await_commit
@@ -56,6 +57,8 @@ let params =
         " Don't fsync after writes (may loss data on system crash).";
       "-await-recv", Arg.Unit set_await_recv,
         " Await mere reception (not commit) from replicas.";
+      "-max-concurrency", Arg.Set_int max_concurrency,
+        "N Allow at most N simultaneous requests (default: 5000)"
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -118,7 +121,9 @@ let run_slave ~dir ~address ~data_address host port =
                 (Printexc.to_string exn) bt;
               return ()
           end;
-          S.run_server ~debug:!debug db ~address ~data_address
+          S.run_server
+            ~max_async_reqs:!max_concurrency
+            ~debug:!debug db ~address ~data_address
     end
 
 let () =
@@ -140,6 +145,7 @@ let () =
               None ->
                 let db = open_db dir in
                   Lwt_unix.run (S.run_server ~debug:!debug db
+                                  ~max_async_reqs:!max_concurrency
                                   ~replication_wait:!replication_wait
                                   ~address ~data_address)
             | Some master ->
