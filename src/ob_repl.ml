@@ -524,6 +524,11 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
     | Await _ ->
         lwt l = D.await_notifications (get ks) in
           ret (print_list (sprintf "%S")) l
+    | Get_property { Get_property.property } ->
+        begin match_lwt D.get_property db property with
+            None -> print_endline "Unknown property"; ret_nothing ()
+          | Some x -> print_endline x; ret_nothing ()
+        end
 
 let execute ?(fmt = Format.std_formatter) ks db loop req =
   let keys = !Timing.cnt_keys in

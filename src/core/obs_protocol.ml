@@ -158,6 +158,7 @@ sig
   val return_raw_dump_id_and_timestamp : (Int64.t * raw_dump_timestamp) writer
   val return_raw_dump_files : (string * Int64.t) list writer
   val return_raw_dump_file_digest : string option writer
+  val return_property : string option writer
 
   val read_keyspace : int reader
   val read_keyspace_maybe : int option reader
@@ -183,6 +184,7 @@ sig
   val read_raw_dump_id_and_timestamp : (Int64.t * raw_dump_timestamp) reader
   val read_raw_dump_files : (string * Int64.t) list reader
   val read_raw_dump_file_digest : string option reader
+  val read_property : string option reader
 end
 
 type data_protocol_version = int * int * int

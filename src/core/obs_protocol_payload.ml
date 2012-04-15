@@ -386,5 +386,14 @@ struct
                        E.add_option E.add_string b digest)
 
   let read_raw_dump_file_digest = reader (D.get_option D.get_string)
+
+  let return_property =
+    writer
+      (fun b data ->
+         E.add_status b 0;
+         E.add_option E.add_string b data)
+
+  let read_property =
+    reader (D.get_option D.get_string)
 end
 

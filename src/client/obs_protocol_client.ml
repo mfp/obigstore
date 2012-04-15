@@ -424,6 +424,10 @@ struct
     async_request_ks ks (Await { Await.keyspace = ks.ks_id; })
       P.read_notifications
 
+  let get_property t property =
+    async_request t (Get_property { Get_property.property })
+      P.read_property
+
   let data_protocol_version = (0, 0, 0)
 
   let write_data_req och req =

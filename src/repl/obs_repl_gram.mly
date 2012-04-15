@@ -104,6 +104,7 @@ phrase : /* empty */  { Nothing }
               { with_ks (fun keyspace ->
                            R.Lock { R.Lock.keyspace; names = $3; shared = true; }) }
   | STATS     { with_ks (fun keyspace -> R.Stats { R.Stats.keyspace; }) }
+  | STATS id  { Command (R.Get_property { R.Get_property.property = $2; }, None) }
   | LISTEN id { with_ks (fun keyspace -> R.Listen { R.Listen.keyspace; topic = $2 }) }
   | UNLISTEN id
               { with_ks (fun keyspace ->

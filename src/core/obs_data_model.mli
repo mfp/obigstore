@@ -310,6 +310,9 @@ sig
   (** Load statistics  *)
   val load_stats : keyspace -> Obs_load_stats.stats Lwt.t
 
+  (** [dump_info property] returns information about the state of the DB if
+    * [property] is understood by the DB implementation.  *)
+  val get_property : db -> string -> string option Lwt.t
 
   (** {3} Database dump. *)
   module Raw_dump : RAW_DUMP with type db := db

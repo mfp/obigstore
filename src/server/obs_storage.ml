@@ -2912,3 +2912,6 @@ let read_committed_transaction ks f =
 
 let repeatable_read_transaction ks f =
   repeatable_read_transaction ks (fun _ -> f ks)
+
+let get_property t property =
+  Miniregion.use t.db (fun lldb -> return (L.get_property lldb property))

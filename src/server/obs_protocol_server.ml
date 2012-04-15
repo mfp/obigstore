@@ -271,7 +271,7 @@ struct
         end
     | Register_keyspace _ | Get_keyspace _ | List_keyspaces _
     | Trigger_raw_dump _ | Raw_dump_release _ | Raw_dump_list_files _
-    | Raw_dump_file_digest _ as r ->
+    | Raw_dump_file_digest _ | Get_property _ as r ->
         respond c ~request_id r
 
   and read_request c ~request_id len crc =
@@ -495,6 +495,9 @@ struct
         with_raw_dump c id None
           (fun d -> D.Raw_dump.file_digest d file) >>=
         P.return_raw_dump_file_digest ?buf c.och ~request_id
+    | Get_property { Get_property.property; } ->
+        D.get_property c.server.db property >>=
+        P.return_property ?buf c.och ~request_id
 
   and respond_to_begin ?buf c (ks, handlers) ~request_id tx_type =
     let transaction_f = match tx_type with
