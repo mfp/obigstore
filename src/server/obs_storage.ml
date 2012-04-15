@@ -473,7 +473,7 @@ module rec TYPES : sig
       {
         mutable deleted_keys : S.t TM.t; (* table -> key set *)
         mutable added_keys : S.t TM.t; (* table -> key set *)
-        mutable added : string M.t M.t TM.t; (* table -> key -> column -> value *)
+        mutable added : column M.t M.t TM.t; (* table -> key -> column name -> column *)
         mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
         repeatable_read : bool;
         iter_pool : L.iterator Lwt_pool.t ref;
@@ -974,19 +974,19 @@ and commit_outermost_transaction ks tx =
              in M.iter
                (fun key m ->
                   M.iter
-                    (fun column v ->
-                       (* FIXME: should save timestamp provided in
-                        * put_columns and use it here if it wasn't
-                        * Auto_timestamp *)
+                    (fun column c ->
                        Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
-                         ~table ~key ~column ~timestamp;
+                         ~table ~key ~column
+                         ~timestamp:(match c.timestamp with
+                                         No_timestamp -> timestamp
+                                       | Timestamp x -> x);
                        let klen = Obs_bytea.length datum_key in
-                       let vlen = String.length v in
+                       let vlen = String.length c.data in
                          incr cols_written;
                          bytes_written := !bytes_written + klen + vlen;
                          WRITEBATCH.put_substring b
                            (Obs_bytea.unsafe_string datum_key) 0 klen
-                           v 0 vlen)
+                           c.data 0 vlen)
                     m)
                m)
           tx.added;
@@ -1730,9 +1730,9 @@ let get_slice_aux_discrete
                M.find_default M.empty key in
              let pred_cols_in_mem, pred_cols_in_mem_set =
                M.fold
-                 (fun name data ((l, s) as acc) ->
+                 (fun name col ((l, s) as acc) ->
                     if column_needed_for_predicate name (String.length name) then
-                      ({ name; data; timestamp = No_timestamp; } :: l, S.add name s)
+                      (col :: l, S.add name s)
                     else acc)
                  cols_in_mem_map
                  ([], S.empty) in
@@ -1749,14 +1749,10 @@ let get_slice_aux_discrete
 
            let rev_cols2 =
              M.fold
-               (fun col data cols ->
-                  let len = String.length col in
-                  if not (column_selected col len) then
-                    cols
-                  else begin
-                    let col =  { name = col; data; timestamp = No_timestamp } in
-                      col :: cols
-                  end)
+               (fun colname col cols ->
+                  let len = String.length colname in
+                  if not (column_selected colname len) then cols
+                  else col :: cols)
                (tx.added |>
                 TM.find_default M.empty table |> M.find_default M.empty key)
                [] in
@@ -1887,10 +1883,8 @@ let get_slice_aux_continuous_no_predicate
       (fun key key_data_in_mem l ->
          let cols =
            M.fold
-             (fun col data l ->
-                if column_selected col (String.length col) then
-                  let col_data = { name = col; data; timestamp = No_timestamp} in
-                    col_data :: l
+             (fun colname col l ->
+                if column_selected colname (String.length colname) then col :: l
                 else l)
              key_data_in_mem
              []
@@ -1995,9 +1989,9 @@ let get_slice_aux_continuous_with_predicate
             M.find_default M.empty new_key in
           let pred_cols_in_mem, pred_cols_in_mem_set =
             M.fold
-              (fun name data ((l, s) as acc) ->
-                 if column_needed_for_predicate name (String.length name) then
-                   ({ name; data; timestamp = No_timestamp; } :: l, S.add name s)
+              (fun colname col ((l, s) as acc) ->
+                 if column_needed_for_predicate colname (String.length colname) then
+                   (col :: l, S.add colname s)
                  else acc)
               cols_in_mem_map
               ([], S.empty) in
@@ -2092,9 +2086,9 @@ let get_slice_aux_continuous_with_predicate
                   M.find_default M.empty last_key
           in
             M.fold
-              (fun name data l ->
-                 if column_needed_for_predicate name (String.length name) then
-                   { name; data; timestamp = No_timestamp; } :: l
+              (fun colname col l ->
+                 if column_needed_for_predicate colname (String.length colname) then
+                   col :: l
                  else l)
               m
               pred_cols
@@ -2113,14 +2107,13 @@ let get_slice_aux_continuous_with_predicate
       (fun key key_data_in_mem l ->
          let cols, pred_cols =
            M.fold
-             (fun col data ((cols, pred_cols) as acc) ->
-                let len = String.length col in
-                let selected = column_selected col len in
-                let needed_for_pred = column_needed_for_predicate col len in
+             (fun colname col ((cols, pred_cols) as acc) ->
+                let len = String.length colname in
+                let selected = column_selected colname len in
+                let needed_for_pred = column_needed_for_predicate colname len in
                   if not selected && not needed_for_pred then
                     acc
                   else begin
-                    let col =  { name = col; data; timestamp = No_timestamp } in
                     let cols = if selected then col :: cols else cols in
                     let pred_cols =
                       if needed_for_pred then col :: pred_cols else pred_cols in
@@ -2390,7 +2383,7 @@ let put_columns tx table key columns =
          (M.modify
             (fun m ->
                List.fold_left
-                 (fun m c -> M.add c.name c.data m)
+                 (fun m c -> M.add c.name c m)
                  m columns)
             M.empty key m))
       M.empty table tx.added;
@@ -2415,15 +2408,15 @@ let rec put_multi_columns_no_tx ks table data =
             (* must add table to keyspace table list *)
             register_new_table_and_add_to_writebatch' ks b table
       in
-        (* FIXME: should save timestamp provided in
-         * put_columns and use it here if it wasn't
-         * Auto_timestamp *)
         List.iter
           (fun (key, columns) ->
              List.iter
                (fun c ->
                   Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
-                    ~table ~key ~column:c.name ~timestamp;
+                    ~table ~key ~column:c.name
+                    ~timestamp:(match c.timestamp with
+                                    No_timestamp -> timestamp
+                                  | Timestamp x -> x);
                   let klen = Obs_bytea.length datum_key in
                   let vlen = String.length c.data in
                     incr cols_written;

@@ -307,6 +307,31 @@ struct
   let register_keyspace dbs =
     D.register_keyspace (List.nth dbs (Random.int (List.length dbs)))
 
+  let test_timestamps_saved_correctly dbs =
+    lwt ks1 = register_keyspace dbs "test_timestamps_saved_correctly" in
+    let check_ts key col ts =
+      match_lwt D.get_column ks1 T.tbl1 key col with
+          None -> assert_failure_fmt "could not find %S:%S" key col
+        | Some (_, DM.Timestamp ts') ->
+            aeq_int64 ~msg:"different timestamp" ts ts';
+            return ()
+        | Some (_, DM.No_timestamp) ->
+            assert_failure_fmt
+              "Should have decoded the timestamp for %S:%S" key col in
+    let ts1 = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+    let ts2 = Int64.add 12345L ts1 in
+    let cols =
+      [ { DM.name = "a"; data = "aa"; timestamp = DM.Timestamp ts1; };
+        { DM.name = "b"; data = "bb"; timestamp = DM.Timestamp ts2; }; ]
+    in
+      D.put_columns ks1 T.tbl1 "key1" cols >>
+      D.read_committed_transaction ks1
+        (fun tx -> D.put_columns ks1 T.tbl1 "key2" cols) >>
+      check_ts "key1" "a" ts1 >>
+      check_ts "key1" "b" ts2 >>
+      check_ts "key2" "a" ts1 >>
+      check_ts "key2" "b" ts2
+
   let test_get_keys_ranges dbs =
     lwt ks1 = register_keyspace dbs "test_get_keys_ranges" in
     lwt ks2 = register_keyspace dbs "test_get_keys_ranges2" in
@@ -1394,6 +1419,7 @@ struct
     ] @
     gen_concurrent_and_diff_conn_tests
     [
+      "timestamps saved correctly", test_timestamps_saved_correctly;
       "get_keys ranges", test_get_keys_ranges;
       "get_keys reverse ranges", test_get_keys_reverse_ranges;
       "get_keys discrete keys", test_get_keys_discrete;
