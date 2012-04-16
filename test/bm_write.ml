@@ -30,7 +30,7 @@ module C = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 let server = ref "127.0.0.1"
 let port = ref 12050
 let keyspace = ref "obs-benchmark"
-let table = ref "bm_write"
+let table = ref (DM.table_of_string "bm_write")
 let concurrency = ref 2048
 let multi = ref 1
 let columns = ref 1
@@ -41,7 +41,8 @@ let params = Arg.align
    "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
    "-keyspace", Arg.Set_string keyspace,
      "NAME keyspace to use (default 'obs-benchmark')";
-   "-table", Arg.Set_string table, "NAME table to use (default 'bm_write')";
+   "-table", Arg.String (fun s -> table := DM.table_of_string s),
+     "NAME table to use (default 'bm_write')";
    "-columns", Arg.Set_int columns, "N Write N columns per key (default: 1).";
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
