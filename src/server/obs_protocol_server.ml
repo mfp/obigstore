@@ -98,7 +98,6 @@ struct
         out_buf : Obs_bytea.t;
         debug : bool;
         mutable pending_reqs : int;
-        wait_for_pending_reqs : unit Lwt_condition.t;
         signal_error : Request.request option Lwt.t * Request.request option Lwt.u;
       }
 
@@ -189,39 +188,32 @@ struct
           None -> service c
         | Some r ->
             ignore begin
-              c.pending_reqs <- c.pending_reqs + 1;
-              try_lwt
-                Lwt_util.run_in_region c.server.async_req_region
-                  (request_slot_cost r)
-                  (fun () ->
-                     begin try_lwt
-                       relay_to_handler c ~request_id r
-                     with
-                       | End_of_file | Lwt_io.Channel_closed _
-                       | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
-                           (* catch exns that indicate that the connection
-                            * is gone, and signal End_of_file *)
-                           begin try
-                             Lwt.wakeup_exn (snd c.signal_error) End_of_file
-                           with _ -> ()
-                           end;
-                           return ()
-                       | e ->
-                           Format.eprintf
-                             "Internal error %s@\n\
-                              request:@\n\
-                              %a@."
-                             (Printexc.to_string e)
-                             Request.pp r;
-                           try_lwt
-                             P.internal_error c.och ~request_id ()
-                           with _ -> return ()
-                     end)
-              finally
-                c.pending_reqs <- c.pending_reqs - 1;
-                if c.pending_reqs = 0 then
-                  Lwt_condition.broadcast c.wait_for_pending_reqs ();
-                return ()
+              Lwt_util.run_in_region c.server.async_req_region
+                (request_slot_cost r)
+                (fun () ->
+                   begin try_lwt
+                     relay_to_handler c ~request_id r
+                   with
+                     | End_of_file | Lwt_io.Channel_closed _
+                     | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
+                         (* catch exns that indicate that the connection
+                          * is gone, and signal End_of_file *)
+                         begin try
+                           Lwt.wakeup_exn (snd c.signal_error) End_of_file
+                         with _ -> ()
+                         end;
+                         return ()
+                     | e ->
+                         Format.eprintf
+                           "Internal error %s@\n\
+                            request:@\n\
+                            %a@."
+                           (Printexc.to_string e)
+                           Request.pp r;
+                         try_lwt
+                           P.internal_error c.och ~request_id ()
+                         with _ -> return ()
+                   end)
             end;
             (* here we block if the allowed number of async reqs is reached
              * until one of them is done *)
@@ -549,13 +541,6 @@ struct
           None -> P.unknown_keyspace c.och ~request_id ()
         | Some ks -> f ks
 
-  and wait_for_pending_reqs c =
-    if c.pending_reqs = 0 then
-      return ()
-    else begin
-      Lwt_condition.wait c.wait_for_pending_reqs
-    end
-
   let setup_auto_yield t c =
     incr num_clients;
     if !num_clients >= 2 then begin
@@ -593,7 +578,6 @@ struct
         out_buf = Obs_bytea.create 1024;
         in_buf = String.create 128;
         pending_reqs = 0;
-        wait_for_pending_reqs = Lwt_condition.create ();
         signal_error = Lwt.task ();
       }
     in setup_auto_yield server c;
