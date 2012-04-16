@@ -92,7 +92,7 @@ module WRITEBATCH : sig
 
   val close : t -> unit Lwt.t
   val set_period : t -> float -> unit
-  val perform : t -> (tx -> unit Lwt.t) -> unit Lwt.t Lwt.t
+  val perform : t -> (tx -> unit) -> unit Lwt.t
 
   (** [add_slave t ~unregister slave] *)
   val add_slave : t -> unregister:(int -> unit) -> slave -> unit
@@ -112,16 +112,13 @@ struct
         mutable dirty : bool;
         mutable flush_period : float;
         mutable closed : bool;
-        mutex : Lwt_mutex.t;
         mutable sync_wait : unit Lwt.t * unit Lwt.u;
-        (* TODO: allow shared mutex locking for [perform], only
-         * the actual sync needs to be exclusive *)
         mutable wait_last_sync : unit Lwt.t * unit Lwt.u;
         (* used to wait for last sync before close *)
         iter_pool : L.iterator Lwt_pool.t ref;
         (* will be overwritten after an update *)
 
-        serialized_update : Obs_bytea.t;
+        mutable serialized_update : Obs_bytea.t;
 
         mutable slave_tbl : ((int -> unit) * slave) IM.t;
         (* the [int -> unit] function is used to unregister a slave from an
@@ -136,7 +133,7 @@ struct
 
   type tx = { t : t; mutable valid : bool; }
 
-  let do_push t update_copy (slave_id, (unregister, slave)) =
+  let do_push t serialized_update (slave_id, (unregister, slave)) =
     let waiter, u = Lwt.task () in
       (* see if we have to switch from async to sync (slave caught up
        * with update stream) *)
@@ -161,15 +158,11 @@ struct
       in
         match slave.slave_mode with
             Sync -> begin
-              slave.slave_push t.serialized_update u;
+              slave.slave_push serialized_update u;
               wait_for_signal ()
             end
           | Async -> begin
-              (* in order to support async replication, we
-               * have to duplicate (only once) the
-               * serialized_update so that the original can be
-               * cleared safely while the copy is being sent *)
-              slave.slave_push (Lazy.force update_copy) u;
+              slave.slave_push serialized_update u;
               ignore begin try_lwt
                 wait_for_signal ()
               with exn ->
@@ -179,15 +172,14 @@ struct
               return ()
             end
 
-  let push_to_slaves t =
+  let push_to_slaves t serialized_update =
     let slaves = IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl [] in
-    let update_copy = lazy (Obs_bytea.copy t.serialized_update) in
-      Lwt_list.iter_p (do_push t update_copy) slaves
+      Lwt_list.iter_p (do_push t serialized_update) slaves
 
   let make db iter_pool ~fsync ~flush_period =
     let t =
       { db; wb = L.Batch.make (); dirty = false; closed = false;
-        mutex = Lwt_mutex.create (); sync_wait = Lwt.wait ();
+        sync_wait = Lwt.wait ();
         flush_period; wait_last_sync = Lwt.wait ();
         iter_pool;
         serialized_update = Obs_bytea.create 128;
@@ -204,27 +196,28 @@ struct
           end else if not t.dirty then
             writebatch_loop ()
           else begin
-            Lwt_mutex.with_lock t.mutex
-              (fun () ->
-                 (* need a "reload keyspace" record if needed *)
-                 if t.need_keyspace_reload then
-                   Obs_bytea.add_byte t.serialized_update 0xFF;
-                 lwt () =
-                   Lwt_preemptive.detach
-                     (L.Batch.write ~sync:t.fsync t.db) t.wb
-                 and () = push_to_slaves t in
-                 let u = snd t.sync_wait in
-                 let u' = snd t.wait_last_sync in
-                   Obs_bytea.clear t.serialized_update;
-                   t.need_keyspace_reload <- false;
-                   iter_pool := make_iter_pool t.db;
-                   t.dirty <- false;
-                   t.wb <- L.Batch.make ();
-                   t.sync_wait <- Lwt.wait ();
-                   t.wait_last_sync <- Lwt.wait ();
-                   Lwt.wakeup u ();
-                   Lwt.wakeup u' ();
-                   return ())
+            (* need a "reload keyspace" record if needed *)
+            if t.need_keyspace_reload then
+              Obs_bytea.add_byte t.serialized_update 0xFF;
+            let wb = t.wb in
+            let u = snd t.sync_wait in
+            let u' = snd t.wait_last_sync in
+            let serialized_update = t.serialized_update in
+            let () =
+              t.dirty <- false;
+              t.wb <- L.Batch.make ();
+              t.need_keyspace_reload <- false;
+              t.sync_wait <- Lwt.wait ();
+              t.wait_last_sync <- Lwt.wait ();
+              t.serialized_update <- Obs_bytea.create 128 in
+            lwt () =
+              Lwt_preemptive.detach
+                (L.Batch.write ~sync:t.fsync t.db) wb
+            and () = push_to_slaves t serialized_update in
+              iter_pool := make_iter_pool t.db;
+              Lwt.wakeup u ();
+              Lwt.wakeup u' ();
+              return ()
           end >>
           if t.closed then begin
             Lwt.wakeup (snd t.wait_last_sync) ();
@@ -248,18 +241,16 @@ struct
 
   let perform t f =
     if t.closed then
-      raise_lwt (Failure "WRITEBATCH.perform: closed writebatch")
+      failwith "WRITEBATCH.perform: closed writebatch"
     else
-      Lwt_mutex.with_lock t.mutex
-        (fun () ->
-           let waiter = fst t.sync_wait in
-           let tx = { t; valid = true } in
-             try_lwt
-               f tx >>
-               return waiter
-             finally
-               tx.valid <- false;
-               return ())
+      let waiter = fst t.sync_wait in
+      let tx = { t; valid = true } in
+        try
+          f tx;
+          waiter
+        with exn ->
+          tx.valid <- false;
+          raise exn
 
   let delete_substring tx s off len =
     if not tx.valid then
@@ -710,13 +701,12 @@ let register_keyspace t ks_name =
   with Not_found ->
     let max_id = Hashtbl.fold (fun _ (Proto p, _) id -> max p.ks_id id) t.keyspaces 0 in
     let ks_id = max_id + 1 in
-    lwt wait_sync =
+    let wait_sync =
       WRITEBATCH.perform t.writebatch begin fun b ->
         WRITEBATCH.put b
           (Obs_datum_encoding.keyspace_table_key ks_name)
           (string_of_int ks_id);
         WRITEBATCH.need_keyspace_reload b;
-        return ()
       end in
     lwt () = wait_sync in
     let proto =
@@ -940,10 +930,8 @@ and commit_outermost_transaction ks tx =
     let bytes_written = ref 0 in
     let cols_written = ref 0 in
 
-    lwt wait_sync =
+    let wait_sync =
       WRITEBATCH.perform tx.ks.ks_db.writebatch begin fun b ->
-        (* TODO: should iterate in Lwt monad so we can yield every once in a
-         * while *)
         TM.iter
           (fun table m ->
              match find_maybe ks.ks_tables table with
@@ -990,7 +978,6 @@ and commit_outermost_transaction ks tx =
                     m)
                m)
           tx.added;
-        return ()
       end in
     let stats = tx.ks.ks_db.load_stats in
     lwt () = wait_sync in
@@ -2399,7 +2386,7 @@ let rec put_multi_columns_no_tx ks table data =
   let cols_written = ref 0 in
   let bytes_written = ref 0 in
   let datum_key = put_multi_columns_no_tx_buf in
-  lwt wait_sync =
+  let wait_sync =
     WRITEBATCH.perform ks.ks_db.writebatch begin fun b ->
       let table =
         match find_maybe ks.ks_tables table with
@@ -2426,7 +2413,6 @@ let rec put_multi_columns_no_tx ks table data =
                       c.data 0 vlen)
                columns)
           data;
-        return ()
       end in
   lwt () = wait_sync in
   let stats = ks.ks_db.load_stats in
@@ -2803,7 +2789,7 @@ struct
   let apply_update db update =
     Miniregion.use db.db begin fun lldb ->
       let must_reload = ref false in
-      lwt wait_sync =
+      let wait_sync =
          WRITEBATCH.perform db.writebatch begin fun b ->
            let rec apply_update s n max =
              if n >= max then ()
@@ -2834,8 +2820,7 @@ struct
              end
            in apply_update
                 update.up_buf update.up_off
-                (update.up_off + update.up_len);
-              return ()
+                (update.up_off + update.up_len)
          end in
       lwt () = wait_sync in
         if !must_reload then reload_keyspaces db lldb;
