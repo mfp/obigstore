@@ -85,6 +85,8 @@ struct
         mutable raw_dump_seqno : Int64.t;
         replication_wait : replication_wait;
         async_req_region : Lwt_util.region;
+        max_concurrency_factor : int;
+        mutable curr_concurrency_factor : int;
       }
 
   type client_state =
@@ -124,8 +126,10 @@ struct
 
   (* the chunk of the region needed to perform a given request --- allows to
    * impose diff limits per type *)
-  let request_slot_cost = function
+  let request_slot_cost server = function
       Load _ -> 100
+    | Put_columns { Put_columns.data; _ } ->
+        min (server.curr_concurrency_factor - 1) (1000 * List.length data)
     | _ -> 1
 
   let with_raw_dump c id default f =
@@ -188,7 +192,7 @@ struct
         | Some r ->
             ignore begin
               Lwt_util.run_in_region c.server.async_req_region
-                (request_slot_cost r)
+                (request_slot_cost c.server r)
                 (fun () ->
                    begin try_lwt
                      relay_to_handler c ~request_id r
@@ -552,13 +556,16 @@ struct
         c
 
   let make ?(replication_wait = Await_commit) ?(max_async_reqs = 5000) db =
-    {
-      db;
-      raw_dump_seqno = 0L;
-      raw_dumps = Hashtbl.create 13;
-      replication_wait;
-      async_req_region = Lwt_util.make_region (max 1 max_async_reqs);
-    }
+    let max_concurrency_factor = max 1000 (1000 * max_async_reqs) in
+      {
+        db;
+        raw_dump_seqno = 0L;
+        raw_dumps = Hashtbl.create 13;
+        replication_wait;
+        max_concurrency_factor;
+        async_req_region = Lwt_util.make_region max_concurrency_factor;
+        curr_concurrency_factor = max_concurrency_factor;
+      }
 
   let client_id = ref 0
 
