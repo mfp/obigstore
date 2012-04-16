@@ -280,12 +280,10 @@ struct
       end else begin
         match Obs_protocol_payload.Obs_request_serialization.of_format_id format_id with
             `Extprot -> begin
-              let m =
-                try Some (Extprot.Conv.deserialize Request.read ~offset:4 c.in_buf)
-                with _ -> None
-              in match m with
-                  None -> P.bad_request c.och ~request_id () >> return None
-                | Some _ as x -> return x
+              try
+                let m = Extprot.Conv.deserialize Request.read ~offset:4 c.in_buf in
+                  return (Some m)
+              with _ -> P.bad_request c.och ~request_id () >> return None
             end
           | `Raw -> P.bad_request c.och ~request_id () >> return None
           | `Unknown -> P.unknown_serialization c.och ~request_id () >> return None
@@ -533,13 +531,9 @@ struct
       with Abort_exn request_id -> P.return_ok ?buf c.och ~request_id ()
 
   and with_keyspace c ks_idx ~request_id f =
-    let ks =
-      try Some (H.find c.keyspaces (ks_id_of_int ks_idx))
-      with Not_found -> None
-    in
-      match ks with
-          None -> P.unknown_keyspace c.och ~request_id ()
-        | Some ks -> f ks
+    try
+      f (H.find c.keyspaces (ks_id_of_int ks_idx))
+    with Not_found -> P.unknown_keyspace c.och ~request_id ()
 
   let setup_auto_yield t c =
     incr num_clients;
