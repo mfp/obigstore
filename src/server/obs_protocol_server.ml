@@ -97,7 +97,6 @@ struct
         mutable in_buf : string;
         out_buf : Obs_bytea.t;
         debug : bool;
-        mutable pending_reqs : int;
         signal_error : Request.request option Lwt.t * Request.request option Lwt.u;
       }
 
@@ -571,7 +570,6 @@ struct
         ich; och; server; debug;
         out_buf = Obs_bytea.create 1024;
         in_buf = String.create 128;
-        pending_reqs = 0;
         signal_error = Lwt.task ();
       }
     in setup_auto_yield server c;
