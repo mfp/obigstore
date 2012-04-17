@@ -23,58 +23,91 @@ open Lwt
 let num_pairs = ref None
 let key_size = ref 16
 let value_size = ref 32
-let random = ref true
+let mode = ref `Random
 
 let usage_message = "Usage: bm_makedata N [options]"
 
 let params = Arg.align
   [
     "-value-size", Arg.Set_int value_size, "N Value size (default: 32).";
-    "-sequential", Arg.Clear random,
+    "-sequential", Arg.Unit (fun () -> mode := `Sequential),
       " Generate output with keys in lexicographic order.";
+    "-mixed", Arg.Float (fun f -> mode := `Mixed f),
+      "FLOAT Generate mixed load with P(seq) = FLOAT.";
   ]
 
-let hex_tbl = "0123456789abcdef"
 
-let to_hex s =
-  let r = String.create (String.length s * 2) in
+let rng = Cryptokit.Random.pseudo_rng
+            (Digest.to_hex (Digest.string ""))
+
+let make_rand_string size =
+  Cryptokit.(transform_string (Hexa.encode ()) (Random.string rng 500_000))
+
+let random_string_maker () =
+  let buf = make_rand_string 500_000 in
+  let ptr = ref 0 in
   let off = ref 0 in
-    for i = 0 to String.length s - 1 do
-      let c = Char.code (String.unsafe_get s i) in
-        String.unsafe_set r !off (String.unsafe_get hex_tbl (c lsr 4));
-        String.unsafe_set r (!off + 1) (String.unsafe_get hex_tbl (c land 0xF));
-        off := !off + 2
-    done;
-    r
+    `Staged
+      (fun n ->
+         if n > String.length buf - !ptr then begin
+           (* we shift the stream so that we don't get the same strings given
+            * the same sequence of lengths *)
+           incr off;
+           ptr := !off;
+         end;
+         let s = String.sub buf !ptr n in
+           ptr := !ptr + n;
+           s)
+
+let `Staged random_string = random_string_maker ()
 
 let zero_pad n s =
   let len = String.length s in
     if len >= n then s
     else String.make (n - len) '0' ^ s
 
+let incr_hex_char s off =
+  match s.[off] with
+      '0'..'8' as c -> s.[off] <- Char.chr (Char.code c + 1)
+    | '9' -> s.[off] <- 'a'
+    | 'a'..'e' as c -> s.[off] <- Char.chr (Char.code c + 1)
+    | 'f' -> s.[off] <- '0'
+    | _ -> ()
+
+let rec incr_str off s =
+  if off >= 0 then begin
+    incr_hex_char s off;
+    match s.[off] with
+        '0' -> incr_str (off - 1) s
+      | _ -> ()
+  end
+
+let incr_str s = incr_str (String.length s - 1) s
+
+let mixed_load_gen ~key_size ~value_size ~p_seq =
+  let `Staged random_string = random_string_maker () in
+  let remembered = Array.init (1 lsl 12) (fun _ -> random_string key_size) in
+  let idx = ref 0 in
+    (fun i ->
+       incr idx;
+       idx := !idx land (Array.length remembered - 1);
+       let r = Random.float 1.0 in
+       let key =
+         if r < p_seq then begin
+           let s = remembered.(!idx) in
+             incr_str s;
+             s
+         end else begin
+           let s = random_string key_size in
+             remembered.(!idx) <- s;
+             s
+         end in
+       let v = random_string value_size in
+         (key, v))
+
 let output_string s =
   Lwt_io.LE.write_int Lwt_io.stdout (String.length s) >>
   Lwt_io.write Lwt_io.stdout s
-
-type rng = { mutable seed : string; }
-
-let cast_digest (x : Digest.t) : string = Obj.magic x
-
-let random_string rng n =
-  if n <= 16 then begin
-    let x = cast_digest (Digest.string rng.seed) in
-      rng.seed <- x;
-      if n = 16 then x else String.sub x 0 n
-  end else begin
-    let s = String.create n in
-    let rec fill_buf = function
-        m when m <= 0 -> s
-      | m -> let x = cast_digest (Digest.string rng.seed) in
-               rng.seed <- x;
-               String.blit x 0 s (n - m) (if m < 16 then m else 16);
-               fill_buf (m - 16)
-    in fill_buf n
-  end
 
 let () =
   Arg.parse params
@@ -87,15 +120,18 @@ let () =
        | Some _ -> raise (Arg.Bad s))
     usage_message;
   Lwt_unix.run begin
-    let rng = { seed = "0123456789deadbeef" } in
     let num_pairs = match !num_pairs with
         None -> Arg.usage params usage_message; exit 1
-      | Some n -> n
+      | Some n -> n in
+    let gen = match !mode with
+        `Mixed p_seq ->
+          mixed_load_gen ~key_size:!key_size ~value_size:!value_size ~p_seq
+      | `Random -> (fun _ -> (random_string !key_size, random_string !value_size))
+      | `Sequential -> (fun i -> (zero_pad !key_size (string_of_int i),
+                                  random_string !value_size))
     in
       for_lwt i = 1 to num_pairs do
-        let k = if !random then to_hex (random_string rng (!key_size / 2))
-                else zero_pad !key_size (string_of_int i) in
-        let v = to_hex (random_string rng (!value_size / 2)) in
+        let k, v = gen i in
           output_string k >>
           output_string v
       done >>
