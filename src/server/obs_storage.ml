@@ -86,12 +86,9 @@ module WRITEBATCH : sig
   type t
   type tx
 
-  val make :
-    L.db -> L.iterator Lwt_pool.t ref ->
-    fsync:bool -> flush_period:float -> t
+  val make : L.db -> L.iterator Lwt_pool.t ref -> fsync:bool -> t
 
   val close : t -> unit Lwt.t
-  val set_period : t -> float -> unit
   val perform : t -> (tx -> unit) -> unit Lwt.t
 
   (** [add_slave t ~unregister slave] *)
@@ -113,7 +110,6 @@ struct
       { db : L.db;
         mutable wb : L.writebatch;
         mutable dirty : bool;
-        mutable flush_period : float;
         mutable closed : bool;
         mutable sync_wait : unit Lwt.t * unit Lwt.u;
         mutable wait_last_sync : unit Lwt.t * unit Lwt.u;
@@ -134,6 +130,8 @@ struct
         (* whether to add a 'reload keyspace' record to the serialized update *)
 
         mutable throttling : throttling;
+
+        wait_for_dirty : unit Lwt_condition.t;
       }
 
   and throttling =
@@ -205,22 +203,25 @@ struct
       No_throttling -> 1.0
     | Throttle (_, rate) -> rate
 
-  let make db iter_pool ~fsync ~flush_period =
+  let make db iter_pool ~fsync =
     let t =
       { db; wb = L.Batch.make (); dirty = false; closed = false;
         sync_wait = Lwt.wait ();
-        flush_period; wait_last_sync = Lwt.wait ();
+        wait_last_sync = Lwt.wait ();
         iter_pool;
         serialized_update = Obs_bytea.create 128;
         slave_tbl = IM.empty; fsync;
         need_keyspace_reload = false;
         throttling = No_throttling;
+        wait_for_dirty = Lwt_condition.create ();
       }
     in
       ignore begin try_lwt
         let rec writebatch_loop () =
-          Lwt_unix.sleep t.flush_period >>
-          let () = control_throttling t in
+          begin if not t.dirty && not t.closed then
+              Lwt_condition.wait t.wait_for_dirty
+          else return ()
+          end >>
           if t.closed && not t.dirty then begin
             Lwt.wakeup (snd t.wait_last_sync) ();
             return ()
@@ -241,6 +242,7 @@ struct
               t.sync_wait <- Lwt.wait ();
               t.wait_last_sync <- Lwt.wait ();
               t.serialized_update <- Obs_bytea.create 128 in
+            let () = control_throttling t in
             lwt () =
               Lwt_preemptive.detach
                 (L.Batch.write ~sync:t.fsync t.db) wb
@@ -266,9 +268,8 @@ struct
 
   let close t =
     t.closed <- true;
+    Lwt_condition.signal t.wait_for_dirty ();
     if t.dirty then fst t.wait_last_sync else return ()
-
-  let set_period t dt = t.flush_period <- (max 0.00005 dt)
 
   let perform t f =
     if t.closed then
@@ -278,6 +279,7 @@ struct
       let tx = { t; valid = true } in
         try
           f tx;
+          Lwt_condition.signal t.wait_for_dirty ();
           waiter
         with exn ->
           tx.valid <- false;
@@ -608,18 +610,16 @@ let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)
       ?(block_size = 4096)
       ?(max_open_files = 1000)
-      ?(group_commit_period = 0.002)
       ?(assume_page_fault = false)
       ?(unsafe_mode = false)
       basedir =
   let lldb = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
              ~comparator:Obs_datum_encoding.custom_comparator basedir in
-  let group_commit_period = max group_commit_period 0.001 in
   let db_iter_pool = ref (make_iter_pool lldb) in
   let fsync = not unsafe_mode in
   let writebatch =
-    WRITEBATCH.make lldb db_iter_pool ~fsync ~flush_period:group_commit_period
+    WRITEBATCH.make lldb db_iter_pool ~fsync
   in
     (* ensure we have a end_of_db record *)
     if not (L.mem lldb Obs_datum_encoding.end_of_db_key) then
@@ -643,9 +643,7 @@ let open_db
         db.slaves <- IM.remove id db.slaves
       in
         db.db_iter_pool := make_iter_pool lldb;
-        db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool
-                           ~fsync:db.fsync
-                           ~flush_period:group_commit_period;
+        db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool ~fsync:db.fsync;
         Option.may
           (fun slave -> db.slaves <- IM.add slave.slave_id slave db.slaves)
           new_slave;

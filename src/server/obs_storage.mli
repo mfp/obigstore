@@ -33,9 +33,6 @@ end
 
 (** Open or create a database in the given directory.
   *
-  * @param group_commit_period period for group commit in seconds
-  *        (default 0.002, minimal value: 0.001)
-  *
   * @param assume_page_fault when true, even "short" requests are run in a
   * separate thread when use_thread_pool is set (default: false)
   *
@@ -66,7 +63,6 @@ val open_db :
   ?write_buffer_size:int ->
   ?block_size:int ->
   ?max_open_files:int ->
-  ?group_commit_period:float ->
   ?assume_page_fault:bool ->
   ?unsafe_mode:bool ->
   string -> db

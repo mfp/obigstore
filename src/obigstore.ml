@@ -26,7 +26,6 @@ module S = Obs_server.Make(Obs_storage)(Obs_protocol_payload.Version_0_0_0)
 let port = ref 12050
 let db_dir = ref None
 let debug = ref false
-let gcommit_period = ref 0.010
 let write_buffer_size = ref (4 * 1024 * 1024)
 let block_size = ref 4096
 let max_open_files = ref 1000
@@ -46,8 +45,6 @@ let params =
       "-master", Arg.String (fun s -> master := Some s),
         "HOST:PORT Replicate database reachable on HOST:PORT.";
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
-      "-commit-period", Arg.Set_float gcommit_period,
-        "DT Group commit period (default: 0.010s)";
       "-write-buffer-size", Arg.Set_int write_buffer_size, "N Write buffer size (default: 4MB)";
       "-block-size", Arg.Set_int block_size, "N Block size (default: 4KB)";
       "-max-open-files", Arg.Set_int max_open_files, "N Max open files (default: 1000)";
@@ -69,7 +66,6 @@ let _ = Sys.set_signal Sys.sighup (Sys.Signal_handle (fun _ -> Gc.compact ()))
 
 let open_db dir =
   Obs_storage.open_db
-    ~group_commit_period:!gcommit_period
     ~write_buffer_size:!write_buffer_size
     ~block_size:!block_size
     ~max_open_files:!max_open_files

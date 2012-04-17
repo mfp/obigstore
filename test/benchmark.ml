@@ -460,7 +460,7 @@ module BM_Obs_storage =
          let tmp_dir = match !db_dir with
              None -> Test_00util.make_temp_dir ()
            | Some d -> d in
-         let db = D.open_db ~group_commit_period:0.005 tmp_dir in
+         let db = D.open_db tmp_dir in
            return db
 
        let is_remote = false
