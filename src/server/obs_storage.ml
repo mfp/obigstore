@@ -104,6 +104,9 @@ module WRITEBATCH : sig
   (* indicate that a 'reload keyspace' record is to be added to the
    * serialized update *)
   val need_keyspace_reload : tx -> unit
+
+  (* requested rate relative to maximum (1.0 being no throttling) *)
+  val throttling : t -> float
 end =
 struct
   type t =
@@ -129,7 +132,13 @@ struct
         fsync : bool;
         mutable need_keyspace_reload : bool;
         (* whether to add a 'reload keyspace' record to the serialized update *)
+
+        mutable throttling : throttling;
       }
+
+  and throttling =
+      No_throttling
+    | Throttle of int (* started when read N L0 files  *) * float (* rate *)
 
   type tx = { t : t; mutable valid : bool; }
 
@@ -176,6 +185,26 @@ struct
     let slaves = IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl [] in
       Lwt_list.iter_p (do_push t serialized_update) slaves
 
+  let num_l0_files db =
+    int_of_string (Option.default "4" (L.get_property db "leveldb.num-files-at-level0"))
+
+  let control_throttling t =
+    match t.throttling with
+        No_throttling ->
+          let nl0 = num_l0_files t.db in
+            if nl0 > 6 then
+              t.throttling <- Throttle (nl0, 0.5 ** (float (nl0 - 6)))
+      | Throttle (nl0, rate) ->
+          let nl0' = num_l0_files t.db in
+            if nl0' < 6 then
+              t.throttling <- No_throttling
+            else if nl0' > nl0 then
+              t.throttling <- Throttle (nl0', 0.5 ** (float (nl0' - 6)))
+
+  let throttling t = match t.throttling with
+      No_throttling -> 1.0
+    | Throttle (_, rate) -> rate
+
   let make db iter_pool ~fsync ~flush_period =
     let t =
       { db; wb = L.Batch.make (); dirty = false; closed = false;
@@ -185,11 +214,13 @@ struct
         serialized_update = Obs_bytea.create 128;
         slave_tbl = IM.empty; fsync;
         need_keyspace_reload = false;
+        throttling = No_throttling;
       }
     in
       ignore begin try_lwt
         let rec writebatch_loop () =
           Lwt_unix.sleep t.flush_period >>
+          let () = control_throttling t in
           if t.closed && not t.dirty then begin
             Lwt.wakeup (snd t.wait_last_sync) ();
             return ()
@@ -570,6 +601,8 @@ let close_db t =
        lwt () = WRITEBATCH.close t.writebatch in
          L.close lldb;
          return ())
+
+let throttling t = WRITEBATCH.throttling t.writebatch
 
 let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)

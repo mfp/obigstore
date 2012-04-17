@@ -79,3 +79,7 @@ val close_db : db -> unit Lwt.t
   * performed in a separate thread so as to avoid blocking. By default, all
   * operations are performed in the main thread. *)
 val use_thread_pool : db -> bool -> unit
+
+(** Requested throttling as a fraction of the maximum speed (1.0 = no
+  * throttling). *)
+val throttling : db -> float

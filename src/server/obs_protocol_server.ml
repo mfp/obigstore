@@ -54,6 +54,8 @@ module Make
        with type db := db and type raw_dump := Raw_dump.raw_dump
 
      val use_thread_pool : db -> bool -> unit
+
+     val throttling : db -> float
    end)
   (P : PAYLOAD) =
 struct
@@ -183,8 +185,13 @@ struct
         | Corrupted_header ->
             (* we can't even trust the request_id, so all that's left is
              * dropping the connection *)
-            raise_lwt (Error Corrupted_frame)
-    in
+            raise_lwt (Error Corrupted_frame) in
+    let throttling = D.throttling c.server.db in
+    let new_factor = truncate (float c.server.max_concurrency_factor *. throttling) in
+      c.server.curr_concurrency_factor <- new_factor;
+      Lwt_util.resize_region
+        c.server.async_req_region c.server.curr_concurrency_factor;
+
       match_lwt
         Lwt.choose [fst c.signal_error; read_request c ~request_id len crc]
       with

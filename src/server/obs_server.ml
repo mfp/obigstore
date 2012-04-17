@@ -29,6 +29,8 @@ module Make
        with type db := db and type raw_dump := Raw_dump.raw_dump
 
      val use_thread_pool : db -> bool -> unit
+
+     val throttling : db -> float
    end)
   (P : Obs_protocol.PAYLOAD) =
 struct
