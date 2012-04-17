@@ -128,10 +128,12 @@ struct
 
   (* the chunk of the region needed to perform a given request --- allows to
    * impose diff limits per type *)
-  let request_slot_cost server = function
-      Load _ -> 100
+  let request_slot_cost server ~request_size = function
+      Load _ -> (request_size lsr 5) lsl 10
     | Put_columns { Put_columns.data; _ } ->
-        min (server.curr_concurrency_factor - 1) (1000 * List.length data)
+        min
+          (server.curr_concurrency_factor - 1)
+          ((List.length data + 1 + request_size lsr 5) lsl 9)
     | _ -> 1
 
   let with_raw_dump c id default f =
@@ -199,7 +201,7 @@ struct
         | Some r ->
             ignore begin
               Lwt_util.run_in_region c.server.async_req_region
-                (request_slot_cost c.server r)
+                (request_slot_cost c.server ~request_size:len r)
                 (fun () ->
                    begin try_lwt
                      relay_to_handler c ~request_id r
