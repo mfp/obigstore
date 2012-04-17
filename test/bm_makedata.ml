@@ -84,22 +84,31 @@ let rec incr_str off s =
 
 let incr_str s = incr_str (String.length s - 1) s
 
+let cheapo_die p =
+  let a = Array.init (1 lsl 13) (fun _ -> Random.float 1.0 < p) in
+  let n = ref 0 in
+    (fun () ->
+       incr n;
+       n := !n land (Array.length a - 1);
+       a.(!n))
+
 let mixed_load_gen ~key_size ~value_size ~p_seq =
   let `Staged random_string = random_string_maker () in
   let remembered = Array.init (1 lsl 12) (fun _ -> random_string key_size) in
   let idx = ref 0 in
+  let die = cheapo_die p_seq in
     (fun i ->
        incr idx;
        idx := !idx land (Array.length remembered - 1);
-       let r = Random.float 1.0 in
        let key =
-         if r < p_seq then begin
+         if die () then begin
            let s = remembered.(!idx) in
              incr_str s;
              s
          end else begin
            let s = random_string key_size in
              remembered.(!idx) <- s;
+             incr idx;
              s
          end in
        let v = random_string value_size in
