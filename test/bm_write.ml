@@ -140,21 +140,18 @@ let report ?(force=false) () =
 
 let rate_limiter = ref (fun () -> return false)
 
-let rec write_aux read_cols ks =
+let rec write_aux read_data write_data data_len ks =
   try_lwt
     while_lwt !in_flight < !concurrency do
-      lwt k, cols = read_cols () in
+      lwt data = read_data () in
         ignore begin
           incr in_flight;
           !rate_limiter () >>
           try_lwt
-            lwt () =
-              measure_latency
-                (fun () -> C.put_columns ks !table k cols)
-            in
-              incr finished;
+            lwt () = measure_latency (fun () -> write_data ks !table data) in
+              finished := !finished + data_len data;
               report ();
-              write_aux read_cols ks
+              write_aux read_data write_data data_len ks
           with _ ->
             incr errors;
             return ()
@@ -165,34 +162,6 @@ let rec write_aux read_cols ks =
         return ()
     done
   with End_of_file -> return ()
-
-let rec write_multi_aux read_multi ks =
-  try_lwt
-    while_lwt !in_flight < !concurrency do
-      match_lwt read_multi () with
-          [] -> raise Exit
-        | data ->
-            ignore begin
-              incr in_flight;
-              !rate_limiter () >>
-              try_lwt
-                lwt () =
-                  measure_latency
-                    (fun () -> C.put_multi_columns ks !table data)
-                in
-                  finished := !finished + (List.length data);
-                  report ();
-                  write_multi_aux read_multi ks
-              with exn ->
-                incr errors;
-                return ()
-              finally
-                decr in_flight;
-                return ()
-            end;
-            return ()
-    done
-  with Exit -> return ()
 
 let read_string ic =
   lwt count = Lwt_io.LE.read_int ic in
@@ -210,37 +179,22 @@ let read_pair ch =
 
 let read_key_value () = Lwt_io.atomic read_pair Lwt_io.stdin
 
-let write_values =
-  write_aux
-    (fun () ->
-       lwt k, v = read_key_value () in
-         return (k, [mk_col ~name:"v" v]))
-
-let wrap_some x = Some x
-
-let try_read_pair ch =
-  try_lwt read_pair ch >|= wrap_some with End_of_file -> return None
-
 let read_multi_values () =
   Lwt_io.atomic
     (fun ch ->
        let rec read_n_values ch acc = function
            0 -> return acc
          | n ->
-             match_lwt try_read_pair ch with
-                 None -> return []
-               | Some (k, v) ->
-                   read_n_values ch ((k, [mk_col ~name:"v" v]) :: acc) (n - 1)
+             lwt k, v = read_pair ch in
+               read_n_values ch ((k, [mk_col ~name:"v" v]) :: acc) (n - 1)
        in read_n_values ch [] !multi)
     Lwt_io.stdin
 
-let write_values_multi = write_multi_aux read_multi_values
-
 let rec read_columns ch ?(acc=[]) = function
     0 -> return acc
-  | n -> match_lwt try_read_pair ch with
-        None -> return acc
-      | Some (name, v) -> read_columns ch ~acc:(mk_col ~name v :: acc) (n - 1)
+  | n ->
+      lwt name, v = read_pair ch in
+        read_columns ch ~acc:(mk_col ~name v :: acc) (n - 1)
 
 let read_complex_value ch =
   lwt k = read_string ch in
@@ -251,19 +205,32 @@ let read_complex_values ch =
   let rec read_complex_multi ch acc = function
       0 -> return acc
     | n ->
-        match_lwt
-          try_lwt read_complex_value ch >|= wrap_some with _ -> return None
-        with
-            None -> return acc
-          | Some x -> read_complex_multi ch (x :: acc) (n - 1)
+        lwt x = read_complex_value ch in
+          read_complex_multi ch (x :: acc) (n - 1)
   in read_complex_multi ch [] !columns
 
+let write_values =
+  write_aux
+    (fun () ->
+       lwt k, v = read_key_value () in
+         return (k, [mk_col ~name:"v" v]))
+    (fun ks table (k, cols) -> C.put_columns ks table k cols)
+    (fun (k, cols) -> 1)
+
+let write_values_multi =
+  write_aux read_multi_values C.put_multi_columns List.length
+
 let write_complex_values =
-  write_aux (fun () -> Lwt_io.atomic read_complex_value Lwt_io.stdin)
+  write_aux
+    (fun () -> Lwt_io.atomic read_complex_value Lwt_io.stdin)
+    (fun ks table (k, cols) -> C.put_columns ks table k cols)
+    (fun (k, cols) -> 1)
 
 let write_complex_values_multi =
-  write_multi_aux
+  write_aux
     (fun () -> Lwt_io.atomic read_complex_values Lwt_io.stdin)
+    C.put_multi_columns
+    List.length
 
 module Throttle = Lwt_throttle.Make(struct
                                       type t = int
