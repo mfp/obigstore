@@ -129,8 +129,8 @@ let report_header =
        incr n;
        if !n > 10 then n := 0)
 
-let report () =
-  if must_report () then begin
+let report ?(force=false) () =
+  if force || must_report () then begin
     let t = Unix.gettimeofday () in
     let dt = t -. !t0 in
     let rate = float (!finished - !prev_finished) /. dt in
@@ -355,5 +355,7 @@ let () =
       end else
         write_values ks
       end >>
-      wait_until_finished ()
+      lwt () = wait_until_finished () in
+        report ~force:true ();
+        return ()
   end
