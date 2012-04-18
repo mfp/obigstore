@@ -36,6 +36,7 @@ let multi = ref 1
 let columns = ref 1
 let rate = ref None
 let period = ref None
+let report_latencies = ref false
 
 let params = Arg.align
   [
@@ -52,6 +53,7 @@ let params = Arg.align
    "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
    "-period", Arg.Float (fun p -> period := Some p),
      "FLOAT Report stats every FLOAT seconds.";
+   "-latency", Arg.Set report_latencies, " Report latencies.";
   ]
 
 let usage_message = "Usage: bm_write [options]"
@@ -88,24 +90,65 @@ let t0 = ref 0.
 
 let is_time_to_report = ref false
 
-let report_delta = 16 * 1024
+let report_delta = 64 * 1024
 
 let must_report () =
   let r =
     !is_time_to_report ||
-    !finished > 16384 && !finished land (- !finished) = !finished ||
-    !finished land (report_delta - 1) = 0
+    BatOption.is_none !period &&
+    (!finished > 16384 && !finished land (- !finished) = !finished ||
+     !finished land (report_delta - 1) = 0)
   in
     is_time_to_report := false;
     r
+
+let latencies = ref []
+
+let measure_latency f =
+  if not !report_latencies then f ()
+  else begin
+    let t0 = Unix.gettimeofday () in
+    lwt () = f () in
+    let dt = Unix.gettimeofday () -. t0 in
+      latencies := dt :: !latencies;
+      return ()
+  end
+
+let report_header =
+  let n = ref 0 in
+    (fun () ->
+       if !n = 0 then begin
+         printf "#%5s  %-9s  %6s  " "time" "keys" "k rate";
+         if !columns > 1 then printf "%6s  " "c rate";
+         if !report_latencies then begin
+           printf "%8s  %8s  %8s  %8s  %8s"
+             "mean" "median" "90th" "95th" "99th"
+         end;
+         printf "\n%!";
+       end;
+       incr n;
+       if !n > 10 then n := 0)
 
 let report () =
   if must_report () then begin
     let t = Unix.gettimeofday () in
     let dt = t -. !t0 in
     let rate = float (!finished - !prev_finished) /. dt in
+      report_header ();
       printf "%-6.2f  %-9d  %-6d  " (t -. !exec_start_time) !prev_finished (truncate rate);
-      if !columns > 1 then printf "%d" (truncate (rate *. float !columns));
+      if !columns > 1 then printf "%-6d  " (truncate (rate *. float !columns));
+      if !report_latencies then begin
+        let sorted = Array.of_list !latencies in
+        let () = Array.sort compare sorted in
+        let len = Array.length sorted in
+        let mean = Array.fold_left (fun dt s -> s +. dt) 0. sorted /. float len in
+        let median = sorted.(len / 2) in
+        let perc90 = sorted.(90 * len / 100) in
+        let perc95 = sorted.(95 * len / 100) in
+        let perc99 = sorted.(99 * len / 100) in
+          printf "%.6f  %.6f  %.6f  %.6f  %.6f" mean median perc90 perc95 perc99;
+          latencies := [];
+      end;
       printf "\n%!";
       prev_finished := !finished;
       t0 := t
@@ -121,7 +164,10 @@ let rec write_values ks =
           incr in_flight;
           !rate_limiter () >>
           try_lwt
-            lwt () = C.put_columns ks !table k [mk_col ~name:"v" v] in
+            lwt () =
+              measure_latency
+                (fun () -> C.put_columns ks !table k [mk_col ~name:"v" v])
+            in
               incr finished;
               report ();
               write_values ks
@@ -164,7 +210,10 @@ let rec write_values_multi ks =
               incr in_flight;
               try_lwt
                 !rate_limiter () >>
-                lwt () = C.put_multi_columns ks !table data in
+                lwt () =
+                  measure_latency
+                    (fun () -> C.put_multi_columns ks !table data)
+                in
                   finished := !finished + num_pairs;
                   report ();
                   write_values_multi ks
@@ -209,7 +258,10 @@ let rec write_complex_values ks =
           incr in_flight;
           try_lwt
             !rate_limiter () >>
-            lwt () = C.put_columns ks !table k cols in
+            lwt () =
+              measure_latency
+                (fun () -> C.put_columns ks !table k cols)
+            in
               incr finished;
               report ();
               write_complex_values ks
@@ -234,7 +286,11 @@ let rec write_complex_values_multi ks =
               incr in_flight;
               try_lwt
                 !rate_limiter () >>
-                lwt () = C.put_multi_columns ks !table l in
+                lwt () =
+                  measure_latency
+                    (fun () ->
+                       C.put_multi_columns ks !table l)
+                in
                   finished := !finished + List.length l;
                   report ();
                   write_complex_values_multi ks
