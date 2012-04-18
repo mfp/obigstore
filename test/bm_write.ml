@@ -34,6 +34,7 @@ let table = ref (DM.table_of_string "bm_write")
 let concurrency = ref 2048
 let multi = ref 1
 let columns = ref 1
+let rate = ref None
 
 let params = Arg.align
   [
@@ -47,6 +48,7 @@ let params = Arg.align
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
+   "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec."
   ]
 
 let usage_message = "Usage: bm_write [options]"
@@ -95,12 +97,15 @@ let report () =
       t0 := t
   end
 
+let rate_limiter = ref (fun () -> return false)
+
 let rec write_values ks =
   try_lwt
     while_lwt !in_flight < !concurrency do
       lwt k, v = read_key_value () in
         ignore begin
           incr in_flight;
+          !rate_limiter () >>
           try_lwt
             lwt () = C.put_columns ks !table k [mk_col ~name:"v" v] in
               incr finished;
@@ -144,6 +149,7 @@ let rec write_values_multi ks =
             ignore begin
               incr in_flight;
               try_lwt
+                !rate_limiter () >>
                 lwt () = C.put_multi_columns ks !table data in
                   finished := !finished + num_pairs;
                   report ();
@@ -188,6 +194,7 @@ let rec write_complex_values ks =
         ignore begin
           incr in_flight;
           try_lwt
+            !rate_limiter () >>
             lwt () = C.put_columns ks !table k cols in
               incr finished;
               report ();
@@ -212,6 +219,7 @@ let rec write_complex_values_multi ks =
             ignore begin
               incr in_flight;
               try_lwt
+                !rate_limiter () >>
                 lwt () = C.put_multi_columns ks !table l in
                   finished := !finished + List.length l;
                   report ();
@@ -227,6 +235,12 @@ let rec write_complex_values_multi ks =
     done
   with End_of_file -> return ()
 
+module Throttle = Lwt_throttle.Make(struct
+                                      type t = int
+                                      let hash n = n
+                                      let equal = (==)
+                                    end)
+
 let () =
   Arg.parse params ignore usage_message;
   Lwt_unix.run begin
@@ -241,6 +255,14 @@ let () =
         else return ()
     in
       t0 := Unix.gettimeofday ();
+      begin match !rate with
+          None -> ()
+        | Some rate ->
+            let rate = rate / !multi in
+            let limiter = Throttle.create ~rate ~max:1000000 ~n:13 in
+            let wait () = Throttle.wait limiter 0 in
+              rate_limiter := wait;
+      end;
       begin if !columns > 1 && !multi > 1 then begin
         concurrency := min !concurrency 256;
         write_complex_values_multi ks
