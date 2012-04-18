@@ -35,6 +35,7 @@ let concurrency = ref 2048
 let multi = ref 1
 let columns = ref 1
 let rate = ref None
+let period = ref None
 
 let params = Arg.align
   [
@@ -48,7 +49,9 @@ let params = Arg.align
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
-   "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec."
+   "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
+   "-period", Arg.Float (fun p -> period := Some p),
+     "FLOAT Report stats every FLOAT seconds.";
   ]
 
 let usage_message = "Usage: bm_write [options]"
@@ -79,18 +82,29 @@ let read_pair ch =
 let read_key_value () = Lwt_io.atomic read_pair Lwt_io.stdin
 
 let prev_finished = ref 0
+
+let exec_start_time = ref 0.
 let t0 = ref 0.
 
-let report_delta = 1024 * 1024
+let is_time_to_report = ref false
+
+let report_delta = 16 * 1024
+
+let must_report () =
+  let r =
+    !is_time_to_report ||
+    !finished > 16384 && !finished land (- !finished) = !finished ||
+    !finished land (report_delta - 1) = 0
+  in
+    is_time_to_report := false;
+    r
 
 let report () =
-  if !finished > 16384 && !finished land (- !finished) = !finished ||
-     !finished land (report_delta - 1) = 0
-  then begin
+  if must_report () then begin
     let t = Unix.gettimeofday () in
     let dt = t -. !t0 in
     let rate = float (!finished - !prev_finished) /. dt in
-      printf "%-9d  %-6d  " !prev_finished (truncate rate);
+      printf "%-6.2f  %-9d  %-6d  " (t -. !exec_start_time) !prev_finished (truncate rate);
       if !columns > 1 then printf "%d" (truncate (rate *. float !columns));
       printf "\n%!";
       prev_finished := !finished;
@@ -255,6 +269,17 @@ let () =
         else return ()
     in
       t0 := Unix.gettimeofday ();
+      exec_start_time := !t0;
+      begin
+        match !period with
+            None -> ()
+          | Some p ->
+              let rec trigger_report () =
+                lwt () = Lwt_unix.sleep p in
+                  is_time_to_report := true;
+                  trigger_report ()
+              in ignore (trigger_report ())
+      end;
       begin match !rate with
           None -> ()
         | Some rate ->
