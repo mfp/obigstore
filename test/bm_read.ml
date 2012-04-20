@@ -31,7 +31,7 @@ module C = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 let server = ref "127.0.0.1"
 let port = ref 12050
 let keyspace = ref "obs-benchmark"
-let table = ref "bm_write"
+let table = ref (Obs_data_model.table_of_string "bm_write")
 let concurrency = ref 2048
 let multi = ref 1
 let range = ref false
@@ -45,7 +45,8 @@ let params = Arg.align
    "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
    "-keyspace", Arg.Set_string keyspace,
      "NAME keyspace to use (default 'obs-benchmark')";
-   "-table", Arg.Set_string table, "NAME table to use (default 'bm_write')";
+   "-table", Arg.String (fun s -> table := Obs_data_model.table_of_string s),
+     "NAME table to use (default 'bm_write')";
    "-range", Arg.Set range, " Read ranges.";
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent reads (default: 2048, multi: max 256)";
@@ -121,10 +122,7 @@ let rec read_values_multi ks =
       incr in_flight;
       try_lwt
         let keys = List.init !multi (fun _ -> mk_key ()) in
-        lwt _ = C.get_slice ks !table
-                  (DM.Keys keys)
-                  (DM.Column_range_union [DM.Columns ["v"]])
-        in
+        lwt _ = C.get_slice ks !table (`Discrete keys) (`Discrete ["v"]) in
           finished := !finished + !multi;
           report ();
           read_values_multi ks;
@@ -145,8 +143,8 @@ let rec read_values_seq ?first ks =
       try_lwt
         lwt last_key, l =
           C.get_slice ks !table ~max_keys:512
-            (DM.Key_range { DM.first; up_to = None; reverse = false; })
-            DM.All_columns
+            (`Continuous { DM.first; up_to = None; reverse = false; })
+            `All
         in
           (* last one will return fewer than 512, so we "resync" in order for
            * report to work *)
