@@ -25,7 +25,7 @@ OCamlProgram(bm_read, bm_read)
 toplevel: $(addsuffix .cma, $(OCAML_LIBS))
     ocamlfind ocamlmktop $(mapprefix -package, $(OCAMLPACKS)) \
 	-cc g++ -ccopt -Wno-write-strings -thread -linkpkg \
-	-verbose -o toplevel -cclib -L. $^
+	-verbose -o toplevel -cclib -L. $+
 
 .PHONY: test
 test: test.opt
