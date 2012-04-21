@@ -24,16 +24,29 @@ let num_pairs = ref None
 let key_size = ref 16
 let value_size = ref 32
 let mode = ref `Random
+let hotspots = ref 12
 
 let usage_message = "Usage: bm_makedata N [options]"
+
+let set_mixed_mode s =
+  try
+    let p, h = Scanf.sscanf s "%f:%d" (fun p h -> (p, h)) in
+      mode := `Mixed p;
+      hotspots := h;
+  with
+    | End_of_file ->
+      let p = Scanf.sscanf s "%f" (fun p -> p) in
+        mode := `Mixed p
+    | Scanf.Scan_failure _ ->
+        raise (Arg.Bad "mixed expects an argument like '0.95:8'")
 
 let params = Arg.align
   [
     "-value-size", Arg.Set_int value_size, "N Value size (default: 32).";
     "-sequential", Arg.Unit (fun () -> mode := `Sequential),
       " Generate output with keys in lexicographic order.";
-    "-mixed", Arg.Float (fun f -> mode := `Mixed f),
-      "FLOAT Generate mixed load with P(seq) = FLOAT.";
+    "-mixed", Arg.String set_mixed_mode,
+      "P:N Generate mixed load with 2^N hotspots and P(seq) = P.";
   ]
 
 
@@ -94,7 +107,7 @@ let cheapo_die p =
 
 let mixed_load_gen ~key_size ~value_size ~p_seq =
   let `Staged random_string = random_string_maker () in
-  let remembered = Array.init (1 lsl 12) (fun _ -> random_string key_size) in
+  let remembered = Array.init (1 lsl !hotspots) (fun _ -> random_string key_size) in
   let idx = ref 0 in
   let die = cheapo_die p_seq in
     (fun i ->
