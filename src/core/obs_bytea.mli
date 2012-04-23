@@ -28,4 +28,11 @@ val add_int64_complement_be : t -> Int64.t -> unit
 val add_int64_be : t -> Int64.t -> unit
 val add_int32_be : t -> int -> unit
 
+val add_ieee754_float : t -> float -> unit
+
+(** @raise Invalid_arg if [off < 0 || off > length - 4] *)
+val blit_int32_le_at : t -> off:int -> int -> unit
+
+val unsafe_blit_int32_le_at : t -> off:int -> int -> unit
+
 val unsafe_string : t -> string

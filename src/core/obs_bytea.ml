@@ -190,5 +190,14 @@ let add_int32_be b n =
     obigstore_bytea_blit_int32_be b.buffer b.position n;
     b.position <- new_position
 
+let add_ieee754_float b f = add_int64_le b (Int64.bits_of_float f)
+
+let unsafe_blit_int32_le_at b ~off n =
+  obigstore_bytea_blit_int32_le b.buffer off n
+
+let blit_int32_le_at b ~off n =
+  if off < 0 || off > b.position - 4 then
+    invalid_arg "Obs_bytea.blit_int32_le_at: invalid off";
+  unsafe_blit_int32_le_at b ~off n
 
 let unsafe_string b = b.buffer

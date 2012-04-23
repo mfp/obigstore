@@ -1,5 +1,6 @@
 
 OBJECTS[] =
+  obs_bson
   obs_bytea
   obs_conn
   obs_crc32c
