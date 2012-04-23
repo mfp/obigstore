@@ -21,6 +21,8 @@ open Printf
 open Test_00util
 open OUnit
 
+module R = Random.State
+
 let vector =
   let open Obs_bson in
   [
@@ -53,8 +55,84 @@ let vector =
     "maxkey", ["x", Maxkey];
   ]
 
+let rand_string rng = String.create (R.int rng 20)
+
+let rand_cstring rng =
+  Cryptokit.(transform_string (Hexa.encode ()) (rand_string rng))
+
+let choose rng fs = fs.(R.int rng (Array.length fs)) rng
+
+let random_double rng _ = Obs_bson.Double (R.float rng 1e6)
+
+let random_utf8 rng _ = (* FIXME: ensure proper utf-8 *)
+  Obs_bson.UTF8 (rand_string rng)
+
+let random_binary rng _ =
+  let open Obs_bson in
+  Binary ([| Generic; Function; Old; UUID; MD5; UserDefined; |].(R.int rng 6),
+          rand_string rng)
+
+let random_objectid rng _ = Obs_bson.ObjectId (String.create 12)
+let random_bool rng _ = Obs_bson.Boolean (R.bool rng)
+let random_datetime rng _ = Obs_bson.DateTime (R.int64 rng Int64.max_int)
+let random_regexp rng _ = Obs_bson.Regexp (rand_cstring rng, rand_cstring rng)
+let random_javascript rng _ = Obs_bson.JavaScript (rand_string rng)
+let random_symbol rng _ = Obs_bson.Symbol (rand_string rng)
+let random_int32 rng _ = Obs_bson.Int32 (R.int rng 1_000_000)
+let random_timestamp rng _ = Obs_bson.Timestamp (R.int64 rng Int64.max_int)
+let random_int64 rng _ = Obs_bson.Int64 (R.int64 rng Int64.max_int)
+
+let rec random_document_elm rng depth =
+  if depth >= 4 then random_int32 rng depth
+  else
+    Obs_bson.Document (random_document rng depth)
+
+and random_document rng depth =
+  List.init (R.int rng 10) (fun i -> string_of_int i, random_element rng depth)
+
+and random_array rng depth =
+  if depth >= 4 then random_int32 rng depth else
+    Obs_bson.Array (List.map snd (random_document rng depth))
+
+and random_element rng depth =
+  let fs =
+    [| random_double; random_utf8; random_binary; random_objectid;
+       random_bool; random_datetime; random_regexp; random_javascript;
+       random_symbol; random_int32; random_timestamp; random_int64;
+       random_document_elm; random_array; random_javascript_scoped;
+    |]
+  in choose rng fs (depth + 1)
+
+and random_javascript_scoped rng depth =
+  let context =
+    if depth >= 4 then [] else random_document rng depth
+  in
+    Obs_bson.JavaScriptScoped (rand_string rng, context)
+
+let hexdump s =
+  let b = Buffer.create 13 in
+  let fmt = Format.formatter_of_buffer b in
+    for i = 0 to String.length s - 1 do
+      let c = Char.code s.[i] in
+        Format.fprintf fmt "%x%x@ " (c lsr 4) (c land 0xF);
+    done;
+    Format.fprintf fmt "@.";
+    Buffer.contents b
+
 let test_roundtrip (msg, doc) () =
-  assert_equal ~msg doc Obs_bson.(document_of_string (string_of_document doc))
+  try
+    assert_equal ~msg doc Obs_bson.(document_of_string (string_of_document doc))
+  with exn ->
+    assert_failure_fmt "Failed to deserialize %s\n%s"
+      msg (hexdump (Obs_bson.string_of_document doc))
+
+let test_roundtrip_randomized iterations () =
+  let rng = Random.State.make [|1; 2; 3|] in
+    for i = 1 to iterations do
+      let doc = random_document rng 0 in
+      let desc = sprintf "doc%d" i in
+        test_roundtrip (desc, doc) ()
+    done
 
 let test_validation () =
   let open Obs_bson in
@@ -122,6 +200,7 @@ let tests =
     "roundtrip" >:::
       List.map (fun ((msg, doc) as x) -> msg >:: test_roundtrip x) vector;
     "validation" >:: test_validation;
+    "randomized roundtrip" >:: test_roundtrip_randomized 10000;
   ]
 
 let () =
