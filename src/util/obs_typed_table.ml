@@ -31,13 +31,13 @@ sig
   module Codec : Obs_key_encoding.CODEC_OPS
   val name : string
 
-  val row_of_key_data : Codec.key key_data -> Codec.key row option
+  val row_of_key_data : (Codec.key, string) key_data -> Codec.key row option
   val row_needs_timestamps : bool
 end
 
 module Trivial_row =
 struct
-  type 'key row = 'key key_data
+  type 'key row = ('key, string) key_data
   let row_of_key_data d = Some d
   let row_needs_timestamps = true
 end

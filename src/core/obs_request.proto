@@ -37,11 +37,11 @@ type column_range =
 type timestamp = No_timestamp | Timestamp long
   options "ocaml.type_equals" = "Obs_data_model.timestamp"
 
-type column =
-  { name : column_name; data : string; timestamp : timestamp; }
+type column 'a =
+  { name : column_name; data : 'a; timestamp : timestamp; }
   options "ocaml.type_equals" = "Obs_data_model.column"
 
-message column_ = column
+message column_ = column<string>
 
 type column_val_rel =
     Any
@@ -134,7 +134,7 @@ message request =
   | Get_column { keyspace : keyspace; table : table; key : key;
                  column : column_name; }
   | Put_columns { keyspace : keyspace; table : table;
-                  data : [ ( key * [ column ]) ] }
+                  data : [ ( key * [ column_ ]) ] }
   | Delete_columns { keyspace : keyspace; table : table; key : key;
                      columns : [ column_name ] }
   | Delete_key { keyspace : keyspace; table : table; key : key }

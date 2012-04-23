@@ -497,7 +497,7 @@ module rec TYPES : sig
       {
         mutable deleted_keys : S.t TM.t; (* table -> key set *)
         mutable added_keys : S.t TM.t; (* table -> key set *)
-        mutable added : column M.t M.t TM.t; (* table -> key -> column name -> column *)
+        mutable added : string column M.t M.t TM.t; (* table -> key -> column name -> column *)
         mutable deleted : S.t M.t TM.t; (* table -> key -> column set *)
         repeatable_read : bool;
         iter_pool : L.iterator Lwt_pool.t ref;

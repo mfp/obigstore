@@ -78,14 +78,14 @@ sig
   val return_key_range_size_on_disk : Int64.t writer
   val return_keys : string list writer
   val return_key_count : Int64.t writer
-  val return_slice : string Obs_data_model.slice writer
+  val return_slice : (string, string) Obs_data_model.slice writer
   val return_slice_values :
     (Obs_data_model.key option * (Obs_data_model.key * string option list) list)
     writer
   val return_slice_values_timestamps :
     (Obs_data_model.key option * (Obs_data_model.key * (string * Int64.t) option list) list) writer
   val return_columns :
-    (Obs_data_model.column_name * Obs_data_model.column list) option writer
+    (Obs_data_model.column_name * string Obs_data_model.column list) option writer
   val return_column_values : string option list writer
   val return_column : (string * Obs_data_model.timestamp) option writer
   val return_ok : unit writer
@@ -107,14 +107,14 @@ sig
   val read_key_range_size_on_disk : Int64.t reader
   val read_keys : string list reader
   val read_key_count : Int64.t reader
-  val read_slice : string Obs_data_model.slice reader
+  val read_slice : (string, string) Obs_data_model.slice reader
   val read_slice_values :
     (Obs_data_model.key option * (Obs_data_model.key * string option list) list)
     reader
   val read_slice_values_timestamps :
     (Obs_data_model.key option * (Obs_data_model.key * (string * Int64.t) option list) list) reader
   val read_columns :
-    (Obs_data_model.column_name * Obs_data_model.column list) option reader
+    (Obs_data_model.column_name * string Obs_data_model.column list) option reader
   val read_column_values : string option list reader
   val read_column : (string * Obs_data_model.timestamp) option reader
   val read_ok : unit reader

@@ -26,19 +26,19 @@ val table_of_string : string -> table
 
 type key = string
 
-type column = { name : column_name; data : string; timestamp : timestamp; }
+type 'data column = { name : column_name; data : 'data; timestamp : timestamp; }
 
 and column_name = string
 
 and timestamp = No_timestamp | Timestamp of Int64.t
 
-type 'key key_data = {
+type ('key, 'data) key_data = {
   key : 'key;
   last_column : string; (** Name of last column in the following list *)
-  columns : column list;
+  columns : 'data column list;
 }
 
-type 'key slice = 'key option * 'key key_data list (** last_key * data *)
+type ('key, 'data) slice = 'key option * ('key, 'data) key_data list (** last_key * data *)
 
 (** Range representing elements between [first] (inclusive if reverse is
   * false, exclusive otherwise) and [up_to]
@@ -202,7 +202,8 @@ sig
   val get_slice :
     keyspace -> table ->
     ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
-    string key_range -> ?predicate:row_predicate -> column_range -> string slice Lwt.t
+    string key_range -> ?predicate:row_predicate -> column_range ->
+    (string, string) slice Lwt.t
 
   (** [get_slice_values tx table key_range ["col1"; "col2"]]
     * returns [Some last_key, l] if at least a key was selected, where [l] is
@@ -231,7 +232,7 @@ sig
     keyspace -> table ->
     ?max_columns:int -> ?decode_timestamps:bool ->
     key -> column_range ->
-    (column_name * (column list)) option Lwt.t
+    (column_name * (string column list)) option Lwt.t
 
   (** [get_column_values tx table key columns] returns the data associated to
     * the given [columns] (if existent). If [key] doesn't exist (that is, it has
@@ -248,11 +249,11 @@ sig
   (** {3} Write operations *)
 
   val put_columns :
-    keyspace -> table -> key -> column list ->
+    keyspace -> table -> key -> string column list ->
     unit Lwt.t
 
   val put_multi_columns :
-    keyspace -> table -> (key * column list) list -> unit Lwt.t
+    keyspace -> table -> (key * string column list) list -> unit Lwt.t
 
   val delete_columns :
     keyspace -> table -> key -> column_name list -> unit Lwt.t

@@ -26,7 +26,7 @@ sig
   module Codec : Obs_key_encoding.CODEC_OPS
 
   val name : string
-  val row_of_key_data : Codec.key key_data -> Codec.key row option
+  val row_of_key_data : (Codec.key, string) key_data -> Codec.key row option
   val row_needs_timestamps : bool
 end
 
@@ -34,7 +34,7 @@ end
   * module. *)
 module Trivial_row :
 sig
-  type 'a row = 'a key_data
+  type 'a row = ('a, string) key_data
   val row_of_key_data : 'a row -> 'a row option
 
   (** Set to [true] (safe default). *)
@@ -162,7 +162,7 @@ sig
     key_range ->
     ?predicate:row_predicate ->
     column_range ->
-    (key option * key key_data list) Lwt.t
+    (key option * (key, string) key_data list) Lwt.t
 
   val get_row : keyspace -> key -> key M.row option Lwt.t
 
@@ -180,7 +180,7 @@ sig
 
   val get_columns :
     keyspace -> ?max_columns:int -> ?decode_timestamps:bool ->
-    key -> column_range -> (column_name * column list) option
+    key -> column_range -> (column_name * string column list) option
     Lwt.t
 
   val get_column_values :
@@ -189,10 +189,10 @@ sig
   val get_column :
     keyspace -> key -> column_name -> (string * timestamp) option Lwt.t
 
-  val put_columns : keyspace -> key -> column list -> unit Lwt.t
+  val put_columns : keyspace -> key -> string column list -> unit Lwt.t
 
   val put_multi_columns :
-    keyspace -> (key * column list) list -> unit Lwt.t
+    keyspace -> (key * string column list) list -> unit Lwt.t
 
   val delete_columns :
     keyspace -> key -> column_name list -> unit Lwt.t

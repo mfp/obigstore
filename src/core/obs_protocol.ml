@@ -142,11 +142,11 @@ sig
   val return_key_range_size_on_disk : Int64.t writer
   val return_keys : string list writer
   val return_key_count : Int64.t writer
-  val return_slice : string slice writer
+  val return_slice : (string, string) slice writer
   val return_slice_values : (key option * (key * string option list) list) writer
   val return_slice_values_timestamps :
     (key option * (key * (string * Int64.t) option list) list) writer
-  val return_columns : (column_name * (column list)) option writer
+  val return_columns : (column_name * (string column list)) option writer
   val return_column_values : string option list writer
   val return_column : (string * timestamp) option writer
   val return_ok : unit writer
@@ -168,11 +168,11 @@ sig
   val read_key_range_size_on_disk : Int64.t reader
   val read_keys : string list reader
   val read_key_count : Int64.t reader
-  val read_slice : string slice reader
+  val read_slice : (string, string) slice reader
   val read_slice_values : (key option * (key * string option list) list) reader
   val read_slice_values_timestamps :
     (key option * (key * (string * Int64.t) option list) list) reader
-  val read_columns : (column_name * (column list)) option reader
+  val read_columns : (column_name * (string column list)) option reader
   val read_column_values : string option list reader
   val read_column : (string * timestamp) option reader
   val read_ok : unit reader
