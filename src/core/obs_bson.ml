@@ -440,6 +440,10 @@ module Browse =
 struct
   let invalid_arg x = invalid_arg ("Obs_bson.Browse." ^ x)
 
+  let element = List.assoc
+
+  let opt_element x t = try Some (element x t) with Not_found -> None
+
   let int = function
       Int32 n -> n
     | _ -> invalid_arg "int"
