@@ -134,3 +134,8 @@ sig
   val timestamp : element -> Int64.t
   val document : element -> document
 end
+
+module Build :
+sig
+  val generic_binary : string -> element
+end

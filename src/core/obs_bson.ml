@@ -468,3 +468,8 @@ struct
       Document x -> x
     | _ -> invalid_arg "document"
 end
+
+module Build =
+struct
+  let generic_binary x = Binary (Generic, x)
+end
