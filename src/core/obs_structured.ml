@@ -113,7 +113,9 @@ struct
 
   let revmap_column c =
     let data = match c.data with
-        Binary s | Malformed_BSON s -> s
+        Binary _ | Malformed_BSON _ when c.name <> "" && c.name.[0] = '@' ->
+          raise (Invalid_BSON_column c.name)
+      | Binary s | Malformed_BSON s -> s
       | BSON x -> Obs_bson.string_of_document x
     in { c with data }
 
@@ -171,9 +173,10 @@ struct
                      else (try_decode d, ts))
 
   let put_bson_columns ks table key cols =
-    put_columns ks table key (List.map revmap_column cols)
+    try_lwt put_columns ks table key (List.map revmap_column cols)
 
   let put_multi_bson_columns ks table l =
-    put_multi_columns ks table
-      (List.map (fun (k, cols) -> (k, List.map revmap_column cols)) l)
+    try_lwt
+      put_multi_columns ks table
+        (List.map (fun (k, cols) -> (k, List.map revmap_column cols)) l)
 end

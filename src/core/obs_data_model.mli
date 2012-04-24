@@ -19,6 +19,9 @@
 
 (** {2 Type definitions} *)
 
+(** Exception raised when inserting an invalid BSON [@column]. *)
+exception Invalid_BSON_column of string (** column name *)
+
 type table = private string
 
 val string_of_table : table -> string
@@ -374,12 +377,14 @@ sig
 
   (** {3 Write operations} *)
 
-  (** Refer to {!put_columns}. *)
+  (** Refer to {!put_columns}.
+    * @raise Invalid_BSON_column if the data for any @column is not [BSON x]. *)
   val put_bson_columns :
     keyspace -> table -> key -> decoded_data column list ->
     unit Lwt.t
 
-  (** Refer to {!put_multi_columns}. *)
+  (** Refer to {!put_multi_columns}.
+    * @raise Invalid_BSON_column if the data for any @column is not [BSON x]. *)
   val put_multi_bson_columns :
     keyspace -> table -> (key * decoded_data column list) list -> unit Lwt.t
 end
