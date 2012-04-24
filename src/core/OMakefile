@@ -10,6 +10,7 @@ OBJECTS[] =
   obs_replication
   obs_request
   obs_string_util
+  obs_structured
   obs_weak_ref
   obs_load_stats
 

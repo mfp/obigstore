@@ -32,6 +32,9 @@ and column_name = string
 
 and timestamp = No_timestamp | Timestamp of Int64.t
 
+type decoded_data =
+    Binary of string | BSON of Obs_bson.document | Malformed_BSON of string
+
 type ('key, 'data) key_data = {
   key : 'key;
   last_column : string; (** Name of last column in the following list *)
@@ -109,7 +112,8 @@ sig
     Lwt_io.input_channel option Lwt.t
 end
 
-module type S =
+(** DB operations with opaque columns. *)
+module type RAW_S =
 sig
   type db
   type keyspace
@@ -306,6 +310,67 @@ sig
 
   (** {3} Database dump. *)
   module Raw_dump : RAW_DUMP with type db := db
+end
+
+(** DB operations with BSON-encoded columns: columns whose name begins with
+  * '@' are BSON-encoded. All the extra functions in {!S} are similar to those
+  * in {!RAW_S} but decode/encode properly such columns. *)
+module type S =
+sig
+  include RAW_S
+
+  (** {3 Read operations} *)
+
+  (** Similar to {!get_slice}, but decodes the BSON-encoded records in columns
+    * whose name begins with [@]. *)
+  val get_bson_slice :
+    keyspace -> table ->
+    ?max_keys:int -> ?max_columns:int -> ?decode_timestamps:bool ->
+    string key_range -> ?predicate:row_predicate -> column_range ->
+    (string, decoded_data) slice Lwt.t
+
+  (** Refer to {!get_slice_values}. *)
+  val get_bson_slice_values :
+    keyspace -> table ->
+    ?max_keys:int ->
+    string key_range -> column_name list ->
+    (key option * (key * decoded_data option list) list) Lwt.t
+
+  (** Refer to {!get_slice_values_with_timestamps}. *)
+  val get_bson_slice_values_with_timestamps :
+    keyspace -> table ->
+    ?max_keys:int ->
+    string key_range -> column_name list ->
+    (key option * (key * (decoded_data * Int64.t) option list) list) Lwt.t
+
+  (** Refer to {!get_columns}. *)
+  val get_bson_columns :
+    keyspace -> table ->
+    ?max_columns:int -> ?decode_timestamps:bool ->
+    key -> column_range ->
+    (column_name * (decoded_data column list)) option Lwt.t
+
+  (** Refer to {!get_column_values}. *)
+  val get_bson_column_values :
+    keyspace -> table ->
+    key -> column_name list ->
+    decoded_data option list Lwt.t
+
+  (** Refer to {!get_column}. *)
+  val get_bson_column :
+    keyspace -> table ->
+    key -> column_name -> (decoded_data * timestamp) option Lwt.t
+
+  (** {3 Write operations} *)
+
+  (** Refer to {!put_columns}. *)
+  val put_bson_columns :
+    keyspace -> table -> key -> decoded_data column list ->
+    unit Lwt.t
+
+  (** Refer to {!put_multi_columns}. *)
+  val put_multi_bson_columns :
+    keyspace -> table -> (key * decoded_data column list) list -> unit Lwt.t
 end
 
 module type BACKUP_SUPPORT =

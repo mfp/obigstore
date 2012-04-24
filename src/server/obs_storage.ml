@@ -2931,3 +2931,20 @@ let repeatable_read_transaction ks f =
 
 let get_property t property =
   Miniregion.use t.db (fun lldb -> return (L.get_property lldb property))
+
+module RAW =
+struct
+  type keyspace_ = keyspace
+  type keyspace = keyspace_
+  let get_slice = get_slice
+  let get_slice_values = get_slice_values
+  let get_slice_values_with_timestamps = get_slice_values_with_timestamps
+  let get_columns = get_columns
+  let get_column_values = get_column_values
+  let get_column = get_column
+  let put_columns = put_columns
+  let put_multi_columns = put_multi_columns
+end
+
+include (Obs_structured.Make(RAW) :
+           Obs_structured.STRUCTURED with type keyspace := keyspace)
