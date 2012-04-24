@@ -124,8 +124,8 @@ val validate_string : ?allowed:allowed_elements -> string -> unit
   * [Invalid_arg _] if the type is incorrect. *)
 module Browse :
 sig
-  val element : string -> document -> element
-  val opt_element : string -> document -> element option
+  val element : document -> string -> element
+  val opt_element : document -> string -> element option
 
   val int : element -> int
   val int64 : element -> Int64.t
