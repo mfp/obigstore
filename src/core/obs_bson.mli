@@ -120,3 +120,14 @@ val validate_document :
   * and exception if it doesn't validate. Refer to {!validate_document}. *)
 val validate_string : ?allowed:allowed_elements -> string -> unit
 
+(** Convenience functions to extract values. All these functions raise
+  * [Invalid_arg _] if the type is incorrect. *)
+module Browse :
+sig
+  val int : element -> int
+  val int64 : element -> Int64.t
+  val bytea : element -> string
+  val boolean : element -> bool
+  val timestamp : element -> Int64.t
+  val document : element -> document
+end

@@ -435,3 +435,32 @@ let validate_document ?(allowed = all_allowed) s off len =
 
 let validate_string ?allowed s =
   validate_document ?allowed s (ref 0) (String.length s)
+
+module Browse =
+struct
+  let invalid_arg x = invalid_arg ("Obs_bson.Browse." ^ x)
+
+  let int = function
+      Int32 n -> n
+    | _ -> invalid_arg "int"
+
+  let int64 = function
+      Int64 x -> x
+    | _ -> invalid_arg "int64"
+
+  let bytea = function
+      Binary (_, s) -> s
+    | _ -> invalid_arg "bytea"
+
+  let boolean = function
+      Boolean x -> x
+    | _ -> invalid_arg "boolean"
+
+  let timestamp = function
+      DateTime x | Timestamp x -> x
+    | _ -> invalid_arg "timestamp"
+
+  let document = function
+      Document x -> x
+    | _ -> invalid_arg "document"
+end
