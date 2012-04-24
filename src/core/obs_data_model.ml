@@ -208,7 +208,7 @@ sig
     (key option * (key * string option list) list) Lwt.t
 
   (** Similar to [get_slice_values], but returning the data and the
-    * timestamp in microsends since the beginning of the Unix epoch. *)
+    * timestamp in microseconds since the beginning of the Unix epoch. *)
   val get_slice_values_with_timestamps :
     keyspace -> table ->
     ?max_keys:int ->
