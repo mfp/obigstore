@@ -24,6 +24,10 @@ module Option = BatOption
 module List = struct include List include BatList end
 open DM
 
+type ('key, 'row) row_func =
+   [ `Raw of ('key, string) key_data -> 'row option
+   | `BSON of ('key, decoded_data) key_data -> 'row option ]
+
 module type TABLE_CONFIG =
 sig
   type 'key row
@@ -31,14 +35,14 @@ sig
   module Codec : Obs_key_encoding.CODEC_OPS
   val name : string
 
-  val row_of_key_data : (Codec.key, string) key_data -> Codec.key row option
+  val row_of_key_data : (Codec.key, Codec.key row) row_func
   val row_needs_timestamps : bool
 end
 
 module Trivial_row =
 struct
   type 'key row = ('key, string) key_data
-  let row_of_key_data d = Some d
+  let row_of_key_data = `Raw (fun d -> Some d)
   let row_needs_timestamps = true
 end
 
@@ -140,17 +144,44 @@ struct
                 (fun kd -> { kd with key = C.decode_string kd.key })
                 data)
 
-  let get_row ks key =
-    match_lwt get_slice ks ~decode_timestamps:M.row_needs_timestamps
-      (`Discrete [key]) `All
-    with
-        _, kd :: _ -> return (M.row_of_key_data kd)
-      | _ -> return None
+  let get_bson_slice ks ?max_keys ?max_columns ?decode_timestamps
+        key_range ?predicate col_range =
+    lwt k, data =
+      get_bson_slice ks table ?max_keys ?max_columns ?decode_timestamps
+        (inject_range key_range) ?predicate col_range
+    in
+      return (Option.map C.decode_string k,
+              List.map
+                (fun kd -> { kd with key = C.decode_string kd.key })
+                data)
 
-  let get_rows ks ?max_keys key_range =
-    lwt k, l = get_slice ks key_range ?max_keys
-                 ~decode_timestamps:M.row_needs_timestamps `All
-    in return (k, List.filter_map M.row_of_key_data l)
+  let get_row = match M.row_of_key_data with
+      `Raw f ->
+        (fun ks key ->
+           match_lwt get_slice ks ~decode_timestamps:M.row_needs_timestamps
+             (`Discrete [key]) `All
+           with
+               _, kd :: _ -> return (f kd)
+             | _ -> return None)
+    | `BSON f ->
+        (fun ks key ->
+           match_lwt get_bson_slice ks ~decode_timestamps:M.row_needs_timestamps
+             (`Discrete [key]) `All
+           with
+               _, kd :: _ -> return (f kd)
+             | _ -> return None)
+
+  let get_rows = match M.row_of_key_data with
+      `Raw f ->
+        (fun ks ?max_keys key_range ->
+           lwt k, l = get_slice ks key_range ?max_keys
+                        ~decode_timestamps:M.row_needs_timestamps `All
+           in return (k, List.filter_map f l))
+    | `BSON f ->
+        (fun ks ?max_keys key_range ->
+           lwt k, l = get_bson_slice ks key_range ?max_keys
+                        ~decode_timestamps:M.row_needs_timestamps `All
+           in return (k, List.filter_map f l))
 
   let get_slice_values ks ?max_keys key_range cols =
     lwt k, l =
@@ -180,6 +211,36 @@ struct
 
   let put_multi_columns ks l =
     put_multi_columns ks table
+      (List.map (fun (k, cols) -> (C.encode_to_string k, cols)) l)
+
+  let get_bson_slice_values ks ?max_keys key_range cols =
+    lwt k, l =
+      get_bson_slice_values ks table ?max_keys (inject_range key_range) cols
+    in
+      return (Option.map C.decode_string k,
+              List.map (fun (k, cols) -> C.decode_string k, cols) l)
+
+  let get_bson_slice_values_with_timestamps ks ?max_keys key_range cols =
+    lwt k, l =
+      get_bson_slice_values_with_timestamps ks table ?max_keys
+        (inject_range key_range) cols
+    in
+      return (Option.map C.decode_string k,
+              List.map (fun (k, cols) -> C.decode_string k, cols) l)
+
+  let get_bson_columns ks ?max_columns ?decode_timestamps key crange =
+    get_bson_columns ks table ?max_columns ?decode_timestamps
+      (C.encode_to_string key) crange
+
+  let get_bson_column_values ks key cols =
+    get_bson_column_values ks table (C.encode_to_string key) cols
+
+  let get_bson_column ks key col = get_bson_column ks table (C.encode_to_string key) col
+
+  let put_bson_columns ks key cols = put_bson_columns ks table (C.encode_to_string key) cols
+
+  let put_multi_bson_columns ks l =
+    put_multi_bson_columns ks table
       (List.map (fun (k, cols) -> (C.encode_to_string k, cols)) l)
 
   let delete_columns ks key cols =

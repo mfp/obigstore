@@ -19,6 +19,10 @@
 
 open Obs_data_model
 
+type ('key, 'row) row_func =
+   [ `Raw of ('key, string) key_data -> 'row option
+   | `BSON of ('key, decoded_data) key_data -> 'row option ]
+
 module type TABLE_CONFIG =
 sig
   type 'a row
@@ -26,7 +30,7 @@ sig
   module Codec : Obs_key_encoding.CODEC_OPS
 
   val name : string
-  val row_of_key_data : (Codec.key, string) key_data -> Codec.key row option
+  val row_of_key_data : (Codec.key, Codec.key row) row_func
   val row_needs_timestamps : bool
 end
 
@@ -35,7 +39,7 @@ end
 module Trivial_row :
 sig
   type 'a row = ('a, string) key_data
-  val row_of_key_data : 'a row -> 'a row option
+  val row_of_key_data : ('a, 'a row) row_func
 
   (** Set to [true] (safe default). *)
   val row_needs_timestamps : bool
@@ -193,6 +197,31 @@ sig
 
   val put_multi_columns :
     keyspace -> (key * string column list) list -> unit Lwt.t
+
+  val get_bson_slice_values :
+    keyspace -> ?max_keys:int -> key_range -> column_name list ->
+    (key option * (key * decoded_data option list) list) Lwt.t
+
+  val get_bson_slice_values_with_timestamps :
+    keyspace -> ?max_keys:int -> key_range -> column_name list ->
+    (key option * (key * (decoded_data * Int64.t) option list) list)
+    Lwt.t
+
+  val get_bson_columns :
+    keyspace -> ?max_columns:int -> ?decode_timestamps:bool ->
+    key -> column_range -> (column_name * decoded_data column list) option
+    Lwt.t
+
+  val get_bson_column_values :
+    keyspace -> key -> column_name list -> decoded_data option list Lwt.t
+
+  val get_bson_column :
+    keyspace -> key -> column_name -> (decoded_data * timestamp) option Lwt.t
+
+  val put_bson_columns : keyspace -> key -> decoded_data column list -> unit Lwt.t
+
+  val put_multi_bson_columns :
+    keyspace -> (key * decoded_data column list) list -> unit Lwt.t
 
   val delete_columns :
     keyspace -> key -> column_name list -> unit Lwt.t
