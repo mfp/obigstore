@@ -70,13 +70,16 @@ let encode_key_list table l =
   Key_range.Keys (List.map (parse_and_encode table) l)
 %}
 
-%token <string> ID
-%token <Big_int.big_int> INT
+%token <string> ID TRUE FALSE
+%token <Big_int.big_int * string> INT
+%token <Big_int.big_int * string > INT64
+%token <float * string > FLOAT
 %token <string> DIRECTIVE
 %token PRINTER LPAREN RPAREN PLUS MINUS
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
 %token LBRACKET RBRACKET COLON REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
+%token LBRACE RBRACE
 
 %start input printer
 %type <Obs_repl_common.req> input
@@ -234,7 +237,35 @@ bindings :
     binding                  { [ $1 ] }
   | bindings COMMA binding   { $1 @ [ $3 ] }
 
-binding: id COLON id            { ($1, $3) }
+binding: id COLON binding_value
+        { let data = match $3 with
+              `Data _ when $1 <> "" && $1.[0] = '@' ->
+                failwith
+                  (sprintf "Refusing to inject raw data into %s (use BSON obj)." $1)
+            | `Data s | `BSON s -> s
+          in ($1, data) }
+
+binding_value:
+    id                       { `Data $1 }
+  | LBRACE bson_bindings RBRACE
+                             { `BSON (Obs_bson.string_of_document $2) }
+
+bson_bindings:
+    bson_binding             { [ $1 ] }
+  | bson_bindings COMMA bson_binding  { $1 @ [ $3 ] }
+
+bson_binding:
+    id COLON bson_value    { ($1, $3) }
+
+bson_value:
+    FLOAT                  { Obs_bson.Double (fst $1) }
+  | INT                    { Obs_bson.Int32 (Big_int.int_of_big_int (fst $1)) }
+  | INT64                  { Obs_bson.Int64 (Big_int.int64_of_big_int (fst $1)) }
+  | TRUE                   { Obs_bson.Boolean true }
+  | FALSE                  { Obs_bson.Boolean false }
+  | ID                     { Obs_bson.Binary (Obs_bson.Generic, $1) }
+  | LBRACE bson_bindings RBRACE
+                           { Obs_bson.Document $2 }
 
 delete :
     DELETE table LBRACKET id RBRACKET LBRACKET id_list RBRACKET
@@ -366,7 +397,7 @@ simple_predicate :
 
 opt_cond :
     /* empty */  { None }
-  | COND INT     { Some (Big_int.int_of_big_int $2) }
+  | COND INT     { Some (Big_int.int_of_big_int (fst $2)) }
 
 id_list :
     id                { [$1] }
@@ -382,7 +413,11 @@ opt_redir :
 
 id :
     ID           { $1 }
-  | INT          { Big_int.string_of_big_int $1 }
+  | INT          { snd $1 }
+  | INT64        { snd $1 }
+  | FLOAT        { snd $1 }
+  | TRUE         { $1 }
+  | FALSE        { $1 }
 
 table:
     ID           { DM.table_of_string $1 }

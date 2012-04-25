@@ -89,6 +89,8 @@ rule token = parse
   | ']'            { RBRACKET }
   | '('            { LPAREN }
   | ')'            { RPAREN }
+  | '{'            { LBRACE }
+  | '}'            { RBRACE }
   | ','            { COMMA }
   | '<'            { LT }
   | "<="           { LE }
@@ -101,11 +103,17 @@ rule token = parse
                    { PRINTER }
   | '.' (['A'-'Z' 'a'-'z']+ as lxm)
                    { DIRECTIVE (String.lowercase lxm) }
-  | ['0'-'9']+ as lxm { INT(Big_int.big_int_of_string lxm) }
+  | (['0'-'9']+ as lxm) 'L' { INT64(Big_int.big_int_of_string lxm, lxm) }
+  | ['0'-'9']+ as lxm { INT(Big_int.big_int_of_string lxm, lxm) }
+  | ['0'-'9']+ '.' (['0'-'9']*) ('e' ['+' '-']? ['0'-'9']+)? as lxm { FLOAT (float_of_string lxm, lxm) }
   | ['A'-'Z' 'a'-'z' '0'-'9' '_' '.'] * as id
         { try
             Hashtbl.find keyword_table (String.lowercase id)
-          with Not_found -> ID id }
+          with Not_found ->
+            match String.lowercase id with
+                "true" -> TRUE id
+              | "false" -> FALSE id
+              | _ -> ID id }
   | '"' (("\\\\" | "\\" '"' | [^ '"'])* as lxm) '"'
         { ID (unescape_string lxm) }
   | "x\"" (['0'-'9' 'a'-'f' 'A'-'F']* as lxm) '"'

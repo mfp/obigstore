@@ -312,6 +312,8 @@ struct
      \n\
      PUT table[key][c1:\"v1\", c2:\"v2\"]
                            Put columns c1 and c2 into given key in table\n\
+     PUT table[key][\"@c1\": { int: 1, int64: 42L, float: 3.14, bool: true, data: \"foo\"}]
+                           Put structured column @c1 into given key in table\n\
 \n\
      DELETE table[key][col]     Delete column col for given key in table\n\
      DELETE table[key]          Delete all columns for given key in table\n\
