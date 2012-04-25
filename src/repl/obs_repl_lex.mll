@@ -50,13 +50,32 @@
  let () =
    List.iter (fun (k, v) -> Hashtbl.add keyword_table k v) keywords
 
-let unescape_string =
-  let lexer = Genlex.make_lexer [] in
-  (fun s ->
-     let tok_stream = lexer (Stream.of_string ("\"" ^ s ^ "\"")) in
-       match Stream.peek tok_stream with
-           Some (Genlex.String s) -> s
-         | _ -> assert false)
+let num_of_hexa_char = function
+    '0'..'9' as c -> Char.code c - Char.code '0'
+  | 'a'..'f' as c -> Char.code c - Char.code 'a' + 10
+  | x -> failwith "Invalid character"
+
+let unescape_string s =
+  let o = Obs_bytea.create 13 in
+  let rec proc_char n =
+    if n >= String.length s then Obs_bytea.contents o
+    else match s.[n] with
+        (* FIXME: index overflow *)
+        '\\' -> begin match s.[n+1] with
+              'x' -> Obs_bytea.add_byte o (num_of_hexa_char s.[n+2] lsl 8 lor
+                                           num_of_hexa_char s.[n+3]);
+                     proc_char (n + 4)
+            | 'n' -> Obs_bytea.add_byte o 10;
+                     proc_char (n + 2)
+            | x -> Obs_bytea.add_char o x;
+                   proc_char (n + 2)
+          end
+      | c -> Obs_bytea.add_char o c;
+             proc_char (n + 1)
+  in proc_char 0
+
+let binary_of_hex s = Cryptokit.(transform_string (Hexa.decode ()) s)
+
 }
 
 rule token = parse
@@ -90,7 +109,7 @@ rule token = parse
   | '"' (("\\\\" | "\\" '"' | [^ '"'])* as lxm) '"'
         { ID (unescape_string lxm) }
   | "x\"" (['0'-'9' 'a'-'f' 'A'-'F']* as lxm) '"'
-        { ID lxm (* FIXME hex to string *) }
+        { ID (binary_of_hex lxm) }
   | ';'            { EOF }
   | '#' [^'\n']*   { token lexbuf }
   | _              { token lexbuf }
