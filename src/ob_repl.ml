@@ -184,7 +184,7 @@ let rec pp_list pp fmt = function
                pp_list pp fmt tl
 
 let rec pp_bson ~strict fmt l =
-  Format.fprintf fmt "@,{ @[";
+  Format.fprintf fmt "{ @[";
   pp_list
     (fun fmt (k, v) ->
        Format.fprintf fmt "%a: %a" (pp_key ~strict) k (pp_bson_elm ~strict) v)
