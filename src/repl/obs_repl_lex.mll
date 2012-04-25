@@ -57,19 +57,21 @@ let num_of_hexa_char = function
 
 let unescape_string s =
   let o = Obs_bytea.create 13 in
+  let len = String.length s in
   let rec proc_char n =
     if n >= String.length s then Obs_bytea.contents o
     else match s.[n] with
-        (* FIXME: index overflow *)
-        '\\' -> begin match s.[n+1] with
-              'x' -> Obs_bytea.add_byte o (num_of_hexa_char s.[n+2] lsl 8 lor
-                                           num_of_hexa_char s.[n+3]);
-                     proc_char (n + 4)
-            | 'n' -> Obs_bytea.add_byte o 10;
-                     proc_char (n + 2)
-            | x -> Obs_bytea.add_char o x;
-                   proc_char (n + 2)
-          end
+        '\\' ->
+            if n + 1 >= len then failwith "invalid string literal";
+            begin match s.[n+1] with
+                'x' ->
+                  if n + 3 >= len then failwith "invalid string literal";
+                  Obs_bytea.add_byte o (num_of_hexa_char s.[n+2] lsl 8 lor
+                                        num_of_hexa_char s.[n+3]);
+                  proc_char (n + 4)
+              | 'n' -> Obs_bytea.add_byte o 10; proc_char (n + 2)
+              | x -> Obs_bytea.add_char o x; proc_char (n + 2)
+            end
       | c -> Obs_bytea.add_char o c;
              proc_char (n + 1)
   in proc_char 0
