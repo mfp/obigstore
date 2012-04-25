@@ -310,7 +310,7 @@ struct
                            whose y column is comprised between 'bar1' and
                            'bar9'.\n\
      \n\
-     PUT table[key][c1=\"v1\", c2=\"v2\"]
+     PUT table[key][c1:\"v1\", c2:\"v2\"]
                            Put columns c1 and c2 into given key in table\n\
 \n\
      DELETE table[key][col]     Delete column col for given key in table\n\

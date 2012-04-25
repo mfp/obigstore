@@ -83,7 +83,7 @@ rule token = parse
   | "&&"           { AND }
   | "||"           { OR }
   | "~"            { REVRANGE }
-  | ':'            { RANGE }
+  | ':'            { COLON }
   | '/'            { COND }
   | '['            { LBRACKET }
   | ']'            { RBRACKET }

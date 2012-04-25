@@ -76,7 +76,7 @@ let encode_key_list table l =
 %token PRINTER LPAREN RPAREN PLUS MINUS
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
-%token LBRACKET RBRACKET RANGE REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
+%token LBRACKET RBRACKET COLON REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 
 %start input printer
 %type <Obs_repl_common.req> input
@@ -147,9 +147,9 @@ size :
                             table = $2; range; }) }
 
 range_no_max :
-    LBRACKET opt_id RANGE opt_id RBRACKET
+    LBRACKET opt_id COLON opt_id RBRACKET
               { `Range { Range.first = $2; up_to = $4; reverse = false; } }
-  | LBRACKET LPAREN opt_enc_val RANGE opt_enc_val RPAREN RBRACKET
+  | LBRACKET LPAREN opt_enc_val COLON opt_enc_val RPAREN RBRACKET
               { `Enc_range { Range.first = $3; up_to = $5; reverse = false; } }
 
 count :
@@ -234,7 +234,7 @@ bindings :
     binding                  { [ $1 ] }
   | bindings COMMA binding   { $1 @ [ $3 ] }
 
-binding: id EQ id            { ($1, $3) }
+binding: id COLON id            { ($1, $3) }
 
 delete :
     DELETE table LBRACKET id RBRACKET LBRACKET id_list RBRACKET
@@ -290,7 +290,7 @@ multi_range :
 
 multi_range_elm :
     id           { `Elm $1 }
-  | opt_id RANGE opt_id
+  | opt_id COLON opt_id
                  { `Range { Range.first = $1; up_to = $3; reverse = false; } }
   | opt_id REVRANGE opt_id
                  { `Range { Range.first = $1; up_to = $3; reverse = true; } }
@@ -300,7 +300,7 @@ key_range :
   | enc_range    { $1 }
 
 range :
-  | LBRACKET opt_id RANGE opt_id opt_cond RBRACKET
+  | LBRACKET opt_id COLON opt_id opt_cond RBRACKET
                  { (`Range { Range.first = $2; up_to = $4; reverse = false; },
                          $5) }
   | LBRACKET opt_id REVRANGE opt_id opt_cond RBRACKET
@@ -313,7 +313,7 @@ range :
                  { (`List $2, $3) }
 
 enc_range:
-  | LBRACKET LPAREN opt_enc_val RANGE opt_enc_val RPAREN opt_cond RBRACKET
+  | LBRACKET LPAREN opt_enc_val COLON opt_enc_val RPAREN opt_cond RBRACKET
                  { (`Enc_range { Range.first = $3; up_to = $5; reverse = false; },
                          $7) }
   | LBRACKET LPAREN opt_enc_val REVRANGE opt_enc_val RPAREN opt_cond RBRACKET
