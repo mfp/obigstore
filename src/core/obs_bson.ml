@@ -472,4 +472,5 @@ end
 module Build =
 struct
   let generic_binary x = Binary (Generic, x)
+  let bytea = generic_binary
 end

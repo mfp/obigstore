@@ -138,4 +138,7 @@ end
 module Build :
 sig
   val generic_binary : string -> element
+
+  (** Synonym for {!generic_binary}. *)
+  val bytea : string -> element
 end
