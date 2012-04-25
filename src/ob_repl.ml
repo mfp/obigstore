@@ -176,13 +176,47 @@ let pp_key ~strict fmt = function
               else pp_escaped fmt s
           | _ -> pp_escaped fmt s
 
-let rec pp_cols ~strict fmt = function
+let rec pp_list pp fmt = function
     [] -> ()
-  | [ { name; data } ] -> Format.fprintf fmt "%a: %a"
-                            (pp_key ~strict) name (pp_datum ~strict) data
-  | { name; data } :: tl ->
-      Format.fprintf fmt "%a: %a,@ " (pp_key ~strict) name (pp_datum ~strict) data;
-      pp_cols ~strict fmt tl
+  | x :: [] -> pp fmt x
+  | x :: tl -> pp fmt x;
+               Format.fprintf fmt ",@ ";
+               pp_list pp fmt tl
+
+let rec pp_bson ~strict fmt l =
+  Format.fprintf fmt "@,{ @[";
+  pp_list
+    (fun fmt (k, v) ->
+       Format.fprintf fmt "%a: %a" (pp_key ~strict) k (pp_bson_elm ~strict) v)
+     fmt l;
+  Format.fprintf fmt " }@]"
+
+and pp_bson_elm ~strict fmt =
+  let open Obs_bson in
+  function
+    Double f -> Format.fprintf fmt "%f" f
+  | UTF8 s | ObjectId s | JavaScript s | JavaScriptScoped (s, _) | Symbol s ->
+      pp_datum ~strict fmt s
+  | Document l -> pp_bson ~strict fmt l
+  | Array l -> pp_list (pp_bson_elm ~strict) fmt l
+  | Binary (_, s) -> pp_datum ~strict fmt s
+  | Boolean x -> Format.fprintf fmt "%b" x
+  | Null -> Format.fprintf fmt "null"
+  | Regexp (re, opts) -> Format.fprintf fmt "/%s/%s" re opts
+  | Int32 n -> Format.fprintf fmt "%d" n
+  | Int64 n | DateTime n | Timestamp n -> Format.fprintf fmt "%Ld" n
+  | Minkey -> Format.fprintf fmt "__minkey__"
+  | Maxkey -> Format.fprintf fmt "__maxkey__"
+
+let pp_col ~strict fmt = function
+    Binary s | Malformed_BSON s -> pp_datum ~strict fmt s
+  | BSON x -> pp_bson ~strict fmt x
+
+let pp_cols ~strict fmt =
+  pp_list
+    (fun fmt {name; data; _} ->
+       Format.fprintf fmt "%a: %a" (pp_key ~strict) name (pp_col ~strict) data)
+    fmt
 
 let rec pp_lines f fmt = function
     [] -> ()
@@ -453,7 +487,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
   | Get_slice { Get_slice.table; max_keys; max_columns; key_range; column_range;
                 predicate; } ->
       lwt slice =
-        D.get_slice (get ks) table ?max_keys ?max_columns (krange' key_range)
+        D.get_bson_slice (get ks) table ?max_keys ?max_columns (krange' key_range)
           ?predicate (crange' column_range) in
       let nkeys = List.length (snd slice) in
       let ncols =
