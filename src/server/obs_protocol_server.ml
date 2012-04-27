@@ -155,10 +155,20 @@ struct
 
   let pp_slice fmt (lastkey, kds) =
     let open Obs_data_model in
+    let pp_data colname fmt data =
+      if colname = "" || colname.[0] <> '@' then
+        Format.fprintf fmt "%S" data
+      else
+        try
+          let doc = Obs_bson.document_of_string data in
+            Obs_bson.pp_bson ~strict:false fmt doc
+        with Obs_bson.Malformed _ ->
+          Format.fprintf fmt "%S" data in
+
     let pp_col fmt col =
       Format.fprintf fmt
-        "{ @[name: %S;@ data: %S;@ timestamp: %s@]}"
-        col.name col.data
+        "{ @[name: %S;@ data: %a;@ timestamp: %s@]}"
+        col.name (pp_data col.name) col.data
         (match col.timestamp with
              No_timestamp -> "auto"
            | Timestamp x -> Int64.to_string x) in
