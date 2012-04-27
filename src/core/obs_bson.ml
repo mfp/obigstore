@@ -474,3 +474,27 @@ struct
   let generic_binary x = Binary (Generic, x)
   let bytea = generic_binary
 end
+
+let rec pp_bson ~strict fmt l =
+  Format.fprintf fmt "{ @[";
+  Obs_pp.pp_list
+    (fun fmt (k, v) ->
+       Format.fprintf fmt "%a: %a"
+         (Obs_pp.pp_key ~strict) k (pp_bson_elm ~strict) v)
+     fmt l;
+  Format.fprintf fmt " }@]"
+
+and pp_bson_elm ~strict fmt = function
+    Double f -> Format.fprintf fmt "%f" f
+  | UTF8 s | ObjectId s | JavaScript s | JavaScriptScoped (s, _) | Symbol s ->
+      Obs_pp.pp_datum ~strict fmt s
+  | Document l -> pp_bson ~strict fmt l
+  | Array l -> Obs_pp.pp_list (pp_bson_elm ~strict) fmt l
+  | Binary (_, s) -> Obs_pp.pp_datum ~strict fmt s
+  | Boolean x -> Format.fprintf fmt "%b" x
+  | Null -> Format.fprintf fmt "null"
+  | Regexp (re, opts) -> Format.fprintf fmt "/%s/%s" re opts
+  | Int32 n -> Format.fprintf fmt "%d" n
+  | Int64 n | DateTime n | Timestamp n -> Format.fprintf fmt "%Ld" n
+  | Minkey -> Format.fprintf fmt "__minkey__"
+  | Maxkey -> Format.fprintf fmt "__maxkey__"

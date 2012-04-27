@@ -69,7 +69,18 @@ and object_id = string
 
 and millis_since_unix_epoch = Int64.t
 
-(** {2 Simplified (de)serialization} *)
+(** {2 Simple interface} *)
+
+(** [pp_bson_elm ~strict fmt] pretty-prints a BSON element to the [fmt]
+  * formatter. If [strict] is true, JSON-compliant syntax is used
+  * whenever possible. *)
+val pp_bson_elm : strict:bool -> Format.formatter -> element -> unit
+
+(** [pp_bson ~strict fmt] pretty-prints a BSON document to the [fmt]
+  * formatter. If [strict] is true, JSON-compliant syntax is used whenever
+  * possible. *)
+val pp_bson : strict:bool -> Format.formatter -> document -> unit
+
 val string_of_document : document -> string
 
 (** @raise Malformed if the string does not represent a valid BSON message. *)

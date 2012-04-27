@@ -105,117 +105,15 @@ let prompt () =
 let print_list f l =
   List.iter (fun x -> print_endline (f x)) l
 
-let is_id_char = function
-    'A'..'Z' | 'a'..'z' | '0'..'9' | '_' -> true
-    | _ -> false
-
-let char_is_id = function
-    'A'..'Z' | 'a'..'z' | '0'..'9' | '_' -> true
-  | _ -> false
-
-let char_is_num = function
-    '0'..'9' -> true
-  | _ -> false
-
-let all_chars_satisfy pred s =
-  let ok_so_far = ref true in
-  let i = ref 0 in
-  let len = String.length s in
-    while !ok_so_far && !i < len do
-      ok_so_far := pred (String.unsafe_get s !i);
-      incr i
-    done;
-    !ok_so_far
-
-external is_printable: char -> bool = "caml_is_printable"
-
-let hex_table =
-  Array.init 16 (fun n -> let s = Printf.sprintf "%X" n in s.[0])
-
-let escape_string s =
-  let len =
-    let n = ref 0 in
-      for i = 0 to String.length s - 1 do
-        n := !n + (match s.[i] with
-                       '\\' | '"' -> 2
-                     | c when is_printable c -> 1
-                     | _ -> 4);
-      done;
-      !n in
-  let ret = String.create len in
-  let n = ref 0 in
-    for i = 0 to String.length s - 1 do
-      match s.[i] with
-          '\\' | '"' as c -> ret.[!n] <- '\\';
-                             ret.[!n+1] <- c;
-                             n := !n + 2;
-        | c when is_printable c -> ret.[!n] <- c;
-                                   incr n
-        | c -> ret.[!n] <- '\\';
-               ret.[!n+1] <- 'x';
-               ret.[!n+2] <- hex_table.(Char.code c / 16);
-               ret.[!n+3] <- hex_table.(Char.code c land 0xF);
-               n := !n + 4
-    done;
-    ret
-
-let pp_escaped fmt s =
-  Format.fprintf fmt "\"%s\"" (escape_string s)
-
-let pp_datum ~strict fmt = function
-    "" -> Format.fprintf fmt "\"\""
-  | s when not strict && all_chars_satisfy char_is_num s -> Format.fprintf fmt "%s" s
-  | s -> pp_escaped fmt s
-
-let pp_key ~strict fmt = function
-    "" -> Format.fprintf fmt "\"\""
-  | s ->
-      match s.[0] with
-          'A'..'Z' | 'a'..'z' | '_' when not strict ->
-              if all_chars_satisfy char_is_id s then Format.fprintf fmt "%s" s
-              else pp_escaped fmt s
-          | _ -> pp_escaped fmt s
-
-let rec pp_list pp fmt = function
-    [] -> ()
-  | x :: [] -> pp fmt x
-  | x :: tl -> pp fmt x;
-               Format.fprintf fmt ",@ ";
-               pp_list pp fmt tl
-
-let rec pp_bson ~strict fmt l =
-  Format.fprintf fmt "{ @[";
-  pp_list
-    (fun fmt (k, v) ->
-       Format.fprintf fmt "%a: %a" (pp_key ~strict) k (pp_bson_elm ~strict) v)
-     fmt l;
-  Format.fprintf fmt " }@]"
-
-and pp_bson_elm ~strict fmt =
-  let open Obs_bson in
-  function
-    Double f -> Format.fprintf fmt "%f" f
-  | UTF8 s | ObjectId s | JavaScript s | JavaScriptScoped (s, _) | Symbol s ->
-      pp_datum ~strict fmt s
-  | Document l -> pp_bson ~strict fmt l
-  | Array l -> pp_list (pp_bson_elm ~strict) fmt l
-  | Binary (_, s) -> pp_datum ~strict fmt s
-  | Boolean x -> Format.fprintf fmt "%b" x
-  | Null -> Format.fprintf fmt "null"
-  | Regexp (re, opts) -> Format.fprintf fmt "/%s/%s" re opts
-  | Int32 n -> Format.fprintf fmt "%d" n
-  | Int64 n | DateTime n | Timestamp n -> Format.fprintf fmt "%Ld" n
-  | Minkey -> Format.fprintf fmt "__minkey__"
-  | Maxkey -> Format.fprintf fmt "__maxkey__"
-
 let pp_col ~strict fmt = function
-    Binary s | Malformed_BSON s -> pp_datum ~strict fmt s
-  | BSON x -> pp_bson ~strict fmt x
+    Binary s | Malformed_BSON s -> Obs_pp.pp_datum ~strict fmt s
+  | BSON x -> Obs_bson.pp_bson ~strict fmt x
 
 let pp_cols ~strict fmt =
-  pp_list
+  Obs_pp.pp_list
     (fun fmt {name; data; _} ->
-       Format.fprintf fmt "%a: %a" (pp_key ~strict) name (pp_col ~strict) data)
+       Format.fprintf fmt "%a: %a"
+         (Obs_pp.pp_key ~strict) name (pp_col ~strict) data)
     fmt
 
 let rec pp_lines f fmt = function
@@ -224,7 +122,7 @@ let rec pp_lines f fmt = function
       Format.fprintf fmt "%a@." f x;
       pp_lines f fmt tl
 
-let pprint_slice ~strict ?(pp_key = pp_key) fmt (last_key, key_data) =
+let pprint_slice ~strict ?(pp_key = Obs_pp.pp_key) fmt (last_key, key_data) =
   if fmt == Format.std_formatter then
     Format.printf "%s@." (String.make 78 '-');
   Format.fprintf fmt "{@\n";
@@ -253,9 +151,9 @@ let pretty_printer_of_codec c =
             * comment *)
            Format.fprintf fmt "@[<0>/* %s */@ %a@]"
              (C.pp (C.decode_string k))
-             (pp_key ~strict:true) k
+             (Obs_pp.pp_key ~strict:true) k
          end
-       with _ -> pp_key ~strict:true fmt k)
+       with _ -> Obs_pp.pp_key ~strict:true fmt k)
 
 module Directives =
 struct
@@ -479,7 +377,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       let pp_keys =
         try (fst (Hashtbl.find Obs_repl_common.key_codecs table))
-        with Not_found -> pp_datum
+        with Not_found -> Obs_pp.pp_datum
       in
         lwt keys = D.get_keys (get ks) table ?max_keys (krange' key_range) in
           Timing.cnt_keys := Int64.(add !Timing.cnt_keys (of_int (List.length keys)));
