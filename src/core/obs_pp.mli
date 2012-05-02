@@ -33,6 +33,8 @@ val pp_datum : strict:bool -> Format.formatter -> string -> unit
   * If [strict], write JSON-compliant output by base64-encoding the data. *)
 val pp_key : strict:bool -> Format.formatter -> string -> unit
 
-(** [pp_list pp fmt l] pretty-prints a list using [",@ "] as the delimiter. *)
+(** [pp_list ?delim pp fmt l] pretty-prints a list using [delim]
+  * (default [format_of_string ",@ "]) as the delimiter. *)
 val pp_list :
+  ?delim:(unit, Format.formatter, unit) format ->
   (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a list -> unit

@@ -126,12 +126,12 @@ let pprint_slice ~strict ?(pp_key = Obs_pp.pp_key) fmt (last_key, key_data) =
   if fmt == Format.std_formatter then
     Format.printf "%s@." (String.make 78 '-');
   Format.fprintf fmt "{@\n";
-  List.iter
-    (fun kd ->
-       Format.fprintf fmt " @[<2>%a:@\n{@[<1> %a },@]@]@\n@."
+  Obs_pp.pp_list ~delim:(format_of_string ",@\n@.")
+    (fun fmt kd ->
+       Format.fprintf fmt " @[<2>%a:@\n{@[<1> %a }@]@]"
          (pp_key ~strict) kd.key (pp_cols ~strict) kd.columns)
-    key_data;
-  Format.fprintf fmt "}@\n@.";
+    fmt key_data;
+  Format.fprintf fmt "@.}@.";
   if fmt == Format.std_formatter then
     Format.printf "%s@." (String.make 78 '-');
   Format.printf "Last key: %a@."

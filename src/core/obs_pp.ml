@@ -96,9 +96,9 @@ let pp_key ~strict fmt s =
                 else pp_escaped fmt s
             | _ -> pp_escaped fmt s
 
-let rec pp_list pp fmt = function
+let rec pp_list ?(delim=format_of_string ",@ ") pp fmt = function
     [] -> ()
   | x :: [] -> pp fmt x
   | x :: tl -> pp fmt x;
-               Format.fprintf fmt ",@ ";
-               pp_list pp fmt tl
+               Format.fprintf fmt delim;
+               pp_list ~delim pp fmt tl
