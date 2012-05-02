@@ -74,19 +74,27 @@ let escape_string s =
 let pp_escaped fmt s =
   Format.fprintf fmt "\"%s\"" (escape_string s)
 
+let pp_base64 fmt s =
+  Format.fprintf fmt "\"%s\""
+    Cryptokit.(transform_string (Base64.encode_compact ()) s)
+
 let pp_datum ~strict fmt = function
-    "" -> Format.fprintf fmt "\"\""
+    s when strict -> pp_base64 fmt s
+  | "" -> Format.fprintf fmt "\"\""
   | s when not strict && all_chars_satisfy char_is_num s -> Format.fprintf fmt "%s" s
   | s -> pp_escaped fmt s
 
-let pp_key ~strict fmt = function
-    "" -> Format.fprintf fmt "\"\""
-  | s ->
-      match s.[0] with
-          'A'..'Z' | 'a'..'z' | '_' when not strict ->
-              if all_chars_satisfy char_is_id s then Format.fprintf fmt "%s" s
-              else pp_escaped fmt s
-          | _ -> pp_escaped fmt s
+let pp_key ~strict fmt s =
+  if strict then pp_base64 fmt s
+  else
+    match s with
+      "" -> Format.fprintf fmt "\"\""
+    | s ->
+        match s.[0] with
+            'A'..'Z' | 'a'..'z' | '_' when not strict ->
+                if all_chars_satisfy char_is_id s then Format.fprintf fmt "%s" s
+                else pp_escaped fmt s
+            | _ -> pp_escaped fmt s
 
 let rec pp_list pp fmt = function
     [] -> ()

@@ -25,10 +25,12 @@ val escape_string : string -> string
 
 val pp_escaped : Format.formatter -> string -> unit
 
-(** Pretty-print a datum. Use JSON-compatible syntax if [strict]. *)
+(** Pretty-print a datum. If [strict], write JSON-compliant output by
+  * base64-encoding the data. *)
 val pp_datum : strict:bool -> Format.formatter -> string -> unit
 
-(** Pretty-print a key. Use JSON-compatible syntax if [strict]. *)
+(** Pretty-print a key.
+  * If [strict], write JSON-compliant output by base64-encoding the data. *)
 val pp_key : strict:bool -> Format.formatter -> string -> unit
 
 (** [pp_list pp fmt l] pretty-prints a list using [",@ "] as the delimiter. *)
