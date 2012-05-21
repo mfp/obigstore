@@ -58,7 +58,6 @@ struct
     type result
     val read_result : Lwt_io.input_channel -> result Lwt.t
     val wakeup : result Lwt.u
-    val is_notification_wait : bool
   end
 
   type ret = [`OK | `EXN of exn]
@@ -73,9 +72,7 @@ struct
     buf : Obs_bytea.t;
     mutex : Lwt_mutex.t;
     pending_reqs : (module PENDING_RESPONSE) H.t;
-    wait_for_pending_responses : ret Lwt_condition.t;
     async_req_id : string;
-    mutable num_notification_waiters : int;
     data_address : Unix.sockaddr;
   }
 
@@ -145,11 +142,6 @@ struct
                       H.remove t.pending_reqs request_id;
                       wakeup_exn_safe R.wakeup e
                 end;
-                if R.is_notification_wait then
-                  t.num_notification_waiters <- t.num_notification_waiters - 1;
-                (* signal that we no longer have any pending responses *)
-                if H.length t.pending_reqs - t.num_notification_waiters = 0 then
-                  Lwt_condition.broadcast t.wait_for_pending_responses `OK
 
               end else begin
                 (* wrong length *)
@@ -167,8 +159,6 @@ struct
         closed = false; closed_exn = Obs_protocol.Error Obs_protocol.Closed;
         mutex = Lwt_mutex.create (); pending_reqs = H.create 13;
         async_req_id = "\001\000\000\000\000\000\000\000";
-        wait_for_pending_responses = Lwt_condition.create ();
-        num_notification_waiters = 0;
         data_address;
       }
     in
@@ -179,7 +169,6 @@ struct
           send_exn_to_waiters t exn;
           t.closed_exn <- exn;
           close t;
-          Lwt_condition.broadcast t.wait_for_pending_responses (`EXN exn);
           return ()
       end;
       t
@@ -215,20 +204,14 @@ struct
   let async_request (type a) t req f =
     check_closed t >>
     let wait, wakeup = Lwt.task () in
-    let is_notification_wait = match req with
-        Await _ -> true
-      | _ -> false in
     let module R =
       struct
         type result = a
         let read_result = f
         let wakeup = wakeup
-        let is_notification_wait = is_notification_wait
       end in
     let request_id = new_async_req_id t in
       H.replace t.pending_reqs request_id (module R : PENDING_RESPONSE);
-      if is_notification_wait then
-        t.num_notification_waiters <- t.num_notification_waiters + 1;
       Lwt_mutex.with_lock t.mutex (fun () -> send_request t ~request_id req) >>
       wait
 
