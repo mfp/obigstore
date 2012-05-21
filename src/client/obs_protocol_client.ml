@@ -103,6 +103,8 @@ struct
       (byte s 4 lsl 32) lor (byte s 5 lsl 40) lor
       (byte s 6 lsl 48) lor (byte s 7 lsl 56)
 
+  type 'a result = OK of 'a | EXN of exn
+
   let rec get_response_loop t =
     lwt request_id, len, crc =
       match_lwt Obs_protocol.read_header t.ich with
@@ -123,18 +125,18 @@ struct
             lwt result =
               try_lwt
                 lwt x = R.read_result t.ich in
-                  return (`OK x)
-              with e -> return (`EXN e) in
+                  return (OK x)
+              with e -> return (EXN e) in
             let pos2 = Lwt_io.position t.ich in
             lwt crc2 = read_exactly t.ich 4 in
             let len' = Int64.(to_int (sub pos2 pos)) in
               if len' = len then begin
                 begin match result with
-                    `OK x ->
+                    OK x ->
                       (* FIXME: should check CRC2 = CRC(payload) XOR CRC1 *)
                       H.remove t.pending_reqs request_id;
                       wakeup_safe R.wakeup x
-                  | `EXN e ->
+                  | EXN e ->
                       H.remove t.pending_reqs request_id;
                       wakeup_exn_safe R.wakeup e
                 end;
@@ -201,7 +203,7 @@ struct
 
   let async_request (type a) t req f =
     check_closed t >>
-    let wait, wakeup = Lwt.task () in
+    let wait, wakeup = Lwt.wait () in
     let module R =
       struct
         type result = a
