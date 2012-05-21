@@ -28,26 +28,14 @@ module Option = BatOption
 
 module Make(P : Obs_protocol.PAYLOAD) =
 struct
-  let byte s n = Char.code s.[n]
-
   module H =
     Hashtbl.Make(struct
-                   type t = string
+                   type t = int
+                   let equal s1 s2 = s1 == s2
 
-                   let equal s1 s2 =
-                     let len1 = String.length s1 in
-                     let len2 = String.length s2 in
-                       len1 = len2 && Obs_string_util.strneq s1 0 s2 0 len1
-
-                   let hash s =
-                     (byte s 0 lsl 0) lor
-                     (byte s 1 lsl 4) lor
-                     (byte s 2 lsl 8) lor
-                     (byte s 3 lsl 12) lor
-                     (byte s 4 lsl 16) lor
-                     (byte s 5 lsl 20) lor
-                     (byte s 6 lsl 24) lor
-                     (byte s 7 lsl 30)
+                   let hash x =
+                     (* id += 2 on each req, so divide by 2 to cover all buckets *)
+                     (x lsr 1)
                  end)
 
   type payload_size = int
@@ -108,6 +96,13 @@ struct
       Lwt_io.read_into_exactly ich s 0 n >>
       return s
 
+  let numeric_id_of_string_request_id s =
+    let byte s n = Char.code (String.unsafe_get s n) in
+      byte s 0 lor (byte s 1 lsl 8) lor
+      (byte s 2 lsl 16) lor (byte s 3 lsl 24) lor
+      (byte s 4 lsl 32) lor (byte s 5 lsl 40) lor
+      (byte s 6 lsl 48) lor (byte s 7 lsl 56)
+
   let rec get_response_loop t =
     lwt request_id, len, crc =
       match_lwt Obs_protocol.read_header t.ich with
@@ -115,6 +110,7 @@ struct
         | Obs_protocol.Corrupted_header ->
             raise_lwt (Obs_protocol.Error Obs_protocol.Corrupted_frame) in
     let pos = Lwt_io.position t.ich in
+    let request_id = numeric_id_of_string_request_id request_id in
     let receiver = try_find t.pending_reqs request_id in
       match receiver with
           None ->
@@ -157,7 +153,7 @@ struct
     let t =
       { ich; och; buf = Obs_bytea.create 64;
         closed = false; closed_exn = Obs_protocol.Error Obs_protocol.Closed;
-        mutex = Lwt_mutex.create (); pending_reqs = H.create 13;
+        mutex = Lwt_mutex.create (); pending_reqs = H.create 61;
         async_req_id = "\001\000\000\000\000\000\000\000";
         data_address;
       }
@@ -177,29 +173,31 @@ struct
     if t.closed then raise_lwt t.closed_exn
     else return ()
 
+  let req_id_buf = String.make 8 '\x00'
+
   let send_request t ~request_id req =
     Obs_bytea.clear t.buf;
     Obs_bytea.add_int32_le t.buf
       (Obs_protocol_payload.Obs_request_serialization.format_id `Extprot);
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
-    Obs_protocol.write_msg t.och request_id t.buf
+    for i = 0 to 7 do
+      String.unsafe_set req_id_buf i
+        (Char.unsafe_chr ((request_id lsr (8 * i) land 0xFF)))
+    done;
+    Obs_protocol.write_msg t.och req_id_buf t.buf
 
-  let incr_async_req_id t =
-    let rec loop_incr s n =
-      if n >= String.length s then begin
-        for i = 1 to String.length s - 1 do
-          s.[i] <- '\000';
-        done;
-        s.[0] <- '\001';
-      end else begin match byte s n with
-        | m when m <> 255 -> s.[n] <- Char.unsafe_chr (m+1)
-        | _ (* 255 *) -> s.[n] <- '\000'; loop_incr s (n+1)
-      end
-    in loop_incr t.async_req_id 0
+  let await_req_id_cnt = ref 1
+  let req_id_cnt = ref 2
 
-  let new_async_req_id t =
-    incr_async_req_id t;
-    String.copy t.async_req_id
+  (* Await requests can block indefinitely, i.e. potentially long enough for
+   * more than 2**31 requests to be generated, which would lead to a req id
+   * collision on 32-bit platforms (same with 2**63 on 64-bit). So we use two
+   * different id spaces: await requests always get odd ids, and the remaining
+   * ones are even.
+   * *)
+  let new_async_req_id = function
+      Await _ -> await_req_id_cnt := !await_req_id_cnt + 2; !await_req_id_cnt
+    | _ -> req_id_cnt := !req_id_cnt + 2; !req_id_cnt
 
   let async_request (type a) t req f =
     check_closed t >>
@@ -210,8 +208,8 @@ struct
         let read_result = f
         let wakeup = wakeup
       end in
-    let request_id = new_async_req_id t in
-      H.replace t.pending_reqs request_id (module R : PENDING_RESPONSE);
+    let request_id = new_async_req_id req in
+      H.add t.pending_reqs request_id (module R : PENDING_RESPONSE);
       Lwt_mutex.with_lock t.mutex (fun () -> send_request t ~request_id req) >>
       wait
 
