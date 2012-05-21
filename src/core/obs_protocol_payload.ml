@@ -112,16 +112,18 @@ struct
     f buf x;
     Obs_protocol.write_msg och request_id buf
 
+  let raise_error_status = let open Obs_protocol in function
+      -1 -> raise_lwt (Error Bad_request)
+    | -2 -> raise_lwt (Error Unknown_keyspace)
+    | -3 -> raise_lwt (Error Unknown_serialization)
+    | -4 -> raise_lwt (Error Internal_error)
+    | -5 -> raise_lwt (Error Deadlock)
+    | n -> raise_lwt (Error (Other n))
+
   let reader f ich =
-    let open Obs_protocol in
     match_lwt D.get_status ich with
         0 -> f ich
-      | -1 -> raise_lwt (Error Bad_request)
-      | -2 -> raise_lwt (Error Unknown_keyspace)
-      | -3 -> raise_lwt (Error Unknown_serialization)
-      | -4 -> raise_lwt (Error Internal_error)
-      | -5 -> raise_lwt (Error Deadlock)
-      | n -> raise_lwt (Error (Other n))
+      | n -> raise_error_status n
 
   let bad_request =
     writer (fun b () -> E.add_status b (-1))
@@ -308,7 +310,8 @@ struct
 
   let return_ok = writer (fun b () -> E.add_status b 0)
 
-  let read_ok = reader (fun ich -> return ())
+  let read_ok ich =
+    match_lwt D.get_status ich with 0 -> return () | n -> raise_error_status n
 
   let add_backup_dump =
     E.add_tuple2 E.add_string (E.add_option E.add_string)
