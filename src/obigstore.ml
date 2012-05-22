@@ -34,6 +34,7 @@ let assume_page_fault = ref false
 let unsafe_mode = ref false
 let replication_wait = ref Obs_protocol_server.Await_commit
 let max_concurrency = ref 5000
+let engine = ref "default"
 
 let set_await_recv () =
   replication_wait := Obs_protocol_server.Await_commit
@@ -55,7 +56,8 @@ let params =
       "-await-recv", Arg.Unit set_await_recv,
         " Await mere reception (not commit) from replicas.";
       "-max-concurrency", Arg.Set_int max_concurrency,
-        "N Allow at most N simultaneous requests (default: 5000)"
+        "N Allow at most N simultaneous requests (default: 5000)";
+      "-engine", Arg.Set_string engine, "select|ev Use specified event loop engine."
     ]
 
 let usage_message = "Usage: obigstore [options] [database dir]"
@@ -137,6 +139,12 @@ let () =
         None -> Arg.usage params usage_message;
                 exit 1
       | Some dir ->
+          begin match !engine with
+              "default" -> ()
+            | "ev" -> Lwt_engine.set (new Lwt_engine.libev)
+            | "select" -> Lwt_engine.set (new Lwt_engine.select)
+            | _ -> Arg.usage params usage_message; exit 1
+          end;
           match !master with
               None ->
                 let db = open_db dir in
