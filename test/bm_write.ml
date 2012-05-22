@@ -27,6 +27,8 @@ module String = struct include String include BatString end
 
 module C = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
 
+type mode = Normal | Random of int * int | Seq of int
+
 let server = ref "127.0.0.1"
 let port = ref 12050
 let keyspace = ref "obs-benchmark"
@@ -37,6 +39,19 @@ let columns = ref 1
 let rate = ref None
 let period = ref None
 let report_latencies = ref false
+
+let mode = ref Normal
+
+let show_usage_and_exit = ref (fun () -> exit 1)
+
+let set_rand_mode s =
+  try
+    let n, m = String.split s ":" in
+    let n = int_of_string n in
+    let m = int_of_string m in
+      mode := Random (n, m)
+  with Not_found | Failure _ ->
+      !show_usage_and_exit ()
 
 let params = Arg.align
   [
@@ -50,6 +65,10 @@ let params = Arg.align
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
+   "-dummy-rand", Arg.String set_rand_mode,
+     "N:M Write N random keys in range 1..M with 32-byte non-random values.";
+   "-dummy-seq", Arg.Int (fun n -> mode := Seq n),
+     "N Write N sequential keys with 32-byte non-random values.";
    "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
    "-period", Arg.Float (fun p -> period := Some p),
      "FLOAT Report stats every FLOAT seconds.";
@@ -238,7 +257,47 @@ module Throttle = Lwt_throttle.Make(struct
                                       let equal = (==)
                                     end)
 
+let zero_pad n s =
+  String.make (n - String.length s) '0' ^ s
+
+let perform_writes ks =
+  match !mode with
+      Normal ->
+        if !columns > 1 && !multi > 1 then write_complex_values_multi ks
+        else if !columns > 1 then write_complex_values ks
+        else if !multi > 1 then write_values_multi ks
+        else write_values ks
+    | mode ->
+        let v = String.make 32 '0' in
+        let i = ref 0 in
+        let mk_datum = match mode with
+            Normal -> assert false
+          | Seq n ->
+              (fun _ ->
+                 incr i;
+                 if !i > n then raise End_of_file;
+                 let k = zero_pad 16 (string_of_int !i) in
+                   (k, [mk_col ~name:"v" v]))
+          | Random (n, m) ->
+              (fun _ ->
+                 incr i;
+                 if !i > n then raise End_of_file;
+                 let k = zero_pad 16 (string_of_int (Random.int m)) in
+                   (k, [mk_col ~name:"v" v]))
+        in
+          if !multi > 1 then
+            write_aux
+              (fun () -> return (List.init !multi mk_datum))
+              C.put_multi_columns List.length ks
+          else
+            write_aux
+              (fun () -> return (mk_datum 0))
+              (fun ks table (k, cols) -> C.put_columns ks table k cols)
+              (fun (k, cols) -> 1)
+              ks
+
 let () =
+  show_usage_and_exit := (fun () -> Arg.usage params usage_message; exit 1);
   Arg.parse params ignore usage_message;
   Lwt_unix.run begin
     let address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
@@ -271,17 +330,8 @@ let () =
             let wait () = Throttle.wait limiter 0 in
               rate_limiter := wait;
       end;
-      begin if !columns > 1 && !multi > 1 then begin
-        concurrency := min !concurrency 256;
-        write_complex_values_multi ks
-      end else if !columns > 1 then
-        write_complex_values ks
-      else if !multi > 1 then begin
-        concurrency := min !concurrency 256;
-        write_values_multi ks
-      end else
-        write_values ks
-      end >>
+      if !multi > 1 then concurrency := min !concurrency 256;
+      perform_writes ks >>
       lwt () = wait_until_finished () in
         report ~force:true ();
         return ()
