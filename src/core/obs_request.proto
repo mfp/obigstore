@@ -152,5 +152,7 @@ message request =
   | Raw_dump_file_digest { id : raw_dump_id; file : string; }
   | Release_keyspace { keyspace : keyspace }
   | Get_property { property : string }
+  | Watch_keys { keyspace : keyspace; table : table; keys : [key] }
+  | Watch_columns { keyspace : keyspace; table : table; columns : [(key * [column_name])] }
 
 (* vim:set ft=omlet: *) 

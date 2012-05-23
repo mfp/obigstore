@@ -374,6 +374,9 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
   | Abort _ -> raise_lwt Abort_exn
   | Commit _ -> raise_lwt Commit_exn
   | Lock { Lock.names; shared; _ } -> D.lock (get ks) ~shared names >>= ret_nothing
+  | Watch_keys { Watch_keys.table; keys; } -> D.watch_keys (get ks) table keys >>= ret_nothing
+  | Watch_columns { Watch_columns.table; columns; } ->
+      D.watch_columns (get ks) table columns >>= ret_nothing
   | Get_keys { Get_keys.table; max_keys; key_range; _ } ->
       let pp_keys =
         try (fst (Hashtbl.find Obs_repl_common.key_codecs table))

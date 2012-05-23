@@ -269,7 +269,9 @@ struct
     | Unlisten { Unlisten.keyspace; _ }
     | Notify { Notify.keyspace; _ }
     | Await { Await.keyspace; _ }
-    | Release_keyspace { Release_keyspace.keyspace; _ } as r ->
+    | Release_keyspace { Release_keyspace.keyspace; _ }
+    | Watch_keys { Watch_keys.keyspace; _ }
+    | Watch_columns { Watch_columns.keyspace; _ } as r ->
         begin try
           let handlers = snd (H.find c.keyspaces (ks_id_of_int keyspace)) in
             if Stack.is_empty handlers then
@@ -382,6 +384,16 @@ struct
              with Error Deadlock ->
                P.deadlock ?buf c.och ~request_id () >>
                raise_lwt (Abort_exn request_id))
+    | Watch_keys { Watch_keys.keyspace; table; keys } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _) ->
+             D.watch_keys ks.ks_ks table keys >>
+             P.return_ok ?buf c.och ~request_id ())
+    | Watch_columns { Watch_columns.keyspace; table; columns; } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _) ->
+             D.watch_columns ks.ks_ks table columns; >>
+             P.return_ok ?buf c.och ~request_id ())
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_keyspace c keyspace ~request_id
           (fun (ks, _) -> D.get_keys ks.ks_ks table ?max_keys (krange' key_range) >>=
@@ -514,8 +526,8 @@ struct
   and respond_to_begin ?buf c (ks, handlers) ~request_id tx_type =
     let transaction_f = match tx_type with
         Tx_type.Repeatable_read -> D.repeatable_read_transaction
-      | Tx_type.Read_committed -> D.read_committed_transaction
-    in
+      | Tx_type.Read_committed -> D.read_committed_transaction in
+    let commit_request_id = ref "" in
       try_lwt
         (* we get the request_id from the request that forced the commit
          * (carried by Commit_exn) *)
@@ -541,7 +553,9 @@ struct
                           return ()
                       end;
                       handle_reqs ()
-                  | Some (Exception (Commit_exn req_id)) -> return req_id
+                  | Some (Exception (Commit_exn req_id)) ->
+                      commit_request_id := req_id;
+                      return req_id
                   | Some (Exception e) -> raise_lwt e
                   | None -> fail (Failure "TX request stream canceled")
               in handle_reqs ()
@@ -550,7 +564,9 @@ struct
                 return ()
           end
         in P.return_ok ?buf c.och ~request_id:commit_reqid ()
-      with Abort_exn request_id -> P.return_ok ?buf c.och ~request_id ()
+      with
+          | Abort_exn request_id -> P.return_ok ?buf c.och ~request_id ()
+          | Obs_data_model.Dirty_data -> P.dirty_data ?buf c.och ~request_id:!commit_request_id ()
 
   and with_keyspace c ks_idx ~request_id f =
     try

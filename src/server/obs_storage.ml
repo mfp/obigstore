@@ -452,7 +452,60 @@ type subscription_descriptor = { subs_ks : keyspace_name; subs_topic : topic }
 type subs_stream = string Lwt_stream.t * (string option -> unit)
 type mutable_string_set = (string, unit) Hashtbl.t
 
+module DIRTY_FLAG : sig
+  type t
+
+  val make : unit -> t
+  val hash : t -> int
+  val equal : t -> t -> bool
+  val set : t -> unit
+  val is_set : t -> bool
+end =
+struct
+  type t = { id : int; mutable set : bool; }
+
+  let new_id = let n = ref 0 in (fun () -> incr n; !n)
+
+  let make () = { id = new_id (); set = false }
+
+  let hash t = t.id (* TODO: use integer hash function? *)
+  let equal t1 t2 = t1.id = t2.id
+
+  let set t = t.set <- true
+  let is_set t = t.set
+end
+
+module DIRTY_FLAGS =
+struct
+  module W = Weak.Make(DIRTY_FLAG)
+  type t = { mutable nelms : int; set : W.t; decr_counter : DIRTY_FLAG.t -> unit; }
+
+  let create n =
+    let rec t = { nelms = 0; set = W.create n; decr_counter; }
+    and decr_counter _ = t.nelms <- t.nelms - 1
+    in t
+
+  let add t x =
+    if not (W.mem t.set x) then begin
+      t.nelms <- t.nelms + 1;
+      Gc.finalise t.decr_counter x;
+      W.add t.set x
+    end
+
+  let remove t x =
+    if W.mem t.set x then begin
+      t.nelms <- t.nelms - 1;
+      W.remove t.set x
+    end
+
+  let iter f t = W.iter f t.set
+
+  let is_empty t = t.nelms = 0
+end
+
 module rec TYPES : sig
+  type table_idx = int
+
   type db =
       {
         basedir : string;
@@ -489,6 +542,7 @@ module rec TYPES : sig
       ks_tx_key : transaction Lwt.key;
       ks_subs_stream : subs_stream;
       ks_subscriptions : mutable_string_set;
+      ks_watches : (table_idx * key, DIRTY_FLAGS.t * (column_name, DIRTY_FLAGS.t) Hashtbl.t) Hashtbl.t;
     }
 
   and keyspace_proto = Proto of keyspace
@@ -509,6 +563,7 @@ module rec TYPES : sig
         mutable tx_locks : Obs_shared_mutex.t M.t;
         dump_buffer : Obs_bytea.t;
         mutable tx_notifications : string Notif_queue.t;
+        mutable tainted : DIRTY_FLAG.t option;
       }
 end = TYPES
 
@@ -563,6 +618,7 @@ let read_keyspaces db lldb =
                  Hashtbl.add h keyspace_name
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
                      ks_unique_id; ks_tx_key; ks_subs_stream; ks_subscriptions;
+                     ks_watches = Hashtbl.create 13;
                    };
                  true)
       lldb
@@ -723,6 +779,7 @@ let clone_keyspace (Proto proto) =
       ks_tx_key = Lwt.new_key ();
       ks_subs_stream = Lwt_stream.create ();
       ks_subscriptions = Hashtbl.create 13;
+      ks_watches = proto.ks_watches;
     }
   in Gc.finalise terminate_keyspace_subs ks;
      ks
@@ -754,6 +811,7 @@ let register_keyspace t ks_name =
           ks_tx_key = Lwt.new_key ();
           ks_subs_stream = Lwt_stream.create ();
           ks_subscriptions = Hashtbl.create 13;
+          ks_watches = Hashtbl.create 13;
         } in
     let new_ks = clone_keyspace proto in
       WKS.add (get_keyspace_set t ks_name proto) new_ks;
@@ -895,6 +953,26 @@ let register_new_table_and_add_to_writebatch' =
        WRITEBATCH.put wb k v;
        WRITEBATCH.need_keyspace_reload wb)
 
+let find_col_watches ks table key =
+  (* fast path for common case: no watches *)
+  match Hashtbl.length ks.ks_watches with
+      0 -> None
+    | _ ->
+      try
+        let s, col_watches = Hashtbl.find ks.ks_watches (table, key) in
+          DIRTY_FLAGS.iter DIRTY_FLAG.set s;
+          if Hashtbl.length col_watches > 0 then Some col_watches
+          else None
+      with Not_found -> None
+
+let set_dirty_flags col_watches column =
+  match col_watches with
+      None -> ()
+    | Some col_watches ->
+        try
+          DIRTY_FLAGS.iter DIRTY_FLAG.set (Hashtbl.find col_watches column)
+        with Not_found -> ()
+
 let rec transaction_aux with_iter_pool ks f =
   match Lwt.get ks.ks_tx_key with
     | None ->
@@ -908,6 +986,7 @@ let rec transaction_aux with_iter_pool ks f =
               outermost_tx = tx; tx_locks = M.empty;
               dump_buffer = Obs_bytea.create 16;
               tx_notifications = Notif_queue.empty;
+              tainted = None;
             } in
           try_lwt
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
@@ -968,23 +1047,29 @@ and commit_outermost_transaction ks tx =
 
     let wait_sync =
       WRITEBATCH.perform tx.ks.ks_db.writebatch begin fun b ->
+        begin match tx.tainted with
+            None -> ()
+          | Some flag -> if DIRTY_FLAG.is_set flag then raise Dirty_data
+        end;
         TM.iter
           (fun table m ->
              match find_maybe ks.ks_tables table with
                  Some table ->
                    M.iter
                      (fun key s ->
-                        S.iter
-                          (fun column ->
-                             Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
-                               ~table ~key ~column ~timestamp;
-                             let len = Obs_bytea.length datum_key in
-                               incr cols_written;
-                               bytes_written := !bytes_written + len;
-                               WRITEBATCH.delete_substring b
-                                 (Obs_bytea.unsafe_string datum_key) 0
-                                 len)
-                          s)
+                        let col_watches = find_col_watches ks table key in
+                          S.iter
+                            (fun column ->
+                               set_dirty_flags col_watches column;
+                               Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
+                                 ~table ~key ~column ~timestamp;
+                               let len = Obs_bytea.length datum_key in
+                                 incr cols_written;
+                                 bytes_written := !bytes_written + len;
+                                 WRITEBATCH.delete_substring b
+                                   (Obs_bytea.unsafe_string datum_key) 0
+                                   len)
+                            s)
                      m
                | None -> (* unknown table *) ())
           tx.deleted;
@@ -997,21 +1082,23 @@ and commit_outermost_transaction ks tx =
                    register_new_table_and_add_to_writebatch' ks b table
              in M.iter
                (fun key m ->
-                  M.iter
-                    (fun column c ->
-                       Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
-                         ~table ~key ~column
-                         ~timestamp:(match c.timestamp with
-                                         No_timestamp -> timestamp
-                                       | Timestamp x -> x);
-                       let klen = Obs_bytea.length datum_key in
-                       let vlen = String.length c.data in
-                         incr cols_written;
-                         bytes_written := !bytes_written + klen + vlen;
-                         WRITEBATCH.put_substring b
-                           (Obs_bytea.unsafe_string datum_key) 0 klen
-                           c.data 0 vlen)
-                    m)
+                  let col_watches = find_col_watches ks table key in
+                    M.iter
+                      (fun column c ->
+                         set_dirty_flags col_watches column;
+                         Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
+                           ~table ~key ~column
+                           ~timestamp:(match c.timestamp with
+                                           No_timestamp -> timestamp
+                                         | Timestamp x -> x);
+                         let klen = Obs_bytea.length datum_key in
+                         let vlen = String.length c.data in
+                           incr cols_written;
+                           bytes_written := !bytes_written + klen + vlen;
+                           WRITEBATCH.put_substring b
+                             (Obs_bytea.unsafe_string datum_key) 0 klen
+                             c.data 0 vlen)
+                      m)
                m)
           tx.added;
       end in
@@ -1082,6 +1169,91 @@ let lock_one ks ~shared name =
           Obs_shared_mutex.lock ~shared mutex
 
 let lock ks ~shared names = Lwt_list.iter_s (lock_one ks ~shared) names
+
+let remove_watch_if_empty watches table key flag =
+  try
+    let k = (table, key) in
+    let flags, col_watches = Hashtbl.find watches k in
+      DIRTY_FLAGS.remove flags flag;
+      if DIRTY_FLAGS.is_empty flags && Hashtbl.length col_watches = 0 then
+        Hashtbl.remove watches k
+  with Not_found -> ()
+
+let setup_flag_key_cleanup watches table key flag =
+  Gc.finalise (remove_watch_if_empty watches table key) flag
+
+let remove_col_watch_if_empty watches table key column flag =
+  try
+    let k = (table, key) in
+    let _, col_watches = Hashtbl.find watches k in
+      begin try
+        let flags = Hashtbl.find col_watches column in
+          DIRTY_FLAGS.remove flags flag;
+          if DIRTY_FLAGS.is_empty flags then Hashtbl.remove col_watches column;
+      with Not_found -> ()
+      end;
+      remove_watch_if_empty watches table key flag;
+  with Not_found -> ()
+
+let setup_flag_column_cleanup watches table key column flag =
+  Gc.finalise (remove_col_watch_if_empty watches table key column) flag
+
+let get_tainted_flag tx =
+  match tx.tainted with
+      Some w -> w
+    | None -> let x = DIRTY_FLAG.make () in
+                tx.tainted <- Some x;
+                x
+
+let watch_key tx table key =
+  match find_maybe tx.ks.ks_tables table with
+      None -> ()
+    | Some table ->
+        let flag = get_tainted_flag tx in
+        let flags, _ =
+          try
+            Hashtbl.find tx.ks.ks_watches (table, key)
+          with Not_found ->
+            let x = (DIRTY_FLAGS.create 2, Hashtbl.create 2) in
+              Hashtbl.add tx.ks.ks_watches (table, key) x;
+              x
+        in DIRTY_FLAGS.add flags flag;
+           setup_flag_key_cleanup tx.ks.ks_watches table key flag
+
+let watch_keys ks table keys =
+  match Lwt.get ks.ks_tx_key with
+      None -> return ()
+    | Some tx -> List.iter (watch_key tx table) keys; return ()
+
+let watch_column tx table key column =
+  match find_maybe tx.ks.ks_tables table with
+      None -> ()
+    | Some table ->
+        let flag = get_tainted_flag tx in
+        let _, col_watches =
+          try
+            Hashtbl.find tx.ks.ks_watches (table, key)
+          with Not_found ->
+            let x = (DIRTY_FLAGS.create 2, Hashtbl.create 2) in
+              Hashtbl.add tx.ks.ks_watches (table, key) x;
+              x in
+        let flags =
+          try
+            Hashtbl.find col_watches column
+          with Not_found ->
+            let x = DIRTY_FLAGS.create 2 in
+              Hashtbl.add col_watches column x;
+              x
+        in
+          DIRTY_FLAGS.add flags flag;
+          setup_flag_column_cleanup tx.ks.ks_watches table key column flag
+
+let watch_columns ks table l =
+  match Lwt.get ks.ks_tx_key with
+      None -> return ()
+    | Some tx ->
+        List.iter (fun (k, cols) -> List.iter (watch_column tx table k) cols) l;
+        return ()
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =
@@ -2433,21 +2605,23 @@ let rec put_multi_columns_no_tx ks table data =
       in
         List.iter
           (fun (key, columns) ->
-             List.iter
-               (fun c ->
-                  Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
-                    ~table ~key ~column:c.name
-                    ~timestamp:(match c.timestamp with
-                                    No_timestamp -> timestamp
-                                  | Timestamp x -> x);
-                  let klen = Obs_bytea.length datum_key in
-                  let vlen = String.length c.data in
-                    incr cols_written;
-                    bytes_written := !bytes_written + klen + vlen;
-                    WRITEBATCH.put_substring b
-                      (Obs_bytea.unsafe_string datum_key) 0 klen
-                      c.data 0 vlen)
-               columns)
+             let col_watches = find_col_watches ks table key in
+               List.iter
+                 (fun c ->
+                    set_dirty_flags col_watches c.name;
+                    Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
+                      ~table ~key ~column:c.name
+                      ~timestamp:(match c.timestamp with
+                                      No_timestamp -> timestamp
+                                    | Timestamp x -> x);
+                    let klen = Obs_bytea.length datum_key in
+                    let vlen = String.length c.data in
+                      incr cols_written;
+                      bytes_written := !bytes_written + klen + vlen;
+                      WRITEBATCH.put_substring b
+                        (Obs_bytea.unsafe_string datum_key) 0 klen
+                        c.data 0 vlen)
+                 columns)
           data;
       end in
   lwt () = wait_sync in
@@ -2620,13 +2794,18 @@ let load tx data =
   let enc_datum_key datum_key ~table:table_name ~key ~column ~timestamp =
     incr cols_written;
     match find_maybe tx.ks.ks_tables table_name with
-        Some table -> Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
-                        ~table ~key ~column ~timestamp
+        Some table ->
+          let col_watches = find_col_watches tx.ks table key in
+            set_dirty_flags col_watches column;
+            Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
+              ~table ~key ~column ~timestamp
       | None ->
           (* register table first *)
           let table =
-            register_new_table_and_add_to_writebatch tx.ks wb table_name
-          in Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
+            register_new_table_and_add_to_writebatch tx.ks wb table_name in
+          let col_watches = find_col_watches tx.ks table key in
+            set_dirty_flags col_watches column;
+            Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                ~table ~key ~column ~timestamp in
 
   let ok = Obs_backup.load enc_datum_key wb data in

@@ -22,6 +22,10 @@
 (** Exception raised when inserting an invalid BSON [@column]. *)
 exception Invalid_BSON_column of string
 
+(** Exception raised when a watched key/column has been modified while a write
+  * transaction is being performed. *)
+exception Dirty_data
+
 type table = string
 
 let table_of_string x = x
@@ -152,6 +156,36 @@ sig
     * @param shared indicates whether shared or exclusive locks are to be
     * acquired *)
   val lock : keyspace -> shared:bool -> string list -> unit Lwt.t
+
+  (** [watch_keys ks table keys] will make write transactions raise
+    * [Dirty_data] if a column belonging to any of the given keys is modified
+    * (added, updated or deleted) after the call to [watch_keys].
+    *
+    * It is used to perform optimistic concurrency control as follows:
+    * {[
+    *   let attempt () =
+    *     read_committed_transaction ks begin fun ks ->
+    *       watch_keys ks accounts [account_key] >>
+    *       lwt n = get_column ks accounts account_key "balance" >|=
+    *               fst >|= int_of_string
+    *       in
+    *         put_columns ks accounts account_key
+    *           [ { name = "balance"; data = string_of_int (n + 1);
+    *               timestamp = No_timestamp; } ]
+    *     end in
+    *   let rec retry_if_needed () =
+    *     try_lwt attempt () with Dirty_data -> retry_if_needed ()
+    *   in
+    *      (* perform transaction *)
+    *      retry_if_needed ()
+    * ]}
+    * *)
+  val watch_keys : keyspace -> table -> string list -> unit Lwt.t
+
+  (** [watch_columns ks table l] is similar to {!watch_keys}, but instead of
+    * watching the whole keys, only the specified columns are considered, e.g.
+    * [watch_keys ks table ["key1", ["col1", "col2"]; "key2", ["col2"]]]. *)
+  val watch_columns : keyspace -> table -> (string * string list) list -> unit Lwt.t
 
   (** {3 Read operations} *)
 

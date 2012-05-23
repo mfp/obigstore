@@ -70,6 +70,8 @@ sig
   val unknown_serialization : unit writer
   val internal_error : unit writer
   val deadlock : unit writer
+  val dirty_data : unit writer
+
   val return_keyspace : int writer
   val return_keyspace_maybe : int option writer
   val return_keyspace_list : string list writer

@@ -1247,6 +1247,70 @@ struct
   let test_lock_exclusion p =
     Lwt_pool.use p (fun db1 -> Lwt_pool.use p (test_lock_exclusion db1))
 
+  let test_watch_keys db1 db2 =
+    lwt ks1 = D.register_keyspace db1 "test_watch_keys" in
+    lwt ks2 = D.register_keyspace db2 "test_watch_keys" in
+      (* read-only TX do not signal error *)
+      D.read_committed_transaction ks1
+        (fun ks1 ->
+           D.watch_keys ks1 T.tbl ["foo"] >>
+           let () = Gc.compact () in
+           put_slice ks2 T.tbl ["foo", ["x", ""]] >>
+           D.get_column ks1 T.tbl "foo" "x" >|= ignore) >>
+      (* no error either if watching something else *)
+      D.read_committed_transaction ks1
+        (fun ks1 ->
+           D.watch_keys ks1 T.tbl ["bar"] >>
+           let () = Gc.compact () in
+           put_slice ks2 T.tbl ["foo", ["x", ""]] >>
+           D.get_column ks1 T.tbl "foo" "x" >|= ignore >>
+           put_slice ks1 T.tbl ["foo", ["y", ""]]) >>
+      (* now get an actual error *)
+      try_lwt
+        D.read_committed_transaction ks1
+          (fun ks1 ->
+             D.watch_keys ks1 T.tbl ["foo"] >>
+             let () = Gc.compact () in
+             put_slice ks2 T.tbl ["foo", ["x", ""]] >>
+             put_slice ks1 T.tbl ["foo", ["y", ""]]) >>
+        assert_failure "should have raised Dirty_data"
+      with DM.Dirty_data -> return ()
+
+  let test_watch_keys p =
+    Lwt_pool.use p (fun db1 -> Lwt_pool.use p (test_watch_keys db1))
+
+  let test_watch_columns db1 db2 =
+    lwt ks1 = D.register_keyspace db1 "test_watch_columns" in
+    lwt ks2 = D.register_keyspace db2 "test_watch_columns" in
+      (* read-only TX do not signal error *)
+      D.read_committed_transaction ks1
+        (fun ks1 ->
+           D.watch_columns ks1 T.tbl ["foo", ["bar"; "baz"]] >>
+           let () = Gc.compact () in
+           put_slice ks2 T.tbl ["foo", ["bar", ""]] >>
+           D.get_column ks1 T.tbl "foo" "bar" >|= ignore) >>
+      (* no error either if watching something else *)
+      D.read_committed_transaction ks1
+        (fun ks1 ->
+           D.watch_columns ks1 T.tbl ["foo", ["bar"; "baz"]] >>
+           let () = Gc.compact () in
+           put_slice ks2 T.tbl ["foo", ["x", ""]] >>
+           D.get_column ks1 T.tbl "foo" "bar" >|= ignore >>
+           put_slice ks1 T.tbl ["foo", ["y", ""]]) >>
+      (* now get an actual error *)
+      try_lwt
+        D.read_committed_transaction ks1
+          (fun ks1 ->
+             D.watch_columns ks1 T.tbl ["foo", ["bar"; "baz"]] >>
+             let () = Gc.compact () in
+             put_slice ks2 T.tbl ["foo", ["baz", ""]] >>
+             put_slice ks1 T.tbl ["foo", ["y", ""]]) >>
+        assert_failure "should have raised Dirty_data"
+      with DM.Dirty_data -> return ()
+
+  let test_watch_columns p =
+    Lwt_pool.use p (fun db1 -> Lwt_pool.use p (test_watch_columns db1))
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1456,6 +1520,8 @@ struct
       "commit before return", test_commit_before_return;
       "interlocked txs from diff conns", test_interlocked_txs;
       "lock exclusion from diff conns", test_lock_exclusion;
+      "optimistic concurrency control (watch_keys)", test_watch_keys;
+      "optimistic concurrency control (watch_columns)", test_watch_columns;
     ]
 
   let () =

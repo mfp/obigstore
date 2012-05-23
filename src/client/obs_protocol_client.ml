@@ -286,6 +286,16 @@ struct
       (Lock { Lock.keyspace = ks.ks_id; names; shared; })
       P.read_ok
 
+  let watch_keys ks table keys =
+    async_request_ks ks
+      (Watch_keys { Watch_keys.keyspace = ks.ks_id; table; keys; })
+      P.read_ok
+
+  let watch_columns ks table columns =
+    async_request_ks ks
+      (Watch_columns { Watch_columns.keyspace = ks.ks_id; table; columns; })
+      P.read_ok
+
   let get_keys ks table ?max_keys key_range =
     async_request_ks ks
       (Get_keys { Get_keys.keyspace = ks.ks_id; table; max_keys;
