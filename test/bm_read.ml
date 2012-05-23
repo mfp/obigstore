@@ -100,12 +100,11 @@ let rec read_values ks =
   while not !benchmark_over && !in_flight < !concurrency do
     ignore begin
       incr in_flight;
-      try_lwt
+      begin try_lwt
         let k = mk_key () in
         lwt _ = C.get_column ks !table k "v" in
           incr finished;
           report ();
-          read_values ks;
           return ()
       with _ ->
         incr errors;
@@ -113,6 +112,8 @@ let rec read_values ks =
       finally
         decr in_flight;
         return ()
+      end >>
+      return (read_values ks)
     end;
   done
 
@@ -120,12 +121,11 @@ let rec read_values_multi ks =
   while not !benchmark_over && !in_flight < !concurrency do
     ignore begin
       incr in_flight;
-      try_lwt
+      begin try_lwt
         let keys = List.init !multi (fun _ -> mk_key ()) in
         lwt _ = C.get_slice ks !table (`Discrete keys) (`Discrete ["v"]) in
           finished := !finished + !multi;
           report ();
-          read_values_multi ks;
           return ()
       with _ ->
         incr errors;
@@ -133,6 +133,8 @@ let rec read_values_multi ks =
       finally
         decr in_flight;
         return ()
+      end >>
+      return (read_values_multi ks)
     end;
   done
 

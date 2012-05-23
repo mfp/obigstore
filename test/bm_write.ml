@@ -166,17 +166,19 @@ let rec write_aux read_data write_data data_len ks =
         ignore begin
           incr in_flight;
           !rate_limiter () >>
-          try_lwt
+          begin try_lwt
             lwt () = measure_latency (fun () -> write_data ks !table data) in
               finished := !finished + data_len data;
               report ();
-              write_aux read_data write_data data_len ks
+              return ()
           with _ ->
             incr errors;
             return ()
           finally
             decr in_flight;
             return ()
+          end >>
+          write_aux read_data write_data data_len ks
         end;
         return ()
     done
