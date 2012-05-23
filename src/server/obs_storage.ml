@@ -577,7 +577,12 @@ let reload_keyspaces t lldb =
     Hashtbl.iter
       (fun name ks ->
          try
-           let (_, set) = Hashtbl.find t.keyspaces name in
+           let (Proto old_ks, set) = Hashtbl.find t.keyspaces name in
+           let ks =
+             { old_ks with ks_tables = ks.ks_tables;
+                           ks_rev_tables = ks.ks_rev_tables;
+             }
+           in
            (* replace the proto *)
              Hashtbl.replace t.keyspaces name (Proto ks, set);
              (* and then update ks_tables and ks_rev_tables in actual
