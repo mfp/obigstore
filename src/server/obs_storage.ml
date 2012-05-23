@@ -1193,7 +1193,7 @@ let advance_until_next_key ~reverse next it
  * { reverse; first = first_key; up_to = up_to_key }
  * with the semantics defined in Obs_data_model
  * *)
-let fold_over_data_aux it tx table_name f acc ?first_column
+let fold_over_data_no_detach it tx table_name f acc ?first_column
       ~reverse ~first_key ~up_to_key =
   let buf = ref "" in
   let table_r = ref (-1) in
@@ -1348,18 +1348,16 @@ let fold_over_data_aux it tx table_name f acc ?first_column
         do_fold_over_data acc
     | None -> (* unknown table *) acc
 
-let fold_over_data_aux
-      it tx table f acc ?first_column ~reverse ~first_key ~up_to_key =
-  detach_ks_op tx.ks
-    (fun () ->
-       fold_over_data_aux it tx table f acc ?first_column
-         ~reverse ~first_key ~up_to_key)
-    ()
+let fold_over_data_no_detach = fold_over_data_no_detach
 
 let fold_over_data tx table f ?first_column acc ~reverse ~first_key ~up_to_key =
   Lwt_pool.use !(tx.iter_pool)
-    (fun it -> fold_over_data_aux it tx table f acc ?first_column
+    (fun it ->
+       detach_ks_op tx.ks
+         (fun () ->
+            fold_over_data_no_detach it tx table f acc ?first_column
                  ~reverse ~first_key ~up_to_key)
+         ())
 
 let expand_key_range = function
     `Discrete _ | `Continuous _ as x -> x
@@ -1681,121 +1679,123 @@ let get_slice_aux_discrete
       `Union [`Continuous { reverse; _ }] | `Continuous { reverse; _ } -> reverse
     | `Discrete _ | `Union _ | `All -> false in
   let columns_needed_for_predicate = columns_needed_for_predicate predicate in
+
+  let fold_over_keys it (key_data_list, keys_so_far) key =
+    if keys_so_far >= max_keys then (key_data_list, keys_so_far)
+    else
+      let columns_selected = ref 0 in
+
+      let fold_datum (rev_cols, rev_predicate_cols, missing_pred_cols) it
+            ~key_buf ~key_len ~column_buf ~column_len
+            ~timestamp_buf =
+        (* must skip deleted columns *)
+        if is_column_deleted
+             ~key_buf:key ~key_len:(String.length key)
+             ~column_buf ~column_len then
+          Continue
+        else begin
+          let selected = column_selected column_buf column_len in
+          let needed_for_pred =
+            column_needed_for_predicate column_buf column_len
+          in
+            (* also skip columns not selected + not needed for predicate *)
+            if not selected && not needed_for_pred then
+              Continue
+            else begin
+              let data = IT.get_value it in
+              let name = String.sub column_buf 0 column_len in
+              let timestamp = match decode_timestamps with
+                  false -> No_timestamp
+                | true -> Timestamp (Obs_datum_encoding.decode_timestamp timestamp_buf) in
+              let col = { name; data; timestamp; } in
+                let rev_cols =
+                  (* we must check against if we have enough cols,
+                   * because we could be collecting pred cols only
+                   * by now *)
+                  if selected && !columns_selected < max_columns then begin
+                    incr columns_selected;
+                    col :: rev_cols
+                  end else rev_cols in
+                let rev_predicate_cols, missing_pred_cols =
+                  (* we're careful not to overwrite the in-tx pred_col
+                  * value with the one from disk, so we do the following
+                  * instead of just   if needed_for_pred  *)
+                  if not (S.mem name missing_pred_cols) then
+                    (rev_predicate_cols, missing_pred_cols)
+                  else (col :: rev_predicate_cols, S.remove name missing_pred_cols)
+                in
+                  (* only early exit if got all the columns
+                   * needed to evaluate the predicate *)
+                  if !columns_selected >= max_columns && S.is_empty missing_pred_cols then
+                    Finish_fold (rev_cols, rev_predicate_cols, missing_pred_cols)
+                  else Continue_with (rev_cols, rev_predicate_cols, missing_pred_cols)
+            end
+        end in
+
+      let rev_cols1, rev_pred_cols1, _ =
+        let first_key, up_to_key =
+          if reverse then
+            (Some (key ^ "\000"), Some key)
+          else
+            (Some key, Some (key ^ "\000")) in
+        (* we take the columns needed for the predicate directly from the
+         * tx data and inject it them into fold_over_data *)
+        let cols_in_mem_map =
+          TM.find_default M.empty table tx.added |>
+          M.find_default M.empty key in
+        let pred_cols_in_mem, pred_cols_in_mem_set =
+          M.fold
+            (fun name col ((l, s) as acc) ->
+               if column_needed_for_predicate name (String.length name) then
+                 (col :: l, S.add name s)
+               else acc)
+            cols_in_mem_map
+            ([], S.empty) in
+        let pred_columns_wanted_from_disk =
+          S.diff columns_needed_for_predicate pred_cols_in_mem_set
+        in
+          fold_over_data_no_detach it tx table fold_datum
+             ([], pred_cols_in_mem, pred_columns_wanted_from_disk)
+             ~reverse ~first_key ~up_to_key
+             ?first_column:(column_range_first_column
+                              ~reverse
+                              ~pred_columns_wanted_from_disk
+                              column_range) in
+
+      let rev_cols2 =
+        M.fold
+          (fun colname col cols ->
+             let len = String.length colname in
+             if not (column_selected colname len) then cols
+             else col :: cols)
+          (tx.added |>
+           TM.find_default M.empty table |> M.find_default M.empty key)
+          [] in
+
+      (* rev_cols2 is G-to-S, want S-to-G if ~reverse *)
+      let rev_cols2 = if reverse then rev rev_cols2 else rev_cols2 in
+
+      let cmp_cols =
+        if reverse then
+          (fun c1 c2 -> String.compare c2.name c1.name)
+        else
+          (fun c1 c2 -> String.compare c1.name c2.name) in
+
+      let pred_cols = rev_pred_cols1 in
+        (* now eval predicate *)
+        if eval_predicate pred_cols then begin
+          let cols = rev (rev_merge_rev cmp_cols rev_cols1 rev_cols2) in
+
+            match postproc_keydata ~guaranteed_cols_ok:false (key, cols) with
+              None -> (key_data_list, keys_so_far)
+            | Some x -> (x :: key_data_list, keys_so_far + 1)
+        end else begin
+          (key_data_list, keys_so_far)
+        end in
+
   lwt key_data_list, _ =
-    Lwt_list.fold_left_s
-      (fun (key_data_list, keys_so_far) key ->
-         if keys_so_far >= max_keys then return (key_data_list, keys_so_far)
-         else
-           let columns_selected = ref 0 in
-
-           let fold_datum (rev_cols, rev_predicate_cols, missing_pred_cols) it
-                 ~key_buf ~key_len ~column_buf ~column_len
-                 ~timestamp_buf =
-             (* must skip deleted columns *)
-             if is_column_deleted
-                  ~key_buf:key ~key_len:(String.length key)
-                  ~column_buf ~column_len then
-               Continue
-             else begin
-               let selected = column_selected column_buf column_len in
-               let needed_for_pred =
-                 column_needed_for_predicate column_buf column_len
-               in
-                 (* also skip columns not selected + not needed for predicate *)
-                 if not selected && not needed_for_pred then
-                   Continue
-                 else begin
-                   let data = IT.get_value it in
-                   let name = String.sub column_buf 0 column_len in
-                   let timestamp = match decode_timestamps with
-                       false -> No_timestamp
-                     | true -> Timestamp (Obs_datum_encoding.decode_timestamp timestamp_buf) in
-                   let col = { name; data; timestamp; } in
-                     let rev_cols =
-                       (* we must check against if we have enough cols,
-                        * because we could be collecting pred cols only
-                        * by now *)
-                       if selected && !columns_selected < max_columns then begin
-                         incr columns_selected;
-                         col :: rev_cols
-                       end else rev_cols in
-                     let rev_predicate_cols, missing_pred_cols =
-                       (* we're careful not to overwrite the in-tx pred_col
-                       * value with the one from disk, so we do the following
-                       * instead of just   if needed_for_pred  *)
-                       if not (S.mem name missing_pred_cols) then
-                         (rev_predicate_cols, missing_pred_cols)
-                       else (col :: rev_predicate_cols, S.remove name missing_pred_cols)
-                     in
-                       (* only early exit if got all the columns
-                        * needed to evaluate the predicate *)
-                       if !columns_selected >= max_columns && S.is_empty missing_pred_cols then
-                         Finish_fold (rev_cols, rev_predicate_cols, missing_pred_cols)
-                       else Continue_with (rev_cols, rev_predicate_cols, missing_pred_cols)
-                 end
-             end in
-
-           lwt rev_cols1, rev_pred_cols1, _ =
-             let first_key, up_to_key =
-               if reverse then
-                 (Some (key ^ "\000"), Some key)
-               else
-                 (Some key, Some (key ^ "\000")) in
-             (* we take the columns needed for the predicate directly from the
-              * tx data and inject it them into fold_over_data *)
-             let cols_in_mem_map =
-               TM.find_default M.empty table tx.added |>
-               M.find_default M.empty key in
-             let pred_cols_in_mem, pred_cols_in_mem_set =
-               M.fold
-                 (fun name col ((l, s) as acc) ->
-                    if column_needed_for_predicate name (String.length name) then
-                      (col :: l, S.add name s)
-                    else acc)
-                 cols_in_mem_map
-                 ([], S.empty) in
-             let pred_columns_wanted_from_disk =
-               S.diff columns_needed_for_predicate pred_cols_in_mem_set
-             in
-               fold_over_data tx table fold_datum
-                  ([], pred_cols_in_mem, pred_columns_wanted_from_disk)
-                  ~reverse ~first_key ~up_to_key
-                  ?first_column:(column_range_first_column
-                                   ~reverse
-                                   ~pred_columns_wanted_from_disk
-                                   column_range) in
-
-           let rev_cols2 =
-             M.fold
-               (fun colname col cols ->
-                  let len = String.length colname in
-                  if not (column_selected colname len) then cols
-                  else col :: cols)
-               (tx.added |>
-                TM.find_default M.empty table |> M.find_default M.empty key)
-               [] in
-
-           (* rev_cols2 is G-to-S, want S-to-G if ~reverse *)
-           let rev_cols2 = if reverse then rev rev_cols2 else rev_cols2 in
-
-           let cmp_cols =
-             if reverse then
-               (fun c1 c2 -> String.compare c2.name c1.name)
-             else
-               (fun c1 c2 -> String.compare c1.name c2.name) in
-
-           let pred_cols = rev_pred_cols1 in
-             (* now eval predicate *)
-             if eval_predicate pred_cols then begin
-               let cols = rev (rev_merge_rev cmp_cols rev_cols1 rev_cols2) in
-
-                 match postproc_keydata ~guaranteed_cols_ok:false (key, cols) with
-                   None -> return (key_data_list, keys_so_far)
-                 | Some x -> return (x :: key_data_list, keys_so_far + 1)
-             end else begin
-               return (key_data_list, keys_so_far)
-             end)
-      ([], 0) l in
+    Lwt_pool.use !(tx.iter_pool)
+      (fun it -> detach_ks_op tx.ks (List.fold_left (fold_over_keys it) ([], 0)) l) in
   let last_key = match key_data_list with
       x :: _ -> Some (get_keydata_key x)
     | [] -> None
