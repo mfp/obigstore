@@ -508,7 +508,7 @@ let execute ?(fmt = Format.std_formatter) ks db loop req =
                   if_not_zero "wrote %d columns/second" write_col_rate; ]
             in
                print ();
-               puts "%s in %8.5fs (sys %8.5fs)" did_what dt sysdt;
+               puts "%s in %8.5fs (cpu %8.5fs)" did_what dt sysdt;
                if rate_info <> "" then puts "%s" rate_info;
                return ()
 
@@ -832,7 +832,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
             let dt = Unix.gettimeofday () -. t0 in
             let sysdt = Sys.time () -. s0 in
               List.iter (fun (table, siz) -> printf "%20s\t%Ld\n" table siz) sizes;
-              puts " in %8.5fs (sys %8.5fs)" dt sysdt;
+              puts " in %8.5fs (cpu %8.5fs)" dt sysdt;
               return ()
           end
         | Directive (directive, args) ->
