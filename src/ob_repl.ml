@@ -174,6 +174,8 @@ struct
      ABORT                      Abort current transaction\n\
      LOCK name1 name2...        Acquire exclusive locks with given names\n\
      LOCK SHARED name1 name2... Acquire shared locks with given names\n\
+     WATCH table key1, key2     Watch keys key1 and key2 in table\n\
+     WATCH table key c1, c2     Watch columns c1 and c2 from key in table\n\
 \n\
      LISTEN topic               Subscribe to topic.\n\
      UNLISTEN topic             Unsubscribe to topic.\n\

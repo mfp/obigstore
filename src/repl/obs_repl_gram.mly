@@ -77,7 +77,7 @@ let encode_key_list table l =
 %token <string> DIRECTIVE
 %token PRINTER LPAREN RPAREN PLUS MINUS
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
-%token LOCK SHARED STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
+%token LOCK SHARED WATCH STATS LISTEN UNLISTEN NOTIFY AWAIT DUMP LOCAL TO
 %token LBRACKET RBRACKET COLON REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 %token LBRACE RBRACE
 
@@ -106,6 +106,15 @@ phrase : /* empty */  { Nothing }
   | LOCK SHARED id_list
               { with_ks (fun keyspace ->
                            R.Lock { R.Lock.keyspace; names = $3; shared = true; }) }
+  | WATCH table id_list
+              { with_ks (fun keyspace ->
+                           R.Watch_keys { R.Watch_keys.keyspace;
+                                          table = $2; keys = $3 }) }
+  | WATCH table id id_list
+              { with_ks
+                  (fun keyspace ->
+                     R.Watch_columns { R.Watch_columns.keyspace; table = $2;
+                                       columns = [$3, $4] }) }
   | STATS     { with_ks (fun keyspace -> R.Stats { R.Stats.keyspace; }) }
   | STATS id  { Command (R.Get_property { R.Get_property.property = $2; }, None) }
   | LISTEN id { with_ks (fun keyspace -> R.Listen { R.Listen.keyspace; topic = $2 }) }

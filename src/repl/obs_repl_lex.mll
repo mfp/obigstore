@@ -45,6 +45,7 @@
       "dump", DUMP;
       "local", LOCAL;
       "to", TO;
+      "watch", WATCH;
     ]
 
  let () =
