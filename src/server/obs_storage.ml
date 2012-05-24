@@ -97,6 +97,7 @@ module WRITEBATCH : sig
   val delete_substring : tx -> string -> int -> int -> unit
   val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
   val put : tx -> string -> string -> unit
+  val timestamp : tx -> Int64.t
 
   (* indicate that a 'reload keyspace' record is to be added to the
    * serialized update *)
@@ -138,7 +139,7 @@ struct
       No_throttling
     | Throttle of int (* started when read N L0 files  *) * float (* rate *)
 
-  type tx = { t : t; mutable valid : bool; }
+  type tx = { t : t; mutable valid : bool; timestamp : Int64.t; }
 
   let do_push t serialized_update (slave_id, (unregister, slave)) =
     let waiter, u = Lwt.task () in
@@ -276,7 +277,8 @@ struct
       failwith "WRITEBATCH.perform: closed writebatch"
     else
       let waiter = fst t.sync_wait in
-      let tx = { t; valid = true } in
+      let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+      let tx = { t; valid = true; timestamp; } in
         try
           f tx;
           Lwt_condition.signal t.wait_for_dirty ();
@@ -284,6 +286,8 @@ struct
         with exn ->
           tx.valid <- false;
           raise exn
+
+  let timestamp tx = tx.timestamp
 
   let delete_substring tx s off len =
     if not tx.valid then
@@ -2590,7 +2594,6 @@ let put_multi_columns tx table data =
     data
 
 let rec put_multi_columns_no_tx ks table data =
-  let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
   let cols_written = ref 0 in
   let bytes_written = ref 0 in
   let datum_key = put_multi_columns_no_tx_buf in
@@ -2612,7 +2615,7 @@ let rec put_multi_columns_no_tx ks table data =
                     Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                       ~table ~key ~column:c.name
                       ~timestamp:(match c.timestamp with
-                                      No_timestamp -> timestamp
+                                      No_timestamp -> WRITEBATCH.timestamp b
                                     | Timestamp x -> x);
                     let klen = Obs_bytea.length datum_key in
                     let vlen = String.length c.data in
