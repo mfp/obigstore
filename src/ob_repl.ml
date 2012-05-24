@@ -166,6 +166,7 @@ struct
      TABLES                     List tables in present keyspace\n\
      STATS                      Show load statistics\n\
      \n\
+     SIZE                       List all tables and their approx sizes\n\
      SIZE table                 Show approx size of table\n\
      SIZE table[x:y]            Show approx size of table between keys x and y\n\
      \n\
@@ -817,6 +818,21 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
                   Lwt_io.close ic
             with Unix.Unix_error _ ->
               printf "Couldn't open file %S." file;
+              return ()
+          end
+        | Directive ("size", _) -> begin
+            let t0 = Unix.gettimeofday () in
+            let s0 = Sys.time () in
+            lwt tables = D.list_tables (get ks) in
+            lwt sizes =
+              Lwt_list.map_p
+                (fun table -> lwt siz = D.table_size_on_disk (get ks) table in
+                             return (string_of_table table, siz))
+                tables in
+            let dt = Unix.gettimeofday () -. t0 in
+            let sysdt = Sys.time () -. s0 in
+              List.iter (fun (table, siz) -> printf "%20s\t%Ld\n" table siz) sizes;
+              puts " in %8.5fs (sys %8.5fs)" dt sysdt;
               return ()
           end
         | Directive (directive, args) ->

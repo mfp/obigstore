@@ -139,7 +139,8 @@ phrase : /* empty */  { Nothing }
   | printer_directive { $1 }
 
 size :
-    SIZE table
+  | SIZE      { Directive ("size", []) }
+  | SIZE table
               { with_ks
                   (fun keyspace ->
                      R.Table_size_on_disk
