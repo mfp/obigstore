@@ -32,7 +32,7 @@ module Make
 
      val throttling : db -> float
    end)
-  (P : Obs_protocol.PAYLOAD) =
+  (P : Obs_protocol.PAYLOAD_WRITER) =
 struct
   module S = Obs_protocol_server.Make(D)(P)
 

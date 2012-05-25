@@ -57,7 +57,7 @@ module Make
 
      val throttling : db -> float
    end)
-  (P : PAYLOAD) =
+  (P : PAYLOAD_WRITER) =
 struct
   open Request
 

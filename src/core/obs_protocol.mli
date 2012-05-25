@@ -63,7 +63,7 @@ type 'a reader = Lwt_io.input_channel -> 'a Lwt.t
 type backup_cursor = string
 type raw_dump_timestamp = Int64.t
 
-module type PAYLOAD =
+module type PAYLOAD_WRITER =
 sig
   val bad_request : unit writer
   val unknown_keyspace : unit writer
@@ -100,7 +100,10 @@ sig
   val return_raw_dump_files : (string * Int64.t) list writer
   val return_raw_dump_file_digest : string option writer
   val return_property : string option writer
+end
 
+module type PAYLOAD_READER =
+sig
   val read_keyspace : int reader
   val read_keyspace_maybe : int option reader
   val read_keyspace_list : string list reader

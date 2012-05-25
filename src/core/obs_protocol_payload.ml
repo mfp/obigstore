@@ -36,7 +36,11 @@ struct
     | `Extprot -> 1
 end
 
-module Version_0_0_0 : Obs_protocol.PAYLOAD =
+module Version_0_0_0 :
+sig
+  include Obs_protocol.PAYLOAD_WRITER
+  include Obs_protocol.PAYLOAD_READER
+end =
 struct
 
   module E =

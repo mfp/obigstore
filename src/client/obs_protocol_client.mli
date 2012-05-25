@@ -18,7 +18,7 @@
  *)
 
 
-module Make : functor(P : Obs_protocol.PAYLOAD) ->
+module Make : functor(P : Obs_protocol.PAYLOAD_READER) ->
 sig
   include Obs_data_model.S with type backup_cursor = string
   include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor

@@ -26,7 +26,7 @@ open Request
 
 module Option = BatOption
 
-module Make(P : Obs_protocol.PAYLOAD) =
+module Make(P : Obs_protocol.PAYLOAD_READER) =
 struct
   module H =
     Hashtbl.Make(struct
