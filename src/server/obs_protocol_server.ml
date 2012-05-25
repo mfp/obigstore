@@ -101,8 +101,10 @@ struct
         mutable in_buf : string;
         out_buf : Obs_bytea.t;
         debug : bool;
-        signal_error : Request.request option Lwt.t * Request.request option Lwt.u;
+        signal_error : (Request.request * string * int) option waiter;
       }
+
+  and 'a waiter = 'a Lwt.t * 'a Lwt.u
 
   and keyspace =
     { ks_unique_id : ks_id;
@@ -191,24 +193,15 @@ struct
 
   let rec service c =
     !auto_yielder () >>
-    lwt request_id, len, crc =
-      match_lwt read_header c.ich with
-          Header x -> return x
-        | Corrupted_header ->
-            (* we can't even trust the request_id, so all that's left is
-             * dropping the connection *)
-            raise_lwt (Error Corrupted_frame) in
     let throttling = D.throttling c.server.db in
     let new_factor = truncate (float c.server.max_concurrency_factor *. throttling) in
       c.server.curr_concurrency_factor <- new_factor;
       Lwt_util.resize_region
         c.server.async_req_region c.server.curr_concurrency_factor;
 
-      match_lwt
-        Lwt.choose [fst c.signal_error; read_request c ~request_id len crc]
-      with
+      match_lwt Lwt.choose [fst c.signal_error; read_request c] with
           None -> service c
-        | Some r ->
+        | Some (r, request_id, len) ->
             ignore begin
               Lwt_util.run_in_region c.server.async_req_region
                 (request_slot_cost c.server ~request_size:len r)
@@ -290,28 +283,36 @@ struct
     | Raw_dump_file_digest _ | Get_property _ as r ->
         respond c ~request_id r
 
-  and read_request c ~request_id len crc =
-    if String.length c.in_buf < len then c.in_buf <- String.create len;
-    Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
-    lwt crc2 = read_exactly c 4 in
-    let crc2' = Obs_crc32c.substring_masked c.in_buf 0 len in
-    let gb n = Char.code c.in_buf.[n] in
-    let format_id = gb 0 + (gb 1 lsl 8) + (gb 2 lsl 16) + (gb 3 lsl 24) in
-      Obs_crc32c.xor crc2 crc;
-      if crc2 <> crc2' then begin
-        P.bad_request c.och ~request_id () >>
-        return None
-      end else begin
-        match Obs_protocol_payload.Obs_request_serialization.of_format_id format_id with
-            `Extprot -> begin
-              try
-                let m = Extprot.Conv.deserialize Request.read ~offset:4 c.in_buf in
-                  return (Some m)
-              with _ -> P.bad_request c.och ~request_id () >> return None
-            end
-          | `Raw -> P.bad_request c.och ~request_id () >> return None
-          | `Unknown -> P.unknown_serialization c.och ~request_id () >> return None
-      end
+  and read_request c =
+    lwt request_id, len, crc =
+      match_lwt read_header c.ich with
+          Header x -> return x
+        | Corrupted_header ->
+            (* we can't even trust the request_id, so all that's left is
+             * dropping the connection *)
+            raise_lwt (Error Corrupted_frame)
+    in
+      if String.length c.in_buf < len then c.in_buf <- String.create len;
+      Lwt_io.read_into_exactly c.ich c.in_buf 0 len >>
+      lwt crc2 = read_exactly c 4 in
+      let crc2' = Obs_crc32c.substring_masked c.in_buf 0 len in
+      let gb n = Char.code c.in_buf.[n] in
+      let format_id = gb 0 + (gb 1 lsl 8) + (gb 2 lsl 16) + (gb 3 lsl 24) in
+        Obs_crc32c.xor crc2 crc;
+        if crc2 <> crc2' then begin
+          P.bad_request c.och ~request_id () >>
+          return None
+        end else begin
+          match Obs_protocol_payload.Obs_request_serialization.of_format_id format_id with
+              `Extprot -> begin
+                try
+                  let m = Extprot.Conv.deserialize Request.read ~offset:4 c.in_buf in
+                    return (Some (m, request_id, len))
+                with _ -> P.bad_request c.och ~request_id () >> return None
+              end
+            | `Raw -> P.bad_request c.och ~request_id () >> return None
+            | `Unknown -> P.unknown_serialization c.och ~request_id () >> return None
+        end
 
   and respond ?buf c ~request_id r =
     if c.debug then
