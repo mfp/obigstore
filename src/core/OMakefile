@@ -7,7 +7,7 @@ OBJECTS[] =
   obs_data_model
   obs_pp
   obs_protocol
-  obs_protocol_payload
+  obs_protocol_bin
   obs_replication
   obs_request
   obs_string_util

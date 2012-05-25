@@ -20,7 +20,7 @@
 open Lwt
 open Test_00util
 
-module CLIENT = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
+module CLIENT = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
 let dummy_addr = Unix.ADDR_INET (Unix.inet_addr_of_string "127.0.0.1", 0)
 
@@ -28,7 +28,10 @@ module C =
 struct
   let id = "Obs_protocol_client atop Obs_storage server"
 
-  module SERVER = Obs_protocol_server.Make(Obs_storage)(Obs_protocol_payload.Version_0_0_0)
+  module SERVER = Obs_protocol_server.Make(Obs_storage)
+
+  let binary_protocol =
+    (module Obs_protocol_bin.Version_0_0_0 : Obs_protocol.SERVER_FUNCTIONALITY)
 
   let with_db f =
     let dir = make_temp_dir () in
@@ -40,7 +43,7 @@ struct
       try_lwt
         ignore
           (try_lwt
-             SERVER.service_client server ch1_in ch2_out
+             SERVER.service_client server binary_protocol ch1_in ch2_out
            with _ -> return ());
         f client
       finally
@@ -59,7 +62,7 @@ struct
         clients := client :: !clients;
         ignore
           (try_lwt
-             SERVER.service_client server ch1_in ch2_out
+             SERVER.service_client server binary_protocol ch1_in ch2_out
            with _ -> return ());
         return  client in
     let pool = Lwt_pool.create 100 mk_client in

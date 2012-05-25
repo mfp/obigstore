@@ -449,7 +449,7 @@ let params =
           "N Number of values to insert (default: 100000)\n"
     ]
 
-module CLIENT = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
+module CLIENT = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
 let usage_message = "Usage: benchmark [options]\n"
 

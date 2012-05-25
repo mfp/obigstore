@@ -32,9 +32,9 @@ module Make
 
      val throttling : db -> float
    end)
-  (P : Obs_protocol.PAYLOAD_WRITER) =
+  (P : Obs_protocol.SERVER_FUNCTIONALITY) =
 struct
-  module S = Obs_protocol_server.Make(D)(P)
+  module S = Obs_protocol_server.Make(D)
 
   type conn =
       {
@@ -101,7 +101,8 @@ struct
         ]
 
   and handle_connection ~debug server conn =
-    S.service_client ~debug server conn.ich conn.och
+    let protocol = (module P : Obs_protocol.SERVER_FUNCTIONALITY) in
+      S.service_client ~debug server protocol conn.ich conn.och
 
   and handle_data_connection ~debug server conn =
     S.service_data_client ~debug server conn.ich conn.och

@@ -42,18 +42,6 @@ type header =
 
 exception Error of error
 
-val string_of_error : error -> string
-val sync_req_id : string
-val is_sync_req : string -> bool
-
-val skip : Lwt_io.input_channel -> int -> unit Lwt.t
-
-val read_header : Lwt_io.input_channel -> header Lwt.t
-
-val write_msg :
-  ?flush:bool ->
-  Lwt_io.output Lwt_io.channel -> string -> Obs_bytea.t -> unit Lwt.t
-
 type 'a writer =
     ?buf:Obs_bytea.t ->
     Lwt_io.output_channel -> request_id:request_id -> 'a -> unit Lwt.t
@@ -62,6 +50,13 @@ type 'a reader = Lwt_io.input_channel -> 'a Lwt.t
 
 type backup_cursor = string
 type raw_dump_timestamp = Int64.t
+
+module type REQUEST_READER =
+sig
+  val read_request :
+    string ref -> Lwt_io.input_channel -> Lwt_io.output_channel ->
+    (Obs_request.Request.request * request_id * int) option Lwt.t
+end
 
 module type PAYLOAD_WRITER =
 sig
@@ -102,6 +97,12 @@ sig
   val return_property : string option writer
 end
 
+module type SERVER_FUNCTIONALITY =
+sig
+  include REQUEST_READER
+  include PAYLOAD_WRITER
+end
+
 module type PAYLOAD_READER =
 sig
   val read_keyspace : int reader
@@ -133,6 +134,12 @@ sig
   val read_raw_dump_file_digest : string option reader
   val read_property : string option reader
 end
+
+val string_of_error : error -> string
+val sync_req_id : string
+val is_sync_req : string -> bool
+
+val skip : Lwt_io.input_channel -> int -> unit Lwt.t
 
 type data_protocol_version = int * int * int
 type data_request = [ `Get_file | `Get_updates ]

@@ -69,55 +69,6 @@ let rec skip ich count =
       n when n >= count -> return ()
     | n -> skip ich (count - n)
 
-(* [request id : 8 byte]
- * [payload size: 4 byte]
- * [crc first 12 bytes]
- *    ...  payload  ...
- * [crc payload XOR crc first 12 bytes]
- * *)
-
-
-let read_header ich =
-  let head = String.create 16 in
-  Lwt_io.read_into_exactly ich head 0 16 >>
-  let crc = String.sub head 12 4 in
-    if Obs_crc32c.substring_masked head 0 12 <> crc then
-      return Corrupted_header
-    else begin
-      let req_id =
-        if Obs_string_util.cmp_substrings sync_req_id 0 8 head 0 8 = 0 then
-          sync_req_id
-        else
-          String.sub head 0 8 in
-      let get s n = Char.code (String.unsafe_get s n) in
-      let v0 = get head 8 in
-      let v1 = get head 9 in
-      let v2 = get head 10 in
-      let v3 = get head 11 in
-        (* FIXME: check overflow (x86 only, not x86-64) *)
-        return (Header
-                  (req_id,
-                   v0 lor (v1 lsl 8) lor (v2 lsl 16) lor (v3 lsl 24),
-                   crc))
-    end
-
-let write_msg ?(flush=false) och req_id msg =
-  (* FIXME: ensure req_id's size is 8 *)
-  Lwt_io.atomic
-    (fun och ->
-      let header = Obs_bytea.create 12 in
-      let len = Obs_bytea.length msg in
-        Obs_bytea.add_string header req_id;
-        Obs_bytea.add_int32_le header len;
-        let crc = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string header) 0 12 in
-          Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string header) 0 12 >>
-          Lwt_io.write_from_exactly och crc 0 4 >>
-          Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string msg) 0 len >>
-          let crc2 = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string msg) 0 len in
-            Obs_crc32c.xor crc2 crc;
-            Lwt_io.write och crc2 >>
-            (if flush then Lwt_io.flush och else return ()))
-    och
 
 type 'a writer =
   ?buf:Obs_bytea.t -> Lwt_io.output_channel -> request_id:request_id -> 'a -> unit Lwt.t
@@ -125,6 +76,13 @@ type 'a reader = Lwt_io.input_channel -> 'a Lwt.t
 
 type backup_cursor = string
 type raw_dump_timestamp = Int64.t
+
+module type REQUEST_READER =
+sig
+  val read_request :
+    string ref -> Lwt_io.input_channel -> Lwt_io.output_channel ->
+    (Obs_request.Request.request * request_id * int) option Lwt.t
+end
 
 module type PAYLOAD_WRITER =
 sig
@@ -160,6 +118,12 @@ sig
   val return_raw_dump_files : (string * Int64.t) list writer
   val return_raw_dump_file_digest : string option writer
   val return_property : string option writer
+end
+
+module type SERVER_FUNCTIONALITY =
+sig
+  include REQUEST_READER
+  include PAYLOAD_WRITER
 end
 
 module type PAYLOAD_READER =

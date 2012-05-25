@@ -31,7 +31,7 @@ exception Commit_exn
 exception Abort_exn
 exception Reload_keyspace of string
 
-module D = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
+module D = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
 let keyspace = ref ""
 let server = ref "127.0.0.1"

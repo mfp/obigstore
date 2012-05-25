@@ -21,7 +21,7 @@ open Printf
 open Lwt
 
 module String = struct include String include BatString end
-module S = Obs_server.Make(Obs_storage)(Obs_protocol_payload.Version_0_0_0)
+module S = Obs_server.Make(Obs_storage)(Obs_protocol_bin.Version_0_0_0)
 
 let port = ref 12050
 let db_dir = ref None
@@ -77,7 +77,7 @@ let open_db dir =
 
 let run_slave ~dir ~address ~data_address host port =
   let module C =
-    Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0) in
+    Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0) in
   let module DUMP =
     Obs_dump.Make(struct include C include C.Raw_dump end) in
   let master_addr = Unix.ADDR_INET (host, port) in

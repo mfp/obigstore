@@ -26,7 +26,7 @@ open Request
 
 module Option = BatOption
 
-module Make(P : Obs_protocol.PAYLOAD_READER) =
+module Make(P : Obs_protocol_bin.S) =
 struct
   module H =
     Hashtbl.Make(struct
@@ -107,7 +107,7 @@ struct
 
   let rec get_response_loop t =
     lwt request_id, len, crc =
-      match_lwt Obs_protocol.read_header t.ich with
+      match_lwt P.read_header t.ich with
           Obs_protocol.Header x -> return x
         | Obs_protocol.Corrupted_header ->
             raise_lwt (Obs_protocol.Error Obs_protocol.Corrupted_frame) in
@@ -180,13 +180,13 @@ struct
   let send_request t ~request_id req =
     Obs_bytea.clear t.buf;
     Obs_bytea.add_int32_le t.buf
-      (Obs_protocol_payload.Obs_request_serialization.format_id `Extprot);
+      (Obs_protocol_bin.Obs_request_serialization.format_id `Extprot);
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     for i = 0 to 7 do
       String.unsafe_set req_id_buf i
         (Char.unsafe_chr ((request_id lsr (8 * i) land 0xFF)))
     done;
-    Obs_protocol.write_msg t.och req_id_buf t.buf
+    P.write_msg t.och req_id_buf t.buf
 
   let await_req_id_cnt = ref 1
   let req_id_cnt = ref 2

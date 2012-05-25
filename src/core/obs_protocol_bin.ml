@@ -36,11 +36,23 @@ struct
     | `Extprot -> 1
 end
 
-module Version_0_0_0 :
+module type S =
 sig
   include Obs_protocol.PAYLOAD_WRITER
   include Obs_protocol.PAYLOAD_READER
-end =
+
+  val read_header : Lwt_io.input_channel -> Obs_protocol.header Lwt.t
+
+  val write_msg :
+    ?flush:bool ->
+    Lwt_io.output Lwt_io.channel -> string -> Obs_bytea.t -> unit Lwt.t
+
+  val read_request : string ref ->
+    Lwt_io.input_channel -> Lwt_io.output_channel ->
+    (Obs_request.Request.request * Obs_protocol.request_id * int) option Lwt.t
+end
+
+module Version_0_0_0 : S =
 struct
 
   module E =
@@ -111,10 +123,60 @@ struct
 
   let null_timestamp = String.make 8 '\255'
 
+  (* [request id : 8 byte]
+   * [payload size: 4 byte]
+   * [crc first 12 bytes]
+   *    ...  payload  ...
+   * [crc payload XOR crc first 12 bytes]
+   * *)
+
+  let read_header ich =
+    let head = String.create 16 in
+    Lwt_io.read_into_exactly ich head 0 16 >>
+    let crc = String.sub head 12 4 in
+      if Obs_crc32c.substring_masked head 0 12 <> crc then
+        return Obs_protocol.Corrupted_header
+      else begin
+        let req_id =
+          if Obs_string_util.cmp_substrings
+               Obs_protocol.sync_req_id 0 8 head 0 8 = 0 then
+            Obs_protocol.sync_req_id
+          else
+            String.sub head 0 8 in
+        let get s n = Char.code (String.unsafe_get s n) in
+        let v0 = get head 8 in
+        let v1 = get head 9 in
+        let v2 = get head 10 in
+        let v3 = get head 11 in
+          (* FIXME: check overflow (x86 only, not x86-64) *)
+          return (Obs_protocol.Header
+                    (req_id,
+                     v0 lor (v1 lsl 8) lor (v2 lsl 16) lor (v3 lsl 24),
+                     crc))
+      end
+
+  let write_msg ?(flush=false) och req_id msg =
+    (* FIXME: ensure req_id's size is 8 *)
+    Lwt_io.atomic
+      (fun och ->
+        let header = Obs_bytea.create 12 in
+        let len = Obs_bytea.length msg in
+          Obs_bytea.add_string header req_id;
+          Obs_bytea.add_int32_le header len;
+          let crc = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string header) 0 12 in
+            Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string header) 0 12 >>
+            Lwt_io.write_from_exactly och crc 0 4 >>
+            Lwt_io.write_from_exactly och (Obs_bytea.unsafe_string msg) 0 len >>
+            let crc2 = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string msg) 0 len in
+              Obs_crc32c.xor crc2 crc;
+              Lwt_io.write och crc2 >>
+              (if flush then Lwt_io.flush och else return ()))
+      och
+
   let writer f ?(buf=Obs_bytea.create 16) och ~request_id x =
     Obs_bytea.clear buf;
     f buf x;
-    Obs_protocol.write_msg och request_id buf
+    write_msg och request_id buf
 
   let raise_error_status = let open Obs_protocol in function
       -1 -> raise_lwt (Error Bad_request)
@@ -406,5 +468,42 @@ struct
 
   let read_property =
     reader (D.get_option D.get_string)
+
+  let read_request in_buf ich och =
+    lwt request_id, len, crc =
+      match_lwt read_header ich with
+          Obs_protocol.Header x -> return x
+        | Obs_protocol.Corrupted_header ->
+            (* we can't even trust the request_id, so all that's left is
+             * dropping the connection *)
+            raise_lwt (Obs_protocol.Error Obs_protocol.Corrupted_frame) in
+    let in_buf =
+      if String.length !in_buf >= len then !in_buf
+      else begin
+        in_buf := String.create len;
+        !in_buf
+      end
+    in
+      Lwt_io.read_into_exactly ich in_buf 0 len >>
+      lwt crc2 = Obs_protocol.read_exactly ich 4 in
+      let crc2' = Obs_crc32c.substring_masked in_buf 0 len in
+      let gb n = Char.code in_buf.[n] in
+      let format_id = gb 0 + (gb 1 lsl 8) + (gb 2 lsl 16) + (gb 3 lsl 24) in
+        Obs_crc32c.xor crc2 crc;
+        if crc2 <> crc2' then begin
+          bad_request och ~request_id () >>
+          return None
+        end else begin
+          match Obs_request_serialization.of_format_id format_id with
+              `Extprot -> begin
+                try
+                  let m = Extprot.Conv.deserialize
+                            Obs_request.Request.read ~offset:4 in_buf
+                  in return (Some (m, request_id, len))
+                with _ -> bad_request och ~request_id () >> return None
+              end
+            | `Raw -> bad_request och ~request_id () >> return None
+            | `Unknown -> unknown_serialization och ~request_id () >> return None
+        end
 end
 

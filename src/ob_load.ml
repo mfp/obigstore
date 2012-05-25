@@ -21,7 +21,7 @@ open Lwt
 open Printf
 open Obs_util
 
-module D = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
+module D = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
 let keyspace = ref ""
 let server = ref "127.0.0.1"

@@ -25,7 +25,7 @@ module DM = Obs_data_model
 module List = struct include List include BatList end
 module String = struct include String include BatString end
 
-module C = Obs_protocol_client.Make(Obs_protocol_payload.Version_0_0_0)
+module C = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
 type mode = Normal | Random of int * int | Seq of int
 
