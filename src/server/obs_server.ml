@@ -34,7 +34,7 @@ module Make
    end)
   (P : Obs_protocol.PAYLOAD) =
 struct
-  module S = Obs_protocol_server.Make(D)(Obs_protocol_payload.Version_0_0_0)
+  module S = Obs_protocol_server.Make(D)(P)
 
   type conn =
       {
