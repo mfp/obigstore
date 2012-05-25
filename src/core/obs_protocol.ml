@@ -76,9 +76,9 @@ let rec skip ich count =
  * [crc payload XOR crc first 12 bytes]
  * *)
 
-let head = String.create 16
 
 let read_header ich =
+  let head = String.create 16 in
   Lwt_io.read_into_exactly ich head 0 16 >>
   let crc = String.sub head 12 4 in
     if Obs_crc32c.substring_masked head 0 12 <> crc then
