@@ -67,7 +67,7 @@ let params = Arg.align
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
    "-rand", Arg.String set_rand_mode,
-     "N:M Write N keys in range 1..M with 32-byte 50% compressible values.";
+     "N:M Write N keys in range 1..M (round to pow10) with 32-byte 50% comp. values.";
    "-seq", Arg.Int (fun n -> mode := Seq n),
      "N Write N sequential keys with 32-byte 50% compressible values.";
    "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
@@ -284,12 +284,15 @@ let perform_writes ks =
                  let v = random_val 32 in
                    (k, [mk_col ~name:"v" v]))
           | Random (n, m) ->
-              (fun _ ->
-                 incr i;
-                 if !i > n then raise End_of_file;
-                 let k = zero_pad 16 (string_of_int (Random.int m)) in
-                   let v = random_val 32 in
-                   (k, [mk_col ~name:"v" v]))
+              let prng = Cheapo_prng.make ~seed:(Random.int 0xFFFFFF) in
+              let key_chars = truncate (log (float m) /. log 10. +. 0.5) in
+              let `Staged key_gen = random_decimal_string_maker prng in
+                (fun _ ->
+                   incr i;
+                   if !i > n then raise End_of_file;
+                   let k = zero_pad 16 (key_gen key_chars) in
+                     let v = random_val 32 in
+                     (k, [mk_col ~name:"v" v]))
         in
           if !multi > 1 then
             write_aux
