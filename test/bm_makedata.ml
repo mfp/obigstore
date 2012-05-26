@@ -28,6 +28,7 @@ let key_size = ref 16
 let value_size = ref 32
 let mode = ref `Random
 let hotspots = ref 12
+let keyrange = ref 1e9
 
 let usage_message = "Usage: bm_makedata N [options]"
 
@@ -50,6 +51,8 @@ let params = Arg.align
       " Generate output with keys in lexicographic order.";
     "-mixed", Arg.String set_mixed_mode,
       "P:N Generate mixed load with 2^N hotspots and P(seq) = P.";
+    "-key-range", Arg.Set_float keyrange,
+      "N Generate keys in range 0..N (round to pow of 10, default 1e9).";
   ]
 
 let prng = Cheapo_prng.make ~seed:(Random.int 0xFFFFFF)
@@ -74,12 +77,14 @@ let () =
     let num_pairs = match !num_pairs with
         None -> Arg.usage params usage_message; exit 1
       | Some n -> n in
+    let key_chars = truncate (log !keyrange /. log 10. +. 0.5) in
+    let `Staged key_gen = random_decimal_string_maker prng in
     let gen = match !mode with
         `Mixed p_seq ->
           mixed_load_gen
             ~hotspots:!hotspots ~compressibility_ratio
             ~key_size:!key_size ~value_size:!value_size ~p_seq prng
-      | `Random -> (fun _ -> (zero_pad !key_size (string_of_int (Cheapo_prng.next prng)),
+      | `Random -> (fun _ -> (zero_pad !key_size (key_gen key_chars),
                               random_string !value_size))
       | `Sequential -> (fun i -> (zero_pad !key_size (string_of_int i),
                                   random_string !value_size))

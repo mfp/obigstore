@@ -46,6 +46,38 @@ let random_string_maker ~compressibility_ratio prng =
            off := !off + n;
            s)
 
+let random_decimal_string_maker prng =
+  let set_rand_char prng s i =
+    String.unsafe_set s i
+      (Char.unsafe_chr (Char.code '0' + (Cheapo_prng.next prng mod 10))) in
+  let buf =
+    let b = String.create (256 * 1024) in
+      for i = 0 to 256 * 1024 - 1 do
+        set_rand_char prng b i
+      done;
+      b in
+  let off = ref 0 in
+  let ptr = ref 0 in
+    `Staged
+      (fun n ->
+         if !off + n > String.length buf then begin
+           (* we shift in order to generate a new sequence (n passes
+            * before we get the same one) *)
+           incr ptr;
+           if !ptr > String.length buf then ptr := 0;
+           off := !ptr;
+         end;
+         (* we change one byte at !off to make the string unique
+          * (diff from last pass with same starting ptr with probability
+          * 1 - 0.1 ** n or so) *)
+         set_rand_char prng buf !off;
+         let s = String.sub buf !off n in
+           off := !off + n;
+           s)
+
+let round_to_pow ~base n =
+  let rec round m = if m < n then round (m * base) else m in
+    round 1
 
 let cheapo_die p =
   let a = Array.init (1 lsl 13) (fun _ -> Random.float 1.0 < p) in
