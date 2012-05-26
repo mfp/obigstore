@@ -66,9 +66,9 @@ let params = Arg.align
    "-concurrency", Arg.Set_int concurrency,
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
-   "-dummy-rand", Arg.String set_rand_mode,
+   "-rand", Arg.String set_rand_mode,
      "N:M Write N keys in range 1..M with 32-byte 50% compressible values.";
-   "-dummy-seq", Arg.Int (fun n -> mode := Seq n),
+   "-seq", Arg.Int (fun n -> mode := Seq n),
      "N Write N sequential keys with 32-byte 50% compressible values.";
    "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
    "-period", Arg.Float (fun p -> period := Some p),
