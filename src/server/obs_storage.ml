@@ -192,13 +192,13 @@ struct
         No_throttling ->
           let nl0 = num_l0_files t.db in
             if nl0 > 6 then
-              t.throttling <- Throttle (nl0, 0.5 ** (float (nl0 - 6)))
+              t.throttling <- Throttle (nl0, 0.75 ** (float (nl0 - 6)))
       | Throttle (nl0, rate) ->
           let nl0' = num_l0_files t.db in
             if nl0' < 6 then
               t.throttling <- No_throttling
             else if nl0' > nl0 then
-              t.throttling <- Throttle (nl0', 0.5 ** (float (nl0' - 6)))
+              t.throttling <- Throttle (nl0', 0.75 ** (float (nl0' - 6)))
 
   let throttling t = match t.throttling with
       No_throttling -> 1.0
