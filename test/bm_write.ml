@@ -17,6 +17,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+open Bm_util
 open Lwt
 open Printf
 
@@ -66,9 +67,9 @@ let params = Arg.align
      "N maximum number of concurrent writes (default: 2048, multi: max 256)";
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
    "-dummy-rand", Arg.String set_rand_mode,
-     "N:M Write N random keys in range 1..M with 32-byte non-random values.";
+     "N:M Write N keys in range 1..M with 32-byte 50% compressible values.";
    "-dummy-seq", Arg.Int (fun n -> mode := Seq n),
-     "N Write N sequential keys with 32-byte non-random values.";
+     "N Write N sequential keys with 32-byte 50% compressible values.";
    "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
    "-period", Arg.Float (fun p -> period := Some p),
      "FLOAT Report stats every FLOAT seconds.";
@@ -270,7 +271,8 @@ let perform_writes ks =
         else if !multi > 1 then write_values_multi ks
         else write_values ks
     | mode ->
-        let v = String.make 32 '0' in
+        let prng = Cheapo_prng.make ~seed:(Random.int 0xFFFFFF) in
+        let `Staged random_val = random_string_maker 0.5 prng in
         let i = ref 0 in
         let mk_datum = match mode with
             Normal -> assert false
@@ -279,12 +281,14 @@ let perform_writes ks =
                  incr i;
                  if !i > n then raise End_of_file;
                  let k = zero_pad 16 (string_of_int !i) in
+                 let v = random_val 32 in
                    (k, [mk_col ~name:"v" v]))
           | Random (n, m) ->
               (fun _ ->
                  incr i;
                  if !i > n then raise End_of_file;
                  let k = zero_pad 16 (string_of_int (Random.int m)) in
+                   let v = random_val 32 in
                    (k, [mk_col ~name:"v" v]))
         in
           if !multi > 1 then
