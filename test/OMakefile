@@ -18,9 +18,9 @@ OCAML_LIBS[] +=
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
 OCamlProgram(benchmark, test_00util benchmark)
-OCamlProgram(bm_makedata, bm_makedata)
-OCamlProgram(bm_write, bm_write)
-OCamlProgram(bm_read, bm_read)
+OCamlProgram(bm_makedata, bm_util bm_makedata)
+OCamlProgram(bm_write, bm_util bm_write)
+OCamlProgram(bm_read, bm_util bm_read)
 
 toplevel: $(addsuffix .cma, $(OCAML_LIBS))
     ocamlfind ocamlmktop $(mapprefix -package, $(OCAMLPACKS)) \
