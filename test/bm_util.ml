@@ -79,13 +79,8 @@ let round_to_pow ~base n =
   let rec round m = if m < n then round (m * base) else m in
     round 1
 
-let cheapo_die p =
-  let a = Array.init (1 lsl 13) (fun _ -> Random.float 1.0 < p) in
-  let n = ref 0 in
-    (fun () ->
-       incr n;
-       n := !n land (Array.length a - 1);
-       a.(!n))
+(* TODO: replace with something faster *)
+let cheapo_die p = (fun () -> Random.float 1.0 < p)
 
 let incr_rand_char s off =
   match s.[off] with
