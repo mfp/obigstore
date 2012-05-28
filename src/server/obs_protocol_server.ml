@@ -204,38 +204,39 @@ struct
       match_lwt Lwt.choose [fst c.signal_error; c.read_request c] with
           None -> service c
         | Some (r, request_id, len) ->
-            ignore begin
-              Lwt_util.run_in_region c.server.async_req_region
-                (request_slot_cost c.server ~request_size:len r)
-                (fun () ->
-                   begin try_lwt
-                     relay_to_handler c ~request_id r
-                   with
-                     | End_of_file | Lwt_io.Channel_closed _
-                     | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
-                         (* catch exns that indicate that the connection
-                          * is gone, and signal End_of_file *)
-                         begin try
-                           Lwt.wakeup_exn (snd c.signal_error) End_of_file
-                         with _ -> ()
-                         end;
-                         return ()
-                     | e ->
-                         Format.eprintf
-                           "Internal error %s@\n\
-                            request:@\n\
-                            %a@."
-                           (Printexc.to_string e)
-                           Request.pp r;
-                         try_lwt
-                           P.internal_error c.och ~request_id ()
-                         with _ -> return ()
-                   end)
-            end;
-            (* here we block if the allowed number of async reqs is reached
-             * until one of them is done *)
-            Lwt_util.run_in_region c.server.async_req_region 1 (fun () -> return ()) >>
-            service c
+            let cost = request_slot_cost c.server ~request_size:len r in
+              ignore begin
+                Lwt_util.run_in_region c.server.async_req_region cost
+                  (fun () ->
+                     begin try_lwt
+                       relay_to_handler c ~request_id r
+                     with
+                       | End_of_file | Lwt_io.Channel_closed _
+                       | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
+                           (* catch exns that indicate that the connection
+                            * is gone, and signal End_of_file *)
+                           begin try
+                             Lwt.wakeup_exn (snd c.signal_error) End_of_file
+                           with _ -> ()
+                           end;
+                           return ()
+                       | e ->
+                           Format.eprintf
+                             "Internal error %s@\n\
+                              request:@\n\
+                              %a@."
+                             (Printexc.to_string e)
+                             Request.pp r;
+                           try_lwt
+                             P.internal_error c.och ~request_id ()
+                           with _ -> return ()
+                     end)
+              end;
+              (* here we block if the allowed number of async reqs is reached
+               * until one of them is done. Using [cost] here ensures we block
+               * if the request consumed all of [curr_concurrency_factor - 1]. *)
+              Lwt_util.run_in_region c.server.async_req_region cost (fun () -> return ()) >>
+              service c
 
   and relay_to_handler c ~request_id = function
     | List_tables { List_tables.keyspace; _ }
