@@ -32,25 +32,25 @@ let keyrange = ref 1e9
 
 let usage_message = "Usage: bm_makedata N [options]"
 
-let set_mixed_mode s =
+let set_hotspot_mode s =
   try
     let p, h = Scanf.sscanf s "%f:%d" (fun p h -> (p, h)) in
-      mode := `Mixed p;
+      mode := `Hotspot p;
       hotspots := h;
   with
     | End_of_file ->
       let p = Scanf.sscanf s "%f" (fun p -> p) in
-        mode := `Mixed p
+        mode := `Hotspot p
     | Scanf.Scan_failure _ ->
-        raise (Arg.Bad "mixed expects an argument like '0.95:8'")
+        raise (Arg.Bad "hotspot expects an argument like '0.999:8'")
 
 let params = Arg.align
   [
     "-value-size", Arg.Set_int value_size, "N Value size (default: 32).";
     "-sequential", Arg.Unit (fun () -> mode := `Sequential),
       " Generate output with keys in lexicographic order.";
-    "-mixed", Arg.String set_mixed_mode,
-      "P:N Generate mixed load with 2^N hotspots and P(seq) = P.";
+    "-hotspot", Arg.String set_hotspot_mode,
+      "P:N Generate load with 2^N hotspots and P(seq) = P.";
     "-key-range", Arg.Set_float keyrange,
       "N Generate keys in range 0..N (round to pow of 10, default 1e9).";
   ]
@@ -80,7 +80,7 @@ let () =
     let key_chars = truncate (log !keyrange /. log 10. +. 0.5) in
     let `Staged key_gen = random_decimal_string_maker prng in
     let gen = match !mode with
-        `Mixed p_seq ->
+        `Hotspot p_seq ->
           mixed_load_gen
             ~hotspots:!hotspots ~compressibility_ratio
             ~key_size:!key_size ~value_size:!value_size ~p_seq prng
