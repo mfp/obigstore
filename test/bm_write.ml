@@ -163,9 +163,12 @@ let rate_limiter = ref (fun () -> return false)
 let rec write_aux read_data write_data data_len ks =
   try_lwt
     while_lwt !in_flight < !concurrency do
+      (* we must increase before read_data, because otherwise the thread that
+       * waits until finished could see [!in_flight = 0] (because we haven't
+       * read the data yet) and terminate before time *)
+      incr in_flight;
       lwt data = read_data () in
         ignore begin
-          incr in_flight;
           !rate_limiter () >>
           begin try_lwt
             lwt () = measure_latency (fun () -> write_data ks !table data) in
@@ -183,7 +186,9 @@ let rec write_aux read_data write_data data_len ks =
         end;
         return ()
     done
-  with End_of_file -> return ()
+  with End_of_file ->
+    decr in_flight;
+    return ()
 
 let read_string ic =
   lwt count = Lwt_io.LE.read_int ic in
