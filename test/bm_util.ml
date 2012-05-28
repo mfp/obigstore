@@ -101,6 +101,12 @@ let mixed_load_gen ~hotspots ~key_size ~value_size ~p_seq ~compressibility_ratio
   let remembered = Array.init (1 lsl hotspots) (fun _ -> random_string key_size) in
   let idx = ref 0 in
   let die = cheapo_die p_seq in
+  let overwrite_die = cheapo_die 0.5 in
+  let rewind s =
+    let s = String.copy s in
+      s.[String.length s - 2] <- ' ';
+      s
+  in
     (fun i ->
        incr idx;
        idx := !idx land (Array.length remembered - 1);
@@ -108,11 +114,11 @@ let mixed_load_gen ~hotspots ~key_size ~value_size ~p_seq ~compressibility_ratio
          if die () then begin
            let s = remembered.(!idx) in
              incr_rand_string s;
-             s
+             if overwrite_die () then rewind s
+             else s
          end else begin
            let s = random_string key_size in
              remembered.(!idx) <- s;
-             incr idx;
              s
          end in
        let v = random_string value_size in
