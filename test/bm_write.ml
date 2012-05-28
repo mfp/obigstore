@@ -31,6 +31,7 @@ module C = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 type mode =
     Normal | Random of int * int | Seq of int
   | Hotspot of int * float (* log2(hotspots) * Pseq *)
+  | Rand_update of int * float
 
 let server = ref "127.0.0.1"
 let port = ref 12050
@@ -64,6 +65,14 @@ let set_hotspot_mode s =
     | End_of_file | Scanf.Scan_failure _ ->
         raise (Arg.Bad "hotspot expects an argument like '0.999:8'")
 
+let set_rand_update_mode s =
+  try
+    let n, p = Scanf.sscanf s "%d:%f" (fun n p -> (n, p)) in
+      mode := Rand_update (n, p);
+  with
+    | End_of_file | Scanf.Scan_failure _ ->
+        raise (Arg.Bad "rand-update expects an argument like '100_000_000:0.8'")
+
 let params = Arg.align
   [
    "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
@@ -78,6 +87,8 @@ let params = Arg.align
    "-multi", Arg.Set_int multi, "N Write in N (power of 2) batches (default: 1).";
    "-rand", Arg.String set_rand_mode,
      "N:M Write N keys in range 1..M (round to pow10) with 32-byte 50% comp. values.";
+   "-rand-update", Arg.String set_rand_update_mode,
+     "N:P Write N keys with overwrite probability P and 32-byte 50% comp. values.";
    "-seq", Arg.Int (fun n -> mode := Seq n),
      "N Write N sequential keys with 32-byte 50% compressible values.";
    "-hotspot", Arg.String set_hotspot_mode,
@@ -317,6 +328,18 @@ let perform_writes ks =
               in
                 (fun _ ->
                    let k, v = f () in
+                     (k, [mk_col ~name:"v" v]))
+          | Rand_update (n, p) ->
+              let delta = 1. /. p -. 1. in
+              let limit = ref 1. in
+                (fun _ ->
+                   incr i;
+                   if !i > n then raise End_of_file;
+                   let k =
+                     zero_pad 16
+                       (Int64.(to_string (of_float (Random.float !limit)))) in
+                   let v = random_val 32 in
+                     limit := !limit +. delta;
                      (k, [mk_col ~name:"v" v]))
         in
           if !multi > 1 then
