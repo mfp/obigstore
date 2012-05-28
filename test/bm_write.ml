@@ -354,6 +354,7 @@ let perform_writes ks =
               ks
 
 let () =
+  Random.self_init ();
   show_usage_and_exit := (fun () -> Arg.usage params usage_message; exit 1);
   Arg.parse params ignore usage_message;
   Lwt_unix.run begin
