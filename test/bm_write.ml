@@ -28,7 +28,9 @@ module String = struct include String include BatString end
 
 module C = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
-type mode = Normal | Random of int * int | Seq of int
+type mode =
+    Normal | Random of int * int | Seq of int
+  | Hotspot of int * float (* log2(hotspots) * Pseq *)
 
 let server = ref "127.0.0.1"
 let port = ref 12050
@@ -54,6 +56,14 @@ let set_rand_mode s =
   with Not_found | Failure _ ->
       !show_usage_and_exit ()
 
+let set_hotspot_mode s =
+  try
+    let p, h = Scanf.sscanf s "%f:%d" (fun p h -> (p, h)) in
+      mode := Hotspot (h, p);
+  with
+    | End_of_file | Scanf.Scan_failure _ ->
+        raise (Arg.Bad "hotspot expects an argument like '0.999:8'")
+
 let params = Arg.align
   [
    "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
@@ -70,6 +80,8 @@ let params = Arg.align
      "N:M Write N keys in range 1..M (round to pow10) with 32-byte 50% comp. values.";
    "-seq", Arg.Int (fun n -> mode := Seq n),
      "N Write N sequential keys with 32-byte 50% compressible values.";
+   "-hotspot", Arg.String set_hotspot_mode,
+     "P:N Generate load with 2^N hotspots and P(seq) = P.";
    "-rate", Arg.Int (fun n -> rate := Some n), "N Limit writes to N/sec.";
    "-period", Arg.Float (fun p -> period := Some p),
      "FLOAT Report stats every FLOAT seconds.";
@@ -289,7 +301,6 @@ let perform_writes ks =
                  let v = random_val 32 in
                    (k, [mk_col ~name:"v" v]))
           | Random (n, m) ->
-              let prng = Cheapo_prng.make ~seed:(Random.int 0xFFFFFF) in
               let key_chars = truncate (log (float m) /. log 10. +. 0.5) in
               let `Staged key_gen = random_decimal_string_maker prng in
                 (fun _ ->
@@ -297,6 +308,15 @@ let perform_writes ks =
                    if !i > n then raise End_of_file;
                    let k = zero_pad 16 (key_gen key_chars) in
                      let v = random_val 32 in
+                     (k, [mk_col ~name:"v" v]))
+          | Hotspot (hotspots, p_seq) ->
+              let f =
+                mixed_load_gen
+                  ~hotspots ~compressibility_ratio:0.5
+                  ~key_size:16 ~value_size:32 ~p_seq prng
+              in
+                (fun _ ->
+                   let k, v = f () in
                      (k, [mk_col ~name:"v" v]))
         in
           if !multi > 1 then
