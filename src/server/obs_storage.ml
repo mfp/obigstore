@@ -36,6 +36,30 @@ struct
     Obs_string_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
 
+(* condition that cannot be signalled faster than a given time interval *)
+module Throttled_condition : sig
+  type t
+  (* [make dt] creates a condition [t] such that [signal t] will not unblock
+   * threads that called [wait t] until it's been [dt] seconds since it was
+   * created. NOTE: with the ev engine, the minimum period is ~3ms. *)
+  val make : float -> t
+  val wait : t -> unit Lwt.t
+  val signal : t -> unit
+end =
+struct
+  type t = { waiter : unit Lwt.t * unit Lwt.u; mutable timer_launched : bool; dt : float; }
+
+  let make dt = { waiter = Lwt.wait (); timer_launched = false; dt; }
+
+  let wait t = fst t.waiter
+
+  let signal t =
+    if not t.timer_launched then begin
+      t.timer_launched <- true;
+      ignore (Lwt_unix.sleep t.dt >> return (Lwt.wakeup (snd t.waiter) ()))
+    end
+end
+
 module WeakTbl : sig
   type ('a, 'b) t
 
@@ -132,7 +156,7 @@ struct
 
         mutable throttling : throttling;
 
-        wait_for_dirty : unit Lwt_condition.t;
+        mutable wait_for_dirty : Throttled_condition.t;
       }
 
   and throttling =
@@ -214,13 +238,13 @@ struct
         slave_tbl = IM.empty; fsync;
         need_keyspace_reload = false;
         throttling = No_throttling;
-        wait_for_dirty = Lwt_condition.create ();
+        wait_for_dirty = Throttled_condition.make 0.001;
       }
     in
       ignore begin try_lwt
         let rec writebatch_loop () =
           begin if not t.dirty && not t.closed then
-              Lwt_condition.wait t.wait_for_dirty
+              Throttled_condition.wait t.wait_for_dirty
           else return ()
           end >>
           if t.closed && not t.dirty then begin
@@ -240,6 +264,7 @@ struct
               t.dirty <- false;
               t.wb <- L.Batch.make ();
               t.need_keyspace_reload <- false;
+              t.wait_for_dirty <- Throttled_condition.make 0.001;
               t.sync_wait <- Lwt.wait ();
               t.wait_last_sync <- Lwt.wait ();
               t.serialized_update <- Obs_bytea.create 128 in
@@ -269,7 +294,7 @@ struct
 
   let close t =
     t.closed <- true;
-    Lwt_condition.signal t.wait_for_dirty ();
+    Throttled_condition.signal t.wait_for_dirty;
     if t.dirty then fst t.wait_last_sync else return ()
 
   let perform t f =
@@ -281,7 +306,7 @@ struct
       let tx = { t; valid = true; timestamp; } in
         try
           f tx;
-          Lwt_condition.signal t.wait_for_dirty ();
+          Throttled_condition.signal t.wait_for_dirty;
           waiter
         with exn ->
           tx.valid <- false;
