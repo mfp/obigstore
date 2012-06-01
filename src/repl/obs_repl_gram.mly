@@ -298,6 +298,19 @@ delete :
         with_ks
           (fun keyspace ->
              R.Delete_key { R.Delete_key.keyspace; table = $2; key = $4; }) }
+  | DELETE table key_range_no_cond
+      {
+        with_ks
+          (fun keyspace ->
+             let key_range =
+               match $3 with
+                   `List l -> Key_range.Keys l
+                 | `Range r -> Key_range.Key_range r
+                 | `Enc_list l -> encode_key_list $2 l
+                 | `Enc_range l -> encode_key_range $2 l
+             in
+               R.Delete_keys { R.Delete_keys.keyspace; table = $2; key_range; })
+      }
   | DELETE table LBRACKET LPAREN enc_val RPAREN RBRACKET
       {
         with_ks
@@ -340,6 +353,10 @@ key_range :
     range        { $1 }
   | enc_range    { $1 }
 
+key_range_no_cond :
+    range_no_cond         { $1 }
+  | enc_range_no_cond     { $1 }
+
 range :
   | LBRACKET opt_id COLON opt_id opt_cond RBRACKET
                  { (`Range { Range.first = $2; up_to = $4; reverse = false; },
@@ -362,6 +379,24 @@ enc_range:
                          $7) }
   | LBRACKET LPAREN KEYS enc_val_list opt_cond RPAREN RBRACKET
                  { (`Enc_list $4, $5) }
+
+range_no_cond :
+  | LBRACKET opt_id COLON opt_id RBRACKET
+                 { `Range { Range.first = $2; up_to = $4; reverse = false; } }
+  | LBRACKET opt_id REVRANGE opt_id RBRACKET
+                 { `Range { Range.first = $2; up_to = $4; reverse = true; } }
+  | LBRACKET RBRACKET
+                 { `Range { Range.first = None; up_to = None; reverse = false; } }
+  | LBRACKET id_list opt_cond RBRACKET
+                 { `List $2 }
+
+enc_range_no_cond:
+  | LBRACKET LPAREN opt_enc_val COLON opt_enc_val RPAREN RBRACKET
+                 { `Enc_range { Range.first = $3; up_to = $5; reverse = false; } }
+  | LBRACKET LPAREN opt_enc_val REVRANGE opt_enc_val RPAREN RBRACKET
+                 { `Enc_range { Range.first = $3; up_to = $5; reverse = true; } }
+  | LBRACKET LPAREN KEYS enc_val_list RPAREN RBRACKET
+                 { `Enc_list $4 }
 
 enc_val :
     id                  { Atom (Literal $1) }

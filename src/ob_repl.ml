@@ -218,6 +218,7 @@ struct
 \n\
      DELETE table[key][col]     Delete column col for given key in table\n\
      DELETE table[key]          Delete all columns for given key in table\n\
+     DELETE table[k1:k2]        Delete all columns for given key range in table\n\
 \n\
      DUMP                       Trigger server-side database dump.\n\
      DUMP LOCAL                 Dump database in new (timestamped) directory.\n\
