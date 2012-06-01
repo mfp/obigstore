@@ -96,7 +96,7 @@ struct
 
   type keyspace = OP.keyspace
   type key = M.Codec.key
-  type key_range = [`Continuous of key range | `Discrete of key list]
+  type key_range = [`Continuous of key range | `Discrete of key list | `All]
 
   let key_range_with_prefix ?starting_with p =
     key_range_with_prefix C.codec ?starting_with p
@@ -120,6 +120,7 @@ struct
 
   let inject_range = function
       `Discrete l -> `Discrete (List.map C.encode_to_string l)
+    | `All -> `All
     | `Continuous kr ->
       `Continuous
         { kr with first = Option.map C.encode_to_string kr.first;
