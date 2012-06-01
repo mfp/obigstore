@@ -227,4 +227,6 @@ sig
     keyspace -> key -> column_name list -> unit Lwt.t
 
   val delete_key : keyspace -> key -> unit Lwt.t
+
+  val delete_keys : keyspace -> key_range -> unit Lwt.t
 end
