@@ -2700,6 +2700,22 @@ let delete_key tx table key =
           tx.deleted_keys <- TM.modify (S.add key) S.empty table tx.deleted_keys;
           return ()
 
+(* assumes that [reverse = false] if the range is [`Continuous _] *)
+let rec delete_keys tx table key_range =
+  let max_keys = match key_range with
+      `Discrete _ -> None
+    | `Continuous _ -> Some 16384
+  in
+    match_lwt get_keys tx table ?max_keys key_range with
+        [] -> return ()
+      | l ->
+          Lwt_list.iter_p (delete_key tx table) l >>
+          match key_range with
+              `Discrete _ -> return ()
+            | `Continuous range ->
+               let first = Some (List.last l ^ "\x00") in
+                 delete_keys tx table (`Continuous { range with first })
+
 let find_or_add find add h k =
   try find h k with Not_found -> add h k
 
@@ -3127,6 +3143,17 @@ let delete_columns ks table key columns =
 
 let delete_key ks table key =
   with_transaction ks (fun tx -> delete_key tx table key)
+
+let delete_keys ks table key_range =
+  (* actual delete_keys wants non-reverse ranges, so adjust key_range if
+   * needed *)
+  let key_range = match key_range with
+      `All | `Discrete _ | `Continuous { reverse = false; _ } as x -> x
+    | `Continuous { reverse = true; first; up_to } ->
+        `Continuous { reverse = false; first = up_to; up_to = first }
+  in
+    with_transaction ks
+      (fun tx -> delete_keys tx table (expand_key_range key_range))
 
 let dump ks ?format ?only_tables ?offset () =
   with_transaction ks (fun tx -> dump tx ?format ?only_tables ?offset ())

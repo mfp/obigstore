@@ -258,6 +258,7 @@ struct
     | Put_columns { Put_columns.keyspace; _ }
     | Delete_columns { Delete_columns.keyspace; _ }
     | Delete_key { Delete_key.keyspace; _ }
+    | Delete_keys { Delete_keys.keyspace; _ }
     | Dump { Dump.keyspace; _ }
     | Load { Load.keyspace; _ }
     | Stats { Stats.keyspace; _ }
@@ -428,6 +429,10 @@ struct
     | Delete_key { Delete_key.keyspace; table; key; } ->
         with_keyspace c keyspace ~request_id
           (fun (ks, _) -> D.delete_key ks.ks_ks table key >>=
+                          P.return_ok ?buf c.och ~request_id)
+    | Delete_keys { Delete_keys.keyspace; table; key_range; } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _) -> D.delete_keys ks.ks_ks table (krange' key_range) >>=
                           P.return_ok ?buf c.och ~request_id)
     | Dump { Dump.keyspace; only_tables; cursor; format; } ->
         let offset = match cursor with

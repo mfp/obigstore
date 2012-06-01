@@ -1118,6 +1118,29 @@ struct
              aeq_slice ~msg:"after delete, after transaction commit"
                (Some "a", [ "a", "z", [ "x", ""; "y", ""; "z", "" ]]))
 
+  let test_delete_keys dbs =
+    lwt ks = register_keyspace dbs "test_delete_key" in
+    let get_all tx = get_slice tx T.tbl (key_range ()) `All in
+      put_slice ks T.tbl
+        [ "a", [ "x", ""; "y", ""; "z", "" ];
+          "b", [ "x", ""; "y", ""; "z", "" ]] >>
+      D.read_committed_transaction ks
+        (fun tx ->
+           get_all tx >|=
+             aeq_slice ~msg:"before delete"
+               (Some "b",
+                [ "a", "z", [ "x", ""; "y", ""; "z", "" ];
+                  "b", "z", [ "x", ""; "y", ""; "z", "" ]]) >>
+           D.delete_keys tx T.tbl `All >>
+           let expect_after_del msg = aeq_slice ~msg (None, []) in
+             get_all tx >|= expect_after_del "with key range">>
+             get_slice tx T.tbl (`Discrete ["a"; "b"]) `All >|=
+               expect_after_del "with discrete keys") >>
+      D.read_committed_transaction ks
+        (fun tx ->
+           get_all tx >|=
+             aeq_slice ~msg:"after delete, after transaction commit" (None, []))
+
   let test_exists_key dbs =
     lwt ks = register_keyspace dbs "test_exists_key" in
       put_slice ks T.t1 [ "1", ["1", ""] ] >>
@@ -1507,6 +1530,7 @@ struct
       "get_column_values", test_get_column_values;
       "put_columns", test_put_columns;
       "delete_key", test_delete_key;
+      "delete_keys", test_delete_keys;
       "delete_columns", test_delete_columns;
       "exists_key", test_exists_key;
       "exist_keys", test_exist_keys;

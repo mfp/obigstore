@@ -384,6 +384,12 @@ struct
       (Delete_key { Delete_key.keyspace = ks.ks_id; table; key; })
       P.read_ok
 
+  let delete_keys ks table key_range =
+    async_request_ks ks
+      (Delete_keys { Delete_keys.keyspace = ks.ks_id; table;
+                     key_range = krange key_range; })
+      P.read_ok
+
   let dump ks ?format ?only_tables ?offset () =
     async_request_ks ks
       (Dump { Dump.keyspace = ks.ks_id; only_tables; cursor = offset;

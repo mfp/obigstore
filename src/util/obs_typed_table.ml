@@ -247,4 +247,6 @@ struct
     delete_columns ks table (C.encode_to_string key) cols
 
   let delete_key ks key = delete_key ks table (C.encode_to_string key)
+
+  let delete_keys ks key_range = delete_keys ks table (inject_range key_range)
 end

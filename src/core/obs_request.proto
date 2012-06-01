@@ -154,5 +154,6 @@ message request =
   | Get_property { property : string }
   | Watch_keys { keyspace : keyspace; table : table; keys : [key] }
   | Watch_columns { keyspace : keyspace; table : table; columns : [(key * [column_name])] }
+  | Delete_keys { keyspace : keyspace; table: table; key_range : key_range }
 
 (* vim:set ft=omlet: *) 

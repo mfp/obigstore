@@ -301,6 +301,8 @@ sig
 
   val delete_key : keyspace -> table -> key -> unit Lwt.t
 
+  val delete_keys : keyspace -> table -> string key_range -> unit Lwt.t
+
   (** {3} Asynchronous notifications *)
 
   (** [listen ks topìc] allows to receive notifications sent to the specified

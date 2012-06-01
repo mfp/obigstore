@@ -424,6 +424,9 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       Timing.cnt_put_keys := Int64.add !Timing.cnt_put_keys 1L;
       D.delete_key (get ks) table key >>=
       ret_nothing
+  | Delete_keys { Delete_keys.table; key_range; } ->
+      D.delete_keys (get ks) table (krange' key_range) >>=
+      ret_nothing
   | Stats _ ->
       let open Load_stats_ in
       let open Rates in
