@@ -4,6 +4,7 @@ OBJECTS[] =
   obs_backup
   obs_datum_encoding
   obs_protocol_server
+  obs_protocol_textual
   obs_server
   obs_shared_mutex
   obs_storage
