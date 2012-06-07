@@ -33,16 +33,18 @@ struct
       Lwt_io.read_into_exactly ich s 0 n >>
       return s
 
+  let drop_fst_char s = String.sub s 1 (String.length s - 1)
+
+  let read_line_drop_fst ich = Lwt_io.read_line ich >|= drop_fst_char
+
   let read_arg ich =
-    lwt l = Lwt_io.read_line ich in
-    let len = int_of_string (String.sub l 1 (String.length l - 1)) in
+    lwt len = read_line_drop_fst ich >|= int_of_string in
     lwt data = read_exactly ich len in
     lwt _ = Lwt_io.read_line ich in
       return data
 
   let read_arg_opt ich =
-    lwt l = Lwt_io.read_line ich in
-    let len = int_of_string (String.sub l 1 (String.length l - 1)) in
+    lwt len = read_line_drop_fst ich >|= int_of_string in
       if len <= 0 then return None
       else begin
         lwt data = read_exactly ich len in
@@ -51,8 +53,11 @@ struct
       end
 
   let read_header ich =
-    lwt id = Lwt_io.read_line ich in
-    lwt nargs = Lwt_io.read_line ich >|= int_of_string in
+    lwt id =
+      lwt s = Lwt_io.read_line ich in
+        if String.length s = 0 || s.[0] <> '@' then raise_lwt Bad_header else
+        return (drop_fst_char s) in
+    lwt nargs = read_line_drop_fst ich >|= int_of_string in
       (* FIXME: should indicate bad request and return None, then retry *)
       if nargs < 1 then raise_lwt Bad_header else
       lwt cmd = read_arg ich in
@@ -344,7 +349,7 @@ struct
   end;;
 
   let writer f ?buf och ~request_id x =
-    Lwt_io.write_line och request_id >>
+    Lwt_io.write_line och ("@" ^ request_id) >>
     f ?buf och x
 
   let write_error code desc ?buf och ~request_id () =
