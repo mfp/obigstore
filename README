@@ -1,28 +1,43 @@
 
 obigstore: multi-dimensional DB with BigTable-like data model atop LevelDB
 ==========================================================================
-Copyright (c) 2011 Mauricio Fernandez <mfp@acm.org>
+Copyright (C) 2012 Mauricio Fernandez <mfp@acm.org>
 
-obigstore is a database server + client library. It exposes a
-multidimensional BigTable-like data model built on top of the LevelDB.
-It can be used in a client/server setting or as en embedded database.
+obigstore is a database server + client library and associated tools. It
+exposes a multidimensional BigTable-like data model built on top of the Google
+LevelDB library, inheriting its fundamental strengths, such as fast random
+writes or control over the physical data layout.  It can be used in a
+client/server setting or as an embedded database.
 
-obigstore's main strengths stem from the underlying LevelDB store and the data
-model built atop it:
-* fast random writes
-* control over the physical layout of the data, allowing good spacial locality
-  and fast access to data ranges
+obigstore's salient features include:
 
-obigstore also features:
-* transactions (both read-committed and repeatable-read isolation levels)
-* explicit locks
-* asynchronous notifications
+* strong data durability guarantees:
+  * fully fsync'ed writes with group commit
+  * synchronous and asynchronous replication
+  * data integrity ensured with CRCs at the protocol level
+* rich semi-structured data model:
+  * atomic transactions (both read-committed and repeatable-read isolation levels)
+  * optimistic and pessimistic concurrency control
+  * asynchronous notifications
+  * limited support for complex documents (BSON serialized)
+* performance:
+  * fast random writes
+  * efficient access to data ranges, thanks to spatial locality
+  * cross-record redundancy reduction at the page level (compression)
+  * fast recovery (independent of dataset size)
 
 obigstore currently includes:
 * the (embeddable) database library
 * a server + client library
 * a friendly REPL for interactive data manipulation
 * DB dump/restore tools
+
+Limitations
+-----------
+* transactions must fit in memory
+* no direct support for infinite horizontal scalability yet (i.e., you'd have to
+  partition manually on key ranges at this point)
+* no automatic failover yet
 
 Requirements
 ------------
