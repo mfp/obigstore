@@ -348,6 +348,11 @@ struct
       return (Delete_columns { Delete_columns.keyspace; table; key; columns; })
   end;;
 
+  cmd "PROP" 1 begin fun nargs ich och ->
+    lwt property = read_arg ich in
+      return (Get_property { Get_property.property; })
+  end;;
+
   let writer f ?buf och ~request_id x =
     Lwt_io.write_line och ("@" ^ request_id) >>
     f ?buf och x
