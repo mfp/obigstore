@@ -41,6 +41,8 @@ sig
   include Obs_protocol.PAYLOAD_WRITER
   include Obs_protocol.PAYLOAD_READER
 
+  val version : int * int * int
+
   val read_header : Lwt_io.input_channel -> Obs_protocol.header Lwt.t
 
   val write_msg :
@@ -54,6 +56,7 @@ end
 
 module Version_0_0_0 : S =
 struct
+  let version = (0, 0, 0)
 
   module E =
   struct

@@ -101,10 +101,10 @@ let params = Arg.align
 
 let usage_message = "Usage: bm_write [options]"
 
-let make_client ~address ~data_address =
+let make_client ~address ~data_address ~role ~password =
   lwt fd, ich, och = Obs_conn.open_connection address in
     Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
-    return (C.make ~data_address ich och)
+    C.make ~data_address ich och ~role ~password
 
 let in_flight = ref 0
 let finished = ref 0
@@ -353,6 +353,9 @@ let perform_writes ks =
               (fun (k, cols) -> 1)
               ks
 
+let role = "guest"
+let password = "guest"
+
 let () =
   Random.self_init ();
   show_usage_and_exit := (fun () -> Arg.usage params usage_message; exit 1);
@@ -360,7 +363,7 @@ let () =
   Lwt_unix.run begin
     let address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
-    lwt db = make_client ~address ~data_address in
+    lwt db = make_client ~address ~data_address ~role ~password in
     lwt ks = C.register_keyspace db !keyspace in
 
     let rec wait_until_finished () =

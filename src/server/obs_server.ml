@@ -20,6 +20,52 @@
 open Lwt
 open Printf
 
+let perform_auth auth ich och =
+  lwt role = Lwt_io.read_line ich in
+  let challenge = Obs_auth.challenge auth in
+    Lwt_io.write_line och challenge >>
+    lwt response = Lwt_io.read_line ich in
+      try_lwt
+        Obs_auth.check_response auth ~role ~challenge ~response;
+        Lwt_io.write_line och "+OK"
+      with e ->
+        Lwt_io.write_line och "-ERR" >>
+        raise_lwt e
+
+let is_compat (a1, a2, a3) (b1, b2, b3) = (a1 = b1 && b2 >= a2)
+
+let find_compat_proto v l =
+    try
+      Some (List.find (fun (v', _) -> is_compat v v') l)
+    with Not_found -> None
+
+let find_protocol (bin, text) = function
+    `Binary v -> find_compat_proto v bin
+  | `Textual v -> find_compat_proto v text
+
+let connection_handshake ~debug server auth ((bin, text) as protos) ich och =
+  let read_version () =
+    lwt s = Lwt_io.read_line ich in
+      return (Scanf.sscanf s "%d.%d.%d" (fun a b c -> (a, b, c))) in
+  let find_max_version = List.fold_left (fun v (w, _) -> max v w) (-1, 0, 0) in
+  let to_s (m, n, o) = sprintf "%d.%d.%d" m n o in
+    perform_auth auth ich och >>
+    Lwt_io.write_line och (to_s (find_max_version bin)) >>
+    Lwt_io.write_line och (to_s (find_max_version text)) >>
+    lwt requested_proto =
+      match_lwt Lwt_io.read_line ich with
+          "TXT" -> lwt v = read_version () in return (`Textual v)
+        | "BIN" -> lwt v = read_version () in return (`Binary v)
+        | s -> raise_lwt (Failure (sprintf "Unknown protocol %s" s))
+    in
+      match find_protocol protos requested_proto with
+          Some ((a, b, c), proto) ->
+            Lwt_io.write_line och (sprintf "%d.%d.%d" a b c) >>
+            return proto
+        | None ->
+            Lwt_io.write_line och "-ERR" >>
+            raise_lwt (Failure "Cannot find matching protocol")
+
 module Make
   (D : sig
      include Obs_data_model.S
@@ -31,8 +77,7 @@ module Make
      val use_thread_pool : db -> bool -> unit
 
      val throttling : db -> float
-   end)
-  (P : Obs_protocol.SERVER_FUNCTIONALITY) =
+   end) =
 struct
   module S = Obs_protocol_server.Make(D)
 
@@ -47,7 +92,7 @@ struct
       Unix.ADDR_UNIX s -> sprintf "unix socket %S" s
     | Unix.ADDR_INET (a, p) -> sprintf "%s:%d" (Unix.string_of_inet_addr a) p
 
-  let rec accept_loop handle_connection ~debug ~server sock =
+  let rec accept_loop handle_connection ~debug ~server auth protos sock =
     begin try_lwt
       lwt (fd, addr) = Lwt_unix.accept sock in
         if debug then
@@ -58,7 +103,7 @@ struct
           let ich = Lwt_io.of_fd Lwt_io.input fd in
           let och = Lwt_io.of_fd Lwt_io.output fd in
             try_lwt
-              handle_connection ~debug server { ich; och; addr }
+              handle_connection ~debug server auth protos { ich; och; addr }
             finally
               (try_lwt Lwt_io.flush och with _ -> return ()) >>
               Lwt_io.abort och
@@ -81,7 +126,7 @@ struct
       Printexc.print_backtrace stderr;
       Lwt_unix.sleep 0.05
     end >>
-    accept_loop handle_connection ~debug ~server sock
+    accept_loop handle_connection ~debug ~server auth protos sock
 
   let make_sock ?(reuseaddr=true) ?(backlog=1024) address =
     let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -93,17 +138,18 @@ struct
   let rec run_server
         ?(replication_wait = Obs_protocol_server.Await_commit)
         ?(max_async_reqs = 5000)
-        ?(debug=false) db ~address ~data_address =
+        ?(debug=false) db ~address ~data_address auth protos =
     let server = S.make ~max_async_reqs ~replication_wait db in
       Lwt.join
-        [ accept_loop handle_connection ~debug ~server (make_sock address);
-          accept_loop handle_data_connection ~debug ~server (make_sock data_address);
+        [ accept_loop handle_connection ~debug ~server auth protos (make_sock address);
+          accept_loop handle_data_connection ~debug ~server auth protos (make_sock data_address);
         ]
 
-  and handle_connection ~debug server conn =
-    let protocol = (module P : Obs_protocol.SERVER_FUNCTIONALITY) in
-      S.service_client ~debug server protocol conn.ich conn.och
+  and handle_connection ~debug server auth protos conn =
+    lwt proto = connection_handshake ~debug server auth protos conn.ich conn.och in
+      S.service_client ~debug server proto conn.ich conn.och
 
-  and handle_data_connection ~debug server conn =
+  and handle_data_connection ~debug server auth protos conn =
+    perform_auth auth conn.ich conn.och >>
     S.service_data_client ~debug server conn.ich conn.och
 end

@@ -21,7 +21,7 @@ open Printf
 open Lwt
 
 module String = struct include String include BatString end
-module S = Obs_server.Make(Obs_storage)(Obs_protocol_bin.Version_0_0_0)
+module S = Obs_server.Make(Obs_storage)
 
 let port = ref 12050
 let db_dir = ref None
@@ -75,7 +75,7 @@ let open_db dir =
     ~unsafe_mode:!unsafe_mode
     dir
 
-let run_slave ~dir ~address ~data_address host port =
+let run_slave ~dir ~address ~data_address host port auth protos ~role ~password =
   let module C =
     Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0) in
   let module DUMP =
@@ -84,7 +84,7 @@ let run_slave ~dir ~address ~data_address host port =
   let master_data_address = Unix.ADDR_INET (host, port + 1) in
     Lwt_unix.run begin
       lwt ich, och = Lwt_io.open_connection master_addr in
-      let db = C.make ~data_address:master_data_address ich och in
+      lwt db = C.make ~data_address:master_data_address ich och ~role ~password in
       lwt raw_dump = C.Raw_dump.dump db in
         DUMP.dump_local ~verbose:true ~destdir:dir raw_dump >>
         let db = open_db dir in
@@ -122,7 +122,20 @@ let run_slave ~dir ~address ~data_address host port =
           S.run_server
             ~max_async_reqs:!max_concurrency
             ~debug:!debug db ~address ~data_address
+            auth protos
     end
+
+let bin_protos =
+  [
+    (0, 0, 0), (module Obs_protocol_bin.Version_0_0_0 : Obs_protocol.SERVER_FUNCTIONALITY);
+  ]
+
+let text_protos =
+  [
+    (0, 0, 0), (module Obs_protocol_textual.Version_0_0_0 : Obs_protocol.SERVER_FUNCTIONALITY);
+  ]
+
+let protos = (List.(rev (sort compare bin_protos)), List.(rev (sort compare text_protos)))
 
 let () =
   Arg.parse
@@ -135,6 +148,7 @@ let () =
     usage_message;
   let address = Unix.ADDR_INET (Unix.inet_addr_any, !port) in
   let data_address = Unix.ADDR_INET (Unix.inet_addr_any, !port + 1) in
+  let auth = Obs_auth.accept_all in
     match !db_dir with
         None -> Arg.usage params usage_message;
                 exit 1
@@ -151,7 +165,7 @@ let () =
                   Lwt_unix.run (S.run_server ~debug:!debug db
                                   ~max_async_reqs:!max_concurrency
                                   ~replication_wait:!replication_wait
-                                  ~address ~data_address)
+                                  ~address ~data_address auth protos)
             | Some master ->
                 let host, port =
                   begin try
@@ -168,4 +182,5 @@ let () =
                   with Not_found ->
                     eprintf "Couldn't find master %S\n%!" host;
                     exit 1
-                in run_slave ~dir ~address ~data_address host port
+                in run_slave ~dir ~address ~data_address host port auth protos
+                     ~role:"guest" ~password:"guest"

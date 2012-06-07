@@ -1,6 +1,7 @@
 OCAMLINCLUDES += ../core
 
 OBJECTS[] =
+  obs_auth
   obs_backup
   obs_datum_encoding
   obs_protocol_server

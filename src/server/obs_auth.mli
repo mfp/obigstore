@@ -17,19 +17,12 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+type t
 
-module Make : functor(P : Obs_protocol_bin.S) ->
-sig
-  include Obs_data_model.S with type backup_cursor = string
-  include Obs_data_model.BACKUP_SUPPORT with type backup_cursor := backup_cursor
+val make : (string * string) list -> t
+val accept_all : t
 
-  module Replication : Obs_replication.REPLICATION_SERVER
-   with type db := db and type raw_dump := Raw_dump.raw_dump
+val challenge : t -> string
 
-  val make :
-    data_address:Unix.sockaddr ->
-    Lwt_io.input_channel -> Lwt_io.output_channel ->
-    role:string -> password:string -> db Lwt.t
-
-  val close : db -> unit
-end
+(* @raise [Failure _] if the response is incorrect. *)
+val check_response : t -> role:string -> challenge:string -> response:string -> unit

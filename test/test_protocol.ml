@@ -39,7 +39,12 @@ struct
     let ch1_in, ch1_out = Lwt_io.pipe () in
     let ch2_in, ch2_out = Lwt_io.pipe () in
     let server = SERVER.make db in
-    let client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out in
+    lwt client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out
+                   ~role:"guest" ~password:"guest"
+    and proto  = Obs_server.connection_handshake ~debug:false server
+                   Obs_auth.accept_all ([ (0, 0, 0), binary_protocol ], [])
+                   ch1_in ch2_out
+    in
       try_lwt
         ignore
           (try_lwt
@@ -58,7 +63,12 @@ struct
     let mk_client () =
       let ch1_in, ch1_out = Lwt_io.pipe () in
       let ch2_in, ch2_out = Lwt_io.pipe () in
-      let client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out in
+      lwt client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out
+                     ~role:"guest" ~password:"guest"
+      and proto  = Obs_server.connection_handshake ~debug:false server
+                     Obs_auth.accept_all ([ (0, 0, 0), binary_protocol ], [])
+                     ch1_in ch2_out
+      in
         clients := client :: !clients;
         ignore
           (try_lwt

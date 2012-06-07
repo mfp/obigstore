@@ -62,6 +62,8 @@ struct
     pending_reqs : (module PENDING_RESPONSE) H.t;
     async_req_id : string;
     data_address : Unix.sockaddr;
+    role : string;
+    password : string;
   }
 
   type keyspace = { ks_name : string; ks_id : int; ks_db : db; }
@@ -151,14 +153,39 @@ struct
               end;
               get_response_loop t
 
-  let make ~data_address ich och =
+  let authenticate ich och ~role ~password =
+    Lwt_io.write_line och role >>
+    lwt challenge = Lwt_io.read_line ich in
+    let response =
+      Cryptokit.(transform_string (Hexa.encode ())
+                   (hash_string (MAC.hmac_sha1 password) challenge))
+    in
+      Lwt_io.write_line och response >>
+      match_lwt Lwt_io.read_line ich with
+          "+OK" -> return ()
+        | _ -> raise_lwt (Failure (sprintf "Authentication error (role %S)" role))
+
+  let make ~data_address ich och ~role ~password =
     let t =
       { ich; och; buf = Obs_bytea.create 64;
         closed = false; closed_exn = Obs_protocol.Error Obs_protocol.Closed;
         mutex = Lwt_mutex.create (); pending_reqs = H.create 61;
         async_req_id = "\001\000\000\000\000\000\000\000";
-        data_address;
-      }
+        data_address; role; password;
+      } in
+    lwt () = authenticate ich och ~role ~password in
+    (* version negotiation; we force binary with P proto *)
+    (* FIXME: actual negotiation once we have more than one proto version *)
+    lwt _ (* bin max version *)  = Lwt_io.read_line ich in
+    lwt _ (* text max version *) = Lwt_io.read_line ich in
+    lwt () =
+      Lwt_io.write_line och "BIN" >>
+      Lwt_io.write_line och (let a, b, c = P.version in sprintf "%d.%d.%d" a b c) >>
+      begin match_lwt Lwt_io.read_line ich with
+          "-ERR" -> raise_lwt (Failure "Protocol negotiation failure")
+        | _ -> return ()
+              (* TODO: check returned version and select appropriate proto *)
+      end
     in
       ignore begin try_lwt
         get_response_loop t
@@ -169,7 +196,7 @@ struct
           close t;
           return ()
       end;
-      t
+      return t
 
   let check_closed t =
     if t.closed then raise_lwt t.closed_exn
@@ -504,6 +531,8 @@ struct
        * there's no external "strong" reference to the latter.
        * *)
       let stream, push = Lwt_stream.create () in
+      lwt () = authenticate ich och
+                 ~role:d.Raw_dump.db.role ~password:d.Raw_dump.db.password in
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
       let get_buf =
         let b = ref "" in

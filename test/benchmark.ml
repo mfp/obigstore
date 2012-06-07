@@ -478,6 +478,9 @@ let benchmarks_of_bm_string () =
        | _ -> None)
     (String.explode !benchmarks)
 
+let role = "guest"
+let password = "guest"
+
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
@@ -499,7 +502,7 @@ let () =
         let make_tmp_db () =
           lwt fd, ich, och = Obs_conn.open_connection addr in
             Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
-            return (CLIENT.make ~data_address ich och)
+            CLIENT.make ~data_address ich och ~role ~password
 
         let is_remote = true
       end in

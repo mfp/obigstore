@@ -69,6 +69,9 @@ let load db ~keyspace ?size ich =
                 ?max:size Lwt_io.stderr loop_load
             with End_of_file -> return ())
 
+let role = "guest"
+let password = "guest"
+
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
@@ -87,6 +90,6 @@ let () =
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
-    let db = D.make ~data_address ich och in
+    lwt db = D.make ~data_address ich och ~role ~password in
       load db ~keyspace:!keyspace ?size input
   end

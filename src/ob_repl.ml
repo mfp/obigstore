@@ -911,6 +911,9 @@ let recover_saved_printers ks =
       (snd saved_printers);
     return ()
 
+let role = "guest"
+let password = "guest"
+
 let () =
   ignore (Sys.set_signal Sys.sigpipe Sys.Signal_ignore);
   Printexc.record_backtrace true;
@@ -921,7 +924,7 @@ let () =
 
     let get_db_and_ks () =
       lwt ich, och = Lwt_io.open_connection addr in
-      let db = D.make ~data_address ich och in
+      lwt db = D.make ~data_address ich och ~role ~password in
         if !keyspace = "" then
           return (db, None)
         else begin
