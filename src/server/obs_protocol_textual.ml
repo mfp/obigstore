@@ -392,9 +392,11 @@ struct
   let write_bool och b = write_datum och (if b then "1" else "0")
 
   let return_keyspace_maybe =
-    writer (fun ?buf och x ->
-              write_nargs och 1 >>
-              write_datum_opt och (Option.map string_of_int x))
+    writer (fun ?buf och ks -> match ks with
+                None -> write_nargs och 0
+              | Some ks ->
+                  write_nargs och 1 >>
+                  write_datum och (string_of_int ks))
 
   let return_keyspace_list =
     writer (fun ?buf och l ->
