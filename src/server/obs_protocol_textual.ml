@@ -384,6 +384,8 @@ struct
 
   let write_int och n = write_datum och (string_of_int n)
 
+  let write_bool och b = write_datum och (if b then "1" else "0")
+
   let return_keyspace_maybe =
     writer (fun ?buf och x ->
               write_nargs och 1 >>
@@ -483,15 +485,25 @@ struct
   let return_ok =
     writer (fun ?buf och () -> Lwt_io.write_line och "+OK")
 
+  let return_exist_result =
+    writer (fun ?buf och l ->
+              write_nargs och (List.length l) >>
+              Lwt_list.iter_s (write_bool och) l)
+
+  let return_notifications = return_keyspace_list
+
+  let return_property =
+    writer (fun ?buf och -> function
+                None -> write_nargs och 0
+              | Some s -> write_nargs och 1 >>
+                         write_datum och s)
+
   let not_implemented ?buf och ~request_id x = failwith "NOT IMPLEMENTED"
 
   let return_backup_dump = not_implemented
   let return_backup_load_result = not_implemented
   let return_load_stats = not_implemented
-  let return_exist_result = not_implemented
-  let return_notifications = not_implemented
   let return_raw_dump_id_and_timestamp = not_implemented
   let return_raw_dump_files = not_implemented
   let return_raw_dump_file_digest = not_implemented
-  let return_property = not_implemented
 end
