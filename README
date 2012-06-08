@@ -13,39 +13,42 @@ obigstore's salient features include:
 
 * strong data durability guarantees:
   * fully fsync'ed writes with group commit
-  * synchronous and asynchronous replication
   * data integrity ensured with CRCs at the protocol level
+  * synchronous and asynchronous replication
+  * online backup
 * rich semi-structured data model:
   * atomic transactions (both read-committed and repeatable-read isolation levels)
   * optimistic and pessimistic concurrency control
   * asynchronous notifications
   * limited support for complex documents (BSON serialized)
+  * support for composite keys (REPL and client lib)
 * performance:
   * fast random writes
   * efficient access to data ranges, thanks to spatial locality
-  * cross-record redundancy reduction at the page level (compression)
+  * cross-record redundancy reduction at the page level (snappy compression)
   * fast recovery (independent of dataset size)
 
 obigstore currently includes:
-* the (embeddable) database library
-* a server + client library
+* the standalone database server
+* the embeddable database library
+* the client library
 * a friendly REPL for interactive data manipulation
 * DB dump/restore tools
+* a number of benchmarking tools
 
 Limitations
 -----------
 * transactions must fit in memory
-* no direct support for infinite horizontal scalability yet (i.e., you'd have to
-  partition manually on key ranges at this point)
+* sharding on key ranges is not built-in at this point
 * no automatic failover yet
 
 Requirements
 ------------
-
 (Debian package names parenthesized)
 
 * OCaml >= 3.12.0 (ocaml-nox)
 * omake to build (omake)
+* snappy (libsnappy-dev)
 * GCC with C++ frontend (g++)
 * OCaml Batteries (libbatteries-ocaml-dev)
 * Cryptokit (libcryptokit-ocaml-dev)
@@ -53,11 +56,19 @@ Requirements
 * oUnit for the unit tests  (libounit-ocaml-dev)
 * extlib (libextlib-ocaml-dev)
 
+obigstore's tree includes a number of git submodules that will be
+automatically fetched if you run  git clone  with the  --recursive  option,
+including:
+
+* extprot
+* ocaml-leveldb
+* leveldb
+
 Building
 --------
 Just 
 
-   $ omake
+   $ omake    # -j 4  for instance to parallelize the build
 
 should do. This will build the server, client programs and libraries.
 You can run the tests with
