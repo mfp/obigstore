@@ -12,20 +12,20 @@ client/server setting or as an embedded database.
 obigstore's salient features include:
 
 * strong data durability guarantees:
-  * fully fsync'ed writes with group commit
-  * data integrity ensured with CRCs at the protocol level
-  * synchronous and asynchronous replication
-  * online backup
+  * **fully fsync'ed writes** with group commit
+  * data integrity ensured with **CRCs at the protocol level**
+  * **synchronous and asynchronous replication**
+  * **online backup**
 * rich semi-structured data model:
-  * atomic transactions (both read-committed and repeatable-read isolation levels)
-  * optimistic and pessimistic concurrency control
+  * **atomic transactions** (both read-committed and repeatable-read isolation levels)
+  * optimistic and pessimistic **concurrency control**
   * asynchronous notifications
   * limited support for complex documents (BSON serialized)
   * support for composite keys (REPL and client lib)
 * performance:
-  * fast random writes
-  * efficient access to data ranges, thanks to spatial locality
-  * cross-record redundancy reduction at the page level (snappy compression)
+  * **fast random writes**
+  * **efficient range queries** thanks to **spatial locality**
+  * cross-record **redundancy reduction** at the page level (snappy compression)
   * fast recovery (independent of dataset size)
 
 obigstore currently includes:
@@ -68,12 +68,12 @@ Building
 --------
 Just 
 
-   $ omake    # -j 4  for instance to parallelize the build
+    $ omake    # -j 4  for instance to parallelize the build
 
 should do. This will build the server, client programs and libraries.
 You can run the tests with
 
-   $ omake test
+    $ omake test
 
 The generated executables are:
 
