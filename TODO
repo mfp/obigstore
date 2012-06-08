@@ -1,3 +1,4 @@
+* OASIS-based install machinery
 * textual protocol tests
 * textual protocol documentation
 * review possible long-lived iterator mem usage issue 
