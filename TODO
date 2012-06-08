@@ -1,3 +1,11 @@
+* textual protocol tests
+* textual protocol documentation
 * review possible long-lived iterator mem usage issue 
 
   http://groups.google.com/group/leveldb/browse_thread/thread/3ecaf0126363c0be
+
+* analyze leveldb's bloom filter support in detail and see if/how it can be
+  used
+* automatic failover
+* Obs_data_model.S implementation that partitions key ranges
+* decrease request processing overhead
