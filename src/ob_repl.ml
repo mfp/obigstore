@@ -144,11 +144,11 @@ let pretty_printer_of_codec c =
   let module C = (val c : Obs_key_encoding.CODEC_OPS) in
     (fun ~strict fmt k ->
        try
-         if not strict && false (* remove to enable pp alone *) then
+         if not strict then
            Format.fprintf fmt "%s" (C.pp (C.decode_string k))
          else begin
-           (* we want strict json, so we output the decoded version as a
-            * comment *)
+           (* we want semi-strict JSON (module comments), so we output the
+            * decoded version as a comment *)
            Format.fprintf fmt "@[<0>/* %s */@ %a@]"
              (C.pp (C.decode_string k))
              (Obs_pp.pp_key ~strict:true) k
