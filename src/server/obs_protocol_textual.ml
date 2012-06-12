@@ -353,13 +353,15 @@ struct
       return (Get_property { Get_property.property; })
   end;;
 
+  let write_line och l = write och l >> write och "\r\n"
+
   let writer f ?buf och ~request_id x =
-    Lwt_io.write_line och ("@" ^ request_id) >>
+    write_line och ("@" ^ request_id) >>
     f ?buf och x
 
   let write_error code desc ?buf och ~request_id () =
-    Lwt_io.write_line och request_id >>
-    Lwt_io.write_line och ("-" ^ string_of_int code)
+    write_line och request_id >>
+    write_line och ("-" ^ string_of_int code)
 
   let bad_request = write_error 400 "bad request"
   let unknown_keyspace = write_error 400 "unknown keyspace"
@@ -369,22 +371,22 @@ struct
   let dirty_data = write_error 502 "dirty data"
 
   let int64_writer =
-    writer (fun ?buf och x -> Lwt_io.write_line och (":" ^ Int64.to_string x))
+    writer (fun ?buf och x -> write_line och (":" ^ Int64.to_string x))
 
   let int_writer =
-    writer (fun ?buf och x -> Lwt_io.write_line och (":" ^ string_of_int x))
+    writer (fun ?buf och x -> write_line och (":" ^ string_of_int x))
 
   let return_keyspace = int_writer
 
   let write_nargs och n =
-    Lwt_io.write_line och ("*" ^ string_of_int n)
+    write_line och ("*" ^ string_of_int n)
 
   let write_datum och s =
-    Lwt_io.write_line och ("$" ^ string_of_int (String.length s)) >>
-    Lwt_io.write_line och s
+    write_line och ("$" ^ string_of_int (String.length s)) >>
+    write_line och s
 
   let write_datum_opt och = function
-      None -> Lwt_io.write_line och "$-1"
+      None -> write_line och "$-1"
     | Some s -> write_datum och s
 
   let write_int och n = write_datum och (string_of_int n)
@@ -490,7 +492,7 @@ struct
                      (match ts with No_timestamp -> None | Timestamp ts -> Some ts)))
 
   let return_ok =
-    writer (fun ?buf och () -> Lwt_io.write_line och "+OK")
+    writer (fun ?buf och () -> write_line och "+OK")
 
   let return_exist_result =
     writer (fun ?buf och l ->
