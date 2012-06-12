@@ -20,16 +20,18 @@
 open Lwt
 open Printf
 
+let write_line och s = Lwt_io.write och s >> Lwt_io.write och "\r\n"
+
 let perform_auth auth ich och =
   lwt role = Lwt_io.read_line ich in
   let challenge = Obs_auth.challenge auth in
-    Lwt_io.write_line och challenge >>
+    write_line och challenge >>
     lwt response = Lwt_io.read_line ich in
       try_lwt
         Obs_auth.check_response auth ~role ~challenge ~response;
-        Lwt_io.write_line och "+OK"
+        write_line och "+OK"
       with e ->
-        Lwt_io.write_line och "-ERR" >>
+        write_line och "-ERR" >>
         raise_lwt e
 
 let is_compat (a1, a2, a3) (b1, b2, b3) = (a1 = b1 && b2 >= a2)
@@ -50,8 +52,8 @@ let connection_handshake ~debug server auth ((bin, text) as protos) ich och =
   let find_max_version = List.fold_left (fun v (w, _) -> max v w) (-1, 0, 0) in
   let to_s (m, n, o) = sprintf "%d.%d.%d" m n o in
     perform_auth auth ich och >>
-    Lwt_io.write_line och (to_s (find_max_version bin)) >>
-    Lwt_io.write_line och (to_s (find_max_version text)) >>
+    write_line och (to_s (find_max_version bin)) >>
+    write_line och (to_s (find_max_version text)) >>
     lwt requested_proto =
       match_lwt Lwt_io.read_line ich with
           "TXT" -> lwt v = read_version () in return (`Textual v)
@@ -60,10 +62,10 @@ let connection_handshake ~debug server auth ((bin, text) as protos) ich och =
     in
       match find_protocol protos requested_proto with
           Some ((a, b, c), proto) ->
-            Lwt_io.write_line och (sprintf "%d.%d.%d" a b c) >>
+            write_line och (sprintf "%d.%d.%d" a b c) >>
             return proto
         | None ->
-            Lwt_io.write_line och "-ERR" >>
+            write_line och "-ERR" >>
             raise_lwt (Failure "Cannot find matching protocol")
 
 module Make
