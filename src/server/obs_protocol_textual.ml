@@ -353,7 +353,7 @@ struct
       return (Get_property { Get_property.property; })
   end;;
 
-  let write_line och l = write och l >> write och "\r\n"
+  let write_line och l = Lwt_io.write och l >> Lwt_io.write och "\r\n"
 
   let writer f ?buf och ~request_id x =
     write_line och ("@" ^ request_id) >>
