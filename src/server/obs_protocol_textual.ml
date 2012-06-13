@@ -179,8 +179,31 @@ struct
       return (Exist_keys { Exist_keys.keyspace; table; keys; })
   end;;
 
+  cmd "KWATCH" (-2) begin fun nargs ich och ->
+    lwt keyspace = read_ks ich och in
+    lwt table = read_table ich in
+    lwt keys = read_nargs ich (nargs - 2) in
+      return (Watch_keys { Watch_keys.keyspace; table; keys; })
+  end;;
+
   let read_int ich = read_arg ich >|= int_of_string
   let read_int_opt ich = read_arg_opt ich >|= Option.map int_of_string
+
+  let rec read_watched_cols ?(acc=[]) ich = function
+      0 -> return acc
+    | n ->
+        lwt key = read_arg ich in
+        lwt ncols = read_int ich in
+        lwt cols = read_nargs ich ncols in
+          read_watched_cols ich ~acc:((key, cols) :: acc) (n - 1);;
+
+  cmd "CWATCH" (-3) begin fun nargs ich och ->
+    lwt keyspace = read_ks ich och in
+    lwt table = read_table ich in
+    lwt nkeys = read_int ich in
+    lwt columns = read_watched_cols ich nkeys in
+      return (Watch_columns { Watch_columns.keyspace; table; columns; })
+  end;;
 
   let read_key_range ich =
     lwt first = read_arg_opt ich in
