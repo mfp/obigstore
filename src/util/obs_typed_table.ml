@@ -250,4 +250,10 @@ struct
   let delete_key ks key = delete_key ks table (C.encode_to_string key)
 
   let delete_keys ks key_range = delete_keys ks table (inject_range key_range)
+
+  let watch_keys ks table keys =
+    watch_keys ks table (List.map C.encode_to_string keys)
+
+  let watch_columns ks table l =
+    watch_columns ks table (List.map (fun (k, l) -> (C.encode_to_string k, l)) l)
 end

@@ -229,4 +229,8 @@ sig
   val delete_key : keyspace -> key -> unit Lwt.t
 
   val delete_keys : keyspace -> key_range -> unit Lwt.t
+
+  val watch_keys : keyspace -> table -> key list -> unit Lwt.t
+
+  val watch_columns : keyspace -> table -> (key * column_name list) list -> unit Lwt.t
 end
