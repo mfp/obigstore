@@ -3,9 +3,16 @@ USE_OCAMLFIND = true
 NATIVE_ENABLED = true
 BYTE_ENABLED = true
 
+prefix = /usr/local
+INSTALL = install
+RM = rm -f
+
 .PHONY: clean
 
 OCAMLOPTFLAGS += -g -inline 100
+
+.PHONY: install
+.PHONY: uninstall
 
 .SUBDIRS: src/libs/ocaml-leveldb src/libs/extprot
 
@@ -23,14 +30,18 @@ LD_PATHS[] =
 
 setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 
+# Link flags used by CamlStubLibrary
+LINK_FLAGS =
+
 public.CamlStubLibrary(dst, objects, stubs) =
     private.stub_objects = $(addsuffix .o, $(stubs))
-    $(dst).cma $(dst).a $(dst).cmxa: \
+    $(dst).cma $(dst).a dllcaml$(dst).so $(dst).cmxa: \
 	$(stub_objects) $(addsuffixes .cmo .cmx, $(objects))
         ocamlmklib -verbose -oc caml$(dst) -o $(dst) \
 	    $(stub_objects) \
 	    $(OCamlLinkSort $(addsuffixes .cmo, $(objects))) \
-	    $(OCamlLinkSort $(addsuffixes .cmx, $(objects)))
+	    $(OCamlLinkSort $(addsuffixes .cmx, $(objects))) \
+	    $(LINK_FLAGS)
 
 CamlSources(mods) =
         foreach(mod, $(mods))
@@ -38,11 +49,26 @@ CamlSources(mods) =
 
 .SUBDIRS: src test
 
-foreach(exec, obigstore ob_dump ob_load ob_repl)
+EXECS[] = obigstore ob_dump ob_load ob_repl
+LIBS[] = src/core/obigstore_core src/client/obigstore_client
+
+LIBS = $(addsuffixes .cma .cmxa, $(LIBS))
+
+foreach(exec, $(EXECS))
     $(exec): src/$(exec)$(EXE)
         ln-or-cp $< $@
 
-.DEFAULT: obigstore ob_dump ob_load ob_repl
+.DEFAULT: $(EXECS) $(LIBS)
+
+install: $(EXECS) $(LIBS)
+	$(INSTALL) $+ $(prefix)/bin
+	ocamlfind install obigstore META \
+	    $(cd src/core, $(ls *.cmi *.so *.cmxa *.cma *.cmx *.a *.mli)) \
+	    $(cd src/client, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli))
+
+uninstall:
+	$(RM) $(addprefix $(prefix)/, $(EXECS))
+	ocamlfind remove obigstore
 
 clean:
 	rm -f $(filter-proper-targets $(ls R, .))

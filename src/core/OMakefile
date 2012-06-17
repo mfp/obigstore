@@ -22,5 +22,7 @@ OCamlGeneratedFiles(obs_request.ml)
 
 obigstore_stubs.o: obigstore_stubs.cc
 
-CamlStubLibrary(obigstore_core, $(OBJECTS), obigstore_stubs)
+section
+    LINK_FLAGS=-lstdc++
+    CamlStubLibrary(obigstore_core, $(OBJECTS), obigstore_stubs)
 

@@ -1,0 +1,6 @@
+name="obigstore"
+description="obigstore database"
+requires="batteries,extlib,cryptokit,extprot,lwt.unix,leveldb"
+archive(byte)="obigstore_core.cma obigstore_client.cma"
+archive(native)="obigstore_core.cmxa obigstore_client.cmxa"
+
