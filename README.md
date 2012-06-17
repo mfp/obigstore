@@ -29,6 +29,7 @@ obigstore's salient features include:
   * fast recovery (independent of dataset size)
 
 obigstore currently includes:
+
 * the standalone database server
 * the embeddable database library
 * the client library
