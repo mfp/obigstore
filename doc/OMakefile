@@ -1,0 +1,12 @@
+
+HEADER=$(file header.inc)
+FOOTER=$(file footer.inc)
+
+%.html: %.md $(HEADER) $(FOOTER)
+    rm -f $@
+    cp $(HEADER) $@
+    markdown $< >> $@
+    cat $(FOOTER) >> $@
+
+.PHONY: docs
+docs: $(replacesuffixes .md, .html, $(ls *.md))

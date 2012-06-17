@@ -47,7 +47,7 @@ CamlSources(mods) =
         foreach(mod, $(mods))
                 $(addsuffixes .cmo .cmi .cmx .sig $(EXT_OBJ), $(mod)):
 
-.SUBDIRS: src test
+.SUBDIRS: doc src test
 
 EXECS[] = obigstore ob_dump ob_load ob_repl
 LIBS[] = src/core/obigstore_core src/client/obigstore_client
