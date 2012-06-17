@@ -76,9 +76,16 @@ You can run the tests with
 
     $ omake test
 
+You can then install at once obigstore, extprot and ocaml-leveldb with:
+
+    $ omake install
+
 The generated executables are:
 
 * obigstore: the DB server
 * ob_repl: the REPL
 * ob_dump: tool to dump a DB to a file
 * ob_load: tool to load ob_dump's output into a DB
+
+They are standalone (modulo the snappy and tcmalloc dependencies) and can be
+used simply by placing them somewhere in the PATH.
