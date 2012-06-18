@@ -7,7 +7,8 @@ obigstore is a database server + client library and associated tools. It
 exposes a multidimensional BigTable-like data model built on top of the Google
 LevelDB library, inheriting its fundamental strengths, such as fast random
 writes or control over the physical data layout.  It can be used in a
-client/server setting or as an embedded database.
+client/server setting or as an embedded database. More information can be
+found at [obigstore.forge.ocamlcore.org](http://obigstore.forge.ocamlcore.org).
 
 obigstore's salient features include:
 

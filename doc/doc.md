@@ -2,13 +2,6 @@
 Introduction
 ------------
 
-obigstore features a semi-structured BigTable-like [data model](data-model.html).
-For more information on the operations it supports, you can refer to the [data
-model in the OCaml
-library](https://github.com/mfp/obigstore/blob/master/src/core/obs_data_model.mli)
-and the [list of operations supported by the simplified text-based
-protocol](operations.html) (the latter is a subset of the former).
-
 obigstore can be useful if a some of these hold:
 
 * you have a moderate amount of data (say, in the TB range).
@@ -25,6 +18,13 @@ obigstore can be useful if a some of these hold:
 * you need good performance with cold data through physical layout control and can
   benefit from cross-record redundancy reduction.
 * you need not perform huge transactions that don't fit in memory
+
+obigstore features a semi-structured BigTable-like [data model](data-model.html).
+For more information on the operations it supports, you can refer to the [data
+model in the OCaml
+library](https://github.com/mfp/obigstore/blob/master/src/core/obs_data_model.mli)
+and the [list of operations supported by the simplified text-based
+protocol](operations.html) (the latter is a subset of the former).
 
 Getting started
 ---------------
@@ -58,7 +58,7 @@ Refer to the .mli files. A client will have to do something like:
     lwt ich, och = Lwt_io.open_connection addr in
     lwt db = C.make ~data_address ich och ~role ~password in
       ...
-      perform operations in db documented in Obs_data_model.S
+      perform operations on db as documented in Obs_data_model.S
       ....
 
 #### Simplified text-based protocol
@@ -66,7 +66,7 @@ Refer to the .mli files. A client will have to do something like:
 * [simplified obigstore textual protocol specification](protocol.html)
 * [operations](operations.html): operations exposed in the text-based
   protocol
-* [implementation guide](binding-impl-guide.html): resources for programmers
+* [implementation guide](binding-impl-guide.html): resources for developers
   interested in using obigstore via the text-based protocol from other
   languages
 

@@ -2,16 +2,16 @@
 
 The following benchmarks are meant to give a ball park approximation of
 the performance to be expected out of the box, without special tuning, on
-common hardware.
+commodity hardware.
 
 Test conditions
 ---------------
 Except where indicated, the benchmarks are run on an EC2 m1.large instance
-with 7.5GB memory and two cores, running Ubuntu 12.04. The instance ephemeral
-storage is used as-is with no extra tuning (this means EXT3 without any extra
-mount option).  In practice, better performance can be expected given some
-tuning and for instance a RAID10 setup (the tests below are largely
-disk-bound).
+with 7.5GB memory and two cores, running Ubuntu 12.04. The database is placed
+on ephemeral storage, and the original filesystem is used as-is with no extra
+tuning (this means EXT3 without any extra mount option).  In practice, better
+performance can be expected given some tuning and for instance a RAID10 setup
+(the tests below are largely disk-bound).
 
 A separate instance is used as the load generator.
 
@@ -101,7 +101,7 @@ fsync() delay:
 
 #### Large payloads
 
-The benchmark is repeated with 20M pairs with 20KB payloads; the rate is
+The benchmark is repeated with 20M pairs having 20KB payloads; the rate is
 limited to 1000/s:
 
 ![large payloads](imgs/LOG.S20K-nofsync.latency.png)
@@ -126,6 +126,8 @@ Several benchmarks are performed:
    are inserted to measure the write burst rate on the 1-billion key dataset
 3. an extra 10 million pairs are inserted at a rate below the sustainable one
 in order to measure latency
+
+The first benchmark completes in 36825 seconds:
 
 ![random insertion](imgs/LOG.1000M.rate.png)
 
