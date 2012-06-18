@@ -48,6 +48,7 @@ Requirements
 (Debian package names parenthesized)
 
 * OCaml >= 3.12.0 (ocaml-nox)
+* findlib (ocaml-findlib)
 * omake to build (omake)
 * snappy (libsnappy-dev)
 * GCC with C++ frontend (g++)
@@ -76,7 +77,8 @@ You can run the tests with
 
     $ omake test
 
-You can then install at once obigstore, extprot and ocaml-leveldb with:
+You can then install at once the obigstore, extprot and ocaml-leveldb
+libraries with:
 
     $ omake install
 
