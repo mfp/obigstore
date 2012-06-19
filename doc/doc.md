@@ -2,14 +2,14 @@
 Introduction
 ------------
 
-obigstore can be useful if a some of these hold:
+obigstore can be useful if some of these hold:
 
 * you have a moderate amount of data (say, in the TB range).
 * you don't want to be forced to compromise on data durability.
 * you don't want to have to use sharding and to bother managing clusters once
   the amount of data exceeds available memory,
 * yet you don't need infinite horizontal scalability out of the box.
-* you don't need the relational model exposed by SQL databases,
+* you don't need the relational model exposed by RDBMS,
 * yet your data maps better to a model more structured than basic key-value,
   you don't want to handle eventual consistency and can make good use of ACID
   transactions in your applications.
