@@ -1,6 +1,11 @@
+
+(*): pending
+(+): done
+(-): wontfix
+
 * OASIS-based install machinery
 * textual protocol tests
-* textual protocol documentation
++ textual protocol documentation
 * review possible long-lived iterator mem usage issue 
 
   http://groups.google.com/group/leveldb/browse_thread/thread/3ecaf0126363c0be
@@ -10,3 +15,4 @@
 * automatic failover
 * Obs_data_model.S implementation that partitions key ranges
 * decrease request processing overhead
+* unindexed ad-hoc querying support
