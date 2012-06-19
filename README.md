@@ -1,4 +1,6 @@
 
+(**Note** clone this repository with  `git clone --recursive` )
+
 obigstore: multi-dimensional DB with BigTable-like data model atop LevelDB
 ==========================================================================
 Copyright (C) 2012 Mauricio Fernandez <mfp@acm.org>
