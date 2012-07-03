@@ -64,6 +64,7 @@ struct
 
   exception Abort_exn of request_id
   exception Commit_exn of request_id
+  exception Abort_all_txs
 
   module H = Hashtbl.Make(struct
                               type t = ks_id
@@ -212,7 +213,8 @@ struct
                        relay_to_handler c ~request_id r
                      with
                        | End_of_file | Lwt_io.Channel_closed _
-                       | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
+                       | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _)
+                       | Abort_all_txs ->
                            (* catch exns that indicate that the connection
                             * is gone, and signal End_of_file *)
                            begin try
@@ -605,6 +607,15 @@ struct
          service c
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
          raise_lwt End_of_file
+       finally
+         H.iter
+           (fun _ (_, handlers) ->
+              if Stack.is_empty handlers then ()
+              else
+                let _, push = Stack.top handlers in
+                  push (Some (Exception Abort_all_txs)))
+         c.keyspaces;
+         return ()
 
   let send_response_code code och =
     write_checksummed_int32_le och (data_response_code code)
