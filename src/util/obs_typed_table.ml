@@ -254,6 +254,11 @@ struct
   let watch_keys ks keys =
     watch_keys ks table (List.map C.encode_to_string keys)
 
+  let watch_prefixes ks f prefixes =
+    let codec = f C.codec in
+      watch_prefixes ks table
+        (List.map (Obs_key_encoding.encode_to_string codec) prefixes)
+
   let watch_columns ks l =
     watch_columns ks table (List.map (fun (k, l) -> (C.encode_to_string k, l)) l)
 end

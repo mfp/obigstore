@@ -232,5 +232,11 @@ sig
 
   val watch_keys : keyspace -> key list -> unit Lwt.t
 
+  val watch_prefixes :
+    OP.keyspace ->
+    ((Codec.internal_key, Codec.key, Codec.tail) Obs_key_encoding.codec ->
+     ('a, 'b, 'c) Obs_key_encoding.codec) ->
+    'b list -> unit Lwt.t
+
   val watch_columns : keyspace -> (key * column_name list) list -> unit Lwt.t
 end
