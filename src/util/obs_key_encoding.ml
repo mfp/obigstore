@@ -415,6 +415,36 @@ let tuple5 c1 c2 c3 c4 c5 =
       (c1.pp x) (c2.pp y) (c3.pp z) (c4.pp a) (c5.pp b)
   in custom ~encode ~decode ~pp c
 
+let codec_prefix1 c =
+  let c1, _ = split c in
+    c1
+
+let codec_prefix2 c =
+  let c1, c = split c in
+  let c2, c = split c in
+    tuple2 c1 c2
+
+let codec_prefix3 c =
+  let c1, c = split c in
+  let c2, c = split c in
+  let c3, c = split c in
+    tuple3 c1 c2 c3
+
+let codec_prefix4 c =
+  let c1, c = split c in
+  let c2, c = split c in
+  let c3, c = split c in
+  let c4, c = split c in
+    tuple4 c1 c2 c3 c4
+
+let codec_prefix5 c =
+  let c1, c = split c in
+  let c2, c = split c in
+  let c3, c = split c in
+  let c4, c = split c in
+  let c5, c = split c in
+    tuple5 c1 c2 c3 c4 c5
+
 let decode_choice choices s ~off ~len scratch =
   let off0 = !off in
   let tag = byte.decode s ~off ~len scratch in

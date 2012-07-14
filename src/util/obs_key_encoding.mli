@@ -509,6 +509,65 @@ val choice5 :
    [ `A of 'a | `B of 'c | `C of 'e | `D of 'g | `E of 'i ], unit)
   codec
 
+(** {2 Codec prefix extraction} *)
+
+(** [codec_prefix1 c] returns a codec which handles values whose type is that
+  * of the first element of the tuple handled by [c]; e.g.,
+  *   [codec_prefix1 (tuple2 byte bool)], is equivalent to [byte].
+  * *)
+val codec_prefix1 :
+  ('a, 'b, ('c, 'd, 'e, 'f, 'g, 'h) cons) codec -> ('c, 'e, 'g) codec
+
+(** Refer to {!codec_prefix1}. *)
+val codec_prefix2 :
+  ('a, 'b, ('c, 'd, 'e, 'f, 'g, ('h, 'i, 'j, 'k, 'l, 'm) cons) cons) codec ->
+  ('c * 'h, 'e * 'j, ('c, 'h, 'e, 'j, 'g, 'l) cons) codec
+
+(** Refer to {!codec_prefix1}. *)
+val codec_prefix3 :
+  ('a, 'b,
+   ('c, 'd, 'e, 'f, 'g,
+    ('h, 'i, 'j, 'k, 'l, ('m, 'n, 'o, 'p, 'q, 'r) cons) cons)
+   cons)
+  codec ->
+  ('c * ('h * 'm), 'e * 'j * 'o,
+   ('c, 'h * 'm, 'e, 'j * 'o, 'g, ('h, 'm, 'j, 'o, 'l, 'q) cons) cons)
+  codec
+
+(** Refer to {!codec_prefix1}. *)
+val codec_prefix4 :
+  ('a, 'b,
+   ('c, 'd, 'e, 'f, 'g,
+    ('h, 'i, 'j, 'k, 'l,
+     ('m, 'n, 'o, 'p, 'q, ('r, 's, 't, 'u, 'v, 'w) cons) cons)
+    cons)
+   cons)
+  codec ->
+  ('c * ('h * ('m * 'r)), 'e * 'j * 'o * 't,
+   ('c, 'h * ('m * 'r), 'e, 'j * ('o * 't), 'g,
+    ('h, 'm * 'r, 'j, 'o * 't, 'l, ('m, 'r, 'o, 't, 'q, 'v) cons) cons)
+   cons)
+  codec
+
+(** Refer to {!codec_prefix1}. *)
+val codec_prefix5 :
+  ('a, 'b,
+   ('c, 'd, 'e, 'f, 'g,
+    ('h, 'i, 'j, 'k, 'l,
+     ('m, 'n, 'o, 'p, 'q,
+      ('r, 's, 't, 'u, 'v, ('w, 'x, 'y, 'z, 'a1, 'b1) cons) cons)
+     cons)
+    cons)
+   cons)
+  codec ->
+  ('c * ('h * ('m * ('r * 'w))), 'e * 'j * 'o * 't * 'y,
+   ('c, 'h * ('m * ('r * 'w)), 'e, 'j * ('o * ('t * 'y)), 'g,
+    ('h, 'm * ('r * 'w), 'j, 'o * ('t * 'y), 'l,
+     ('m, 'r * 'w, 'o, 't * 'y, 'q, ('r, 'w, 't, 'y, 'v, 'a1) cons) cons)
+    cons)
+   cons)
+  codec
+
 (** {2 Modular interface} *)
 
 module type CODEC =
