@@ -155,5 +155,6 @@ message request =
   | Watch_keys { keyspace : keyspace; table : table; keys : [key] }
   | Watch_columns { keyspace : keyspace; table : table; columns : [(key * [column_name])] }
   | Delete_keys { keyspace : keyspace; table: table; key_range : key_range }
+  | Watch_prefixes { keyspace : keyspace; table : table; prefixes : [string] }
 
 (* vim:set ft=omlet: *) 

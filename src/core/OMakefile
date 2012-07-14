@@ -12,6 +12,7 @@ OBJECTS[] =
   obs_request
   obs_string_util
   obs_structured
+  obs_ternary
   obs_weak_ref
   obs_load_stats
 

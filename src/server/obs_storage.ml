@@ -572,6 +572,7 @@ module rec TYPES : sig
       ks_subs_stream : subs_stream;
       ks_subscriptions : mutable_string_set;
       ks_watches : (table_idx * key, DIRTY_FLAGS.t * (column_name, DIRTY_FLAGS.t) Hashtbl.t) Hashtbl.t;
+      ks_prefix_watches : (table_idx, DIRTY_FLAGS.t Obs_ternary.t) Hashtbl.t;
     }
 
   and keyspace_proto = Proto of keyspace
@@ -648,6 +649,7 @@ let read_keyspaces db lldb =
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
                      ks_unique_id; ks_tx_key; ks_subs_stream; ks_subscriptions;
                      ks_watches = Hashtbl.create 13;
+                     ks_prefix_watches = Hashtbl.create 13;
                    };
                  true)
       lldb
@@ -809,6 +811,7 @@ let clone_keyspace (Proto proto) =
       ks_subs_stream = Lwt_stream.create ();
       ks_subscriptions = Hashtbl.create 13;
       ks_watches = proto.ks_watches;
+      ks_prefix_watches = proto.ks_prefix_watches;
     }
   in Gc.finalise terminate_keyspace_subs ks;
      ks
@@ -841,6 +844,7 @@ let register_keyspace t ks_name =
           ks_subs_stream = Lwt_stream.create ();
           ks_subscriptions = Hashtbl.create 13;
           ks_watches = Hashtbl.create 13;
+          ks_prefix_watches = Hashtbl.create 13;
         } in
     let new_ks = clone_keyspace proto in
       WKS.add (get_keyspace_set t ks_name proto) new_ks;
@@ -982,7 +986,7 @@ let register_new_table_and_add_to_writebatch' =
        WRITEBATCH.put wb k v;
        WRITEBATCH.need_keyspace_reload wb)
 
-let find_col_watches ks table key =
+let find_col_watches_and_dirty_key_watches ks table key =
   (* fast path for common case: no watches *)
   match Hashtbl.length ks.ks_watches with
       0 -> None
@@ -994,12 +998,23 @@ let find_col_watches ks table key =
           else None
       with Not_found -> None
 
-let set_dirty_flags col_watches column =
+let dirty_col_watches col_watches column =
   match col_watches with
       None -> ()
     | Some col_watches ->
         try
           DIRTY_FLAGS.iter DIRTY_FLAG.set (Hashtbl.find col_watches column)
+        with Not_found -> ()
+
+let dirty_prefix_watches ks table key =
+  (* fast path for common case: no watches *)
+  match Hashtbl.length ks.ks_prefix_watches with
+      0 -> ()
+    | _ ->
+        try
+          let t = Hashtbl.find ks.ks_prefix_watches table in
+          let sets = Obs_ternary.find_prefixes key t in
+            List.iter (DIRTY_FLAGS.iter DIRTY_FLAG.set) sets
         with Not_found -> ()
 
 let rec transaction_aux with_iter_pool ks f =
@@ -1086,10 +1101,11 @@ and commit_outermost_transaction ks tx =
                  Some table ->
                    M.iter
                      (fun key s ->
-                        let col_watches = find_col_watches ks table key in
+                        dirty_prefix_watches ks table key;
+                        let col_watches = find_col_watches_and_dirty_key_watches ks table key in
                           S.iter
                             (fun column ->
-                               set_dirty_flags col_watches column;
+                               dirty_col_watches col_watches column;
                                Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                                  ~table ~key ~column ~timestamp;
                                let len = Obs_bytea.length datum_key in
@@ -1111,10 +1127,11 @@ and commit_outermost_transaction ks tx =
                    register_new_table_and_add_to_writebatch' ks b table
              in M.iter
                (fun key m ->
-                  let col_watches = find_col_watches ks table key in
+                  dirty_prefix_watches ks table key;
+                  let col_watches = find_col_watches_and_dirty_key_watches ks table key in
                     M.iter
                       (fun column c ->
-                         set_dirty_flags col_watches column;
+                         dirty_col_watches col_watches column;
                          Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                            ~table ~key ~column
                            ~timestamp:(match c.timestamp with
@@ -1253,6 +1270,46 @@ let watch_keys ks table keys =
   match Lwt.get ks.ks_tx_key with
       None -> return ()
     | Some tx -> List.iter (watch_key tx table) keys; return ()
+
+let remove_prefix_watch_if_empty watches table prefix flag =
+  try
+    let m = Hashtbl.find watches table in
+    let flags = Obs_ternary.find prefix m in
+      DIRTY_FLAGS.remove flags flag;
+      if DIRTY_FLAGS.is_empty flags then begin
+        let m = Obs_ternary.remove prefix m in
+          if not (Obs_ternary.is_empty m) then Hashtbl.replace watches table m
+          else Hashtbl.remove watches table
+      end
+  with Not_found -> ()
+
+let setup_prefix_flag_cleanup watches table prefix flag =
+  Gc.finalise (remove_prefix_watch_if_empty watches table prefix) flag
+
+let watch_prefix tx table prefix =
+  match find_maybe tx.ks.ks_tables table with
+      None -> ()
+    | Some table ->
+        let flag = get_tainted_flag tx in
+        let m =
+          try
+            Hashtbl.find tx.ks.ks_prefix_watches table
+          with Not_found ->
+            Obs_ternary.empty in
+        let flags =
+          try
+            Obs_ternary.find prefix m
+          with Not_found -> DIRTY_FLAGS.create 2
+        in
+          DIRTY_FLAGS.add flags flag;
+          Hashtbl.replace tx.ks.ks_prefix_watches table
+            (Obs_ternary.add prefix flags m);
+          setup_prefix_flag_cleanup tx.ks.ks_prefix_watches table prefix flag
+
+let watch_prefixes ks table keys =
+  match Lwt.get ks.ks_tx_key with
+      None -> return ()
+    | Some tx -> List.iter (watch_prefix tx table) keys; return ()
 
 let watch_column tx table key column =
   match find_maybe tx.ks.ks_tables table with
@@ -2633,10 +2690,11 @@ let rec put_multi_columns_no_tx ks table data =
       in
         List.iter
           (fun (key, columns) ->
-             let col_watches = find_col_watches ks table key in
+             dirty_prefix_watches ks table key;
+             let col_watches = find_col_watches_and_dirty_key_watches ks table key in
                List.iter
                  (fun c ->
-                    set_dirty_flags col_watches c.name;
+                    dirty_col_watches col_watches c.name;
                     Obs_datum_encoding.encode_datum_key datum_key ks.ks_id
                       ~table ~key ~column:c.name
                       ~timestamp:(match c.timestamp with
@@ -2839,16 +2897,18 @@ let load tx data =
     incr cols_written;
     match find_maybe tx.ks.ks_tables table_name with
         Some table ->
-          let col_watches = find_col_watches tx.ks table key in
-            set_dirty_flags col_watches column;
+          dirty_prefix_watches tx.ks table key;
+          let col_watches = find_col_watches_and_dirty_key_watches tx.ks table key in
+            dirty_col_watches col_watches column;
             Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
               ~table ~key ~column ~timestamp
       | None ->
           (* register table first *)
           let table =
             register_new_table_and_add_to_writebatch tx.ks wb table_name in
-          let col_watches = find_col_watches tx.ks table key in
-            set_dirty_flags col_watches column;
+          let () = dirty_prefix_watches tx.ks table key in
+          let col_watches = find_col_watches_and_dirty_key_watches tx.ks table key in
+            dirty_col_watches col_watches column;
             Obs_datum_encoding.encode_datum_key datum_key tx.ks.ks_id
                ~table ~key ~column ~timestamp in
 

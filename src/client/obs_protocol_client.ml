@@ -318,6 +318,11 @@ struct
       (Watch_keys { Watch_keys.keyspace = ks.ks_id; table; keys; })
       P.read_ok
 
+  let watch_prefixes ks table prefixes =
+    async_request_ks ks
+      (Watch_prefixes { Watch_prefixes.keyspace = ks.ks_id; table; prefixes; })
+      P.read_ok
+
   let watch_columns ks table columns =
     async_request_ks ks
       (Watch_columns { Watch_columns.keyspace = ks.ks_id; table; columns; })

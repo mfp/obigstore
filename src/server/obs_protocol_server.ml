@@ -270,6 +270,7 @@ struct
     | Await { Await.keyspace; _ }
     | Release_keyspace { Release_keyspace.keyspace; _ }
     | Watch_keys { Watch_keys.keyspace; _ }
+    | Watch_prefixes { Watch_prefixes.keyspace; _ }
     | Watch_columns { Watch_columns.keyspace; _ } as r ->
         begin try
           let handlers = snd (H.find c.keyspaces (ks_id_of_int keyspace)) in
@@ -365,6 +366,11 @@ struct
         with_keyspace c keyspace ~request_id
           (fun (ks, _) ->
              D.watch_keys ks.ks_ks table keys >>
+             P.return_ok ?buf c.och ~request_id ())
+    | Watch_prefixes { Watch_prefixes.keyspace; table; prefixes; } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _) ->
+             D.watch_prefixes ks.ks_ks table prefixes >>
              P.return_ok ?buf c.och ~request_id ())
     | Watch_columns { Watch_columns.keyspace; table; columns; } ->
         with_keyspace c keyspace ~request_id

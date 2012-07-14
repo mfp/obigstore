@@ -187,6 +187,13 @@ sig
     * [watch_keys ks table ["key1", ["col1", "col2"]; "key2", ["col2"]]]. *)
   val watch_columns : keyspace -> table -> (string * string list) list -> unit Lwt.t
 
+  (** [watch_prefixes ks table prefixes] is similar to {!watch_keys}, but is
+    * given a prefix of the keys to watch; e.g., if you do
+    * [watch_prefixes ks tbl ["foo"; "bar"]], write transactions will abort
+    * with [Dirty_data] if any keys starting with [foo] or [bar] (inclusive)
+    * are modified by a concurrent transaction *)
+  val watch_prefixes : keyspace -> table -> string list -> unit Lwt.t
+
   (** {3 Read operations} *)
 
   (** Return up to [max_keys] keys (default: [max_int]) in the given range. *)
