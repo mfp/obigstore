@@ -63,7 +63,7 @@ end
 module WeakTbl : sig
   type ('a, 'b) t
 
-  val create : ?cmp:('a -> 'a -> int) -> unit -> ('a, 'b) t
+  val create : unit -> ('a, 'b) t
   val get : ('a, 'b) t -> 'a -> 'b option
   val add : ('a, 'b) t -> 'a -> 'b -> unit
   val remove : ('a, 'b) t -> 'a -> unit
@@ -72,7 +72,7 @@ struct
   module M = BatMap
   type ('a, 'b) t = ('a, 'b Obs_weak_ref.t) M.t ref
 
-  let create ?(cmp = compare) () = ref (M.create cmp)
+  let create () = ref M.empty
 
   let get t k =
     try
