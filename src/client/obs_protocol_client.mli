@@ -17,6 +17,10 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
+(** If set, log when locks take more than 10 seconds to be acquired.
+  * A [Warning] is written in section [obigstore:client].
+  * Enabled by default.  *)
+val debug_deadlocks : bool ref
 
 module Make : functor(P : Obs_protocol_bin.S) ->
 sig

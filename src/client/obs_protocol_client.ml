@@ -26,6 +26,10 @@ open Request
 
 module Option = BatOption
 
+let debug_deadlocks = ref true
+
+let section = Lwt_log.Section.make "obigstore:client"
+
 module Make(P : Obs_protocol_bin.S) =
 struct
   module H =
@@ -309,9 +313,26 @@ struct
     transaction_aux Tx_type.Repeatable_read ks f
 
   let lock ks ~shared names =
-    async_request_ks ks
-      (Lock { Lock.keyspace = ks.ks_id; names; shared; })
-      P.read_ok
+    let exec () =
+      async_request_ks ks
+        (Lock { Lock.keyspace = ks.ks_id; names; shared; })
+        P.read_ok
+    in
+      match !debug_deadlocks with
+          false -> exec ()
+        | true ->
+            let t = exec () in
+            let dt = 10. in
+              match_lwt
+                Lwt.choose [ Lwt_unix.sleep dt >> return `Timeout; t >> return `OK ]
+              with
+                  `OK -> t
+                | `Timeout ->
+                    Lwt_log.warning_f ~section
+                      "Locks in namespace %S not acquired in %fs: %s"
+                      ks.ks_name dt
+                      (String.concat ", " (List.map (sprintf "%S") names)) >>
+                    t
 
   let watch_keys ks table keys =
     async_request_ks ks
