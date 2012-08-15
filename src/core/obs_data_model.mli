@@ -153,8 +153,45 @@ sig
     keyspace -> ?first:string -> ?up_to:string -> table -> Int64.t Lwt.t
 
   (** {3 Transactions} *)
+
+  (** [read_committed_transaction ks f] runs [f] in a transaction.
+    * Within [f], the effect of other transactions committed after its
+    * evaluation started will be visible.
+    *
+    * Note that nested transactions can be executed concurrenty
+    * (with [lwt x = read_committed_transaction f a and
+    * y = read_committed_transaction f b], [Lwt.join] or similar)
+    * but the server can choose to serialize their execution.
+    *
+    * Also note that "simple" operations such as {!put_columns} are performed
+    * within an implicit transaction.
+    *
+    * This means that code like the following is dangerous:
+    * {[
+    *    read_committed_transaction ks  (* TX1 *)
+    *      (fun ks ->
+    *         read_committed_transaction ks  (* TX2 *)
+    *            (fun ks2 ->
+    *               put_columns ks tbl key cols (* TX3 *) >>
+    *               put_columns ks2 tbl2 key2 cols2))
+    * ]}
+    * This code can hang if the server serializes concurrent, nested
+    * transaction, because [put_columns ks ...] starts an implicit
+    * transaction [TX3] whose execution will start only once the
+    * [TX2] transaction completes, but [TX2] will not finish until [TX3] is
+    * done.
+    *)
   val read_committed_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
+  (** [repeatable_read_transaction ks f] runs [f] in a transaction.
+    * Two read operations with the same parameters performed in [f]'s scope
+    * are guaranteed to return the same results (unless [f] itself wrote
+    * data), regardless of whether other transactions have committed data or
+    * not.
+    *
+    * Refer to {!read_committed_transaction} for information on concurrent
+    * execution of nested transactions.
+    * *)
   val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   (** [lock ks ~shared l] acquire locks with names given in [l] for the DB

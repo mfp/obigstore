@@ -3,6 +3,8 @@ BEGIN
 Begin transaction. A transaction is associated to a keyspace handle.
 Transactions in different keyspace handles are independent.
 Transactions can be nested arbitrarily.
+Nested transactions can be executed concurrently, but the server may choose to
+serialize their execution.
 
 Request arguments
 -----------------
@@ -12,7 +14,7 @@ Request arguments
 
 Response
 --------
-Single-line OK.
+Single-line integer transaction handler identifier.
 
 Example
 -------
