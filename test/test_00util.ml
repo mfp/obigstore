@@ -138,7 +138,7 @@ let register_tests name tests =
 let get_all_tests () = List.rev !all_tests
 
 let lwt_tests
-      ?(sequential_timeout = 30.0) ?(concurrent_timeout = 60.0)
+      ?(sequential_timeout = 5.0) ?(concurrent_timeout = 10.0)
       ?(sequential=[]) concurrent =
   let concurrent =
     List.map

@@ -31,14 +31,16 @@ module TY : sig
   type ks_id = private int
 
   val ks_id_of_int : int -> ks_id
-  val new_unique_id : unit -> ks_id
+  val new_transaction_id : unit -> ks_id
 end =
 struct
   type ks_id = int
 
-  let new_unique_id =
-    let n = ref 0 in
-      (fun () -> incr n; !n)
+  (* we use even ids for "toplevel" keyspaces, and odd ones for
+   * virtual keyspaces = transactions *)
+  let new_transaction_id =
+    let n = ref 1 in
+      (fun () -> n := !n + 2; !n)
 
   let ks_id_of_int n = n
 end
@@ -94,7 +96,9 @@ struct
   type client_state =
       {
         id : client_id;
-        keyspaces : (keyspace * req_handler Stack.t) H.t;
+        (* each keypsace holds a list of child ks ("virtual keyspaces") so
+         * that we can release them on parent tx commit *)
+        keyspaces : (keyspace * req_handler option * keyspace Queue.t) H.t;
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         server : t;
@@ -273,16 +277,27 @@ struct
     | Watch_prefixes { Watch_prefixes.keyspace; _ }
     | Watch_columns { Watch_columns.keyspace; _ } as r ->
         begin try
-          let handlers = snd (H.find c.keyspaces (ks_id_of_int keyspace)) in
-            if Stack.is_empty handlers then
-              respond c ~request_id r
-            else begin
-              let (_, push) = Stack.top handlers in
-                push (Some (Request (request_id, r)));
-                return ()
-            end
+          let _, handler, _ = H.find c.keyspaces (ks_id_of_int keyspace) in
+            match handler with
+                None ->
+                  (* toplevel (real) keyspace *)
+                  Lwt_log.debug_f "Toplevel respond for %s %s"
+                    (Extprot.Pretty_print.pp pp_request_id request_id)
+                    (Extprot.Pretty_print.pp Request.pp r) >>
+                  respond c ~request_id r
+              | Some (_, push) ->
+                  (* virtual keyspace = transaction *)
+                  lwt () =
+                    Lwt_log.debug_f "Tunnelled respond for %s %s"
+                      (Extprot.Pretty_print.pp pp_request_id request_id)
+                      (Extprot.Pretty_print.pp Request.pp r) in
+                  push (Some (Request (request_id, r)));
+                  return ()
         with Not_found ->
           (* will usually respond with a unknown_keyspace error *)
+          Lwt_log.debug_f "No handler found for for %s %s"
+            (Extprot.Pretty_print.pp pp_request_id request_id)
+            (Extprot.Pretty_print.pp Request.pp r) >>
           respond c ~request_id r
         end
     | Register_keyspace _ | Get_keyspace _ | List_keyspaces _
@@ -292,45 +307,58 @@ struct
 
   and respond ?buf c ~request_id r =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
-    if c.debug then
-      Format.eprintf "Got request %a from %d@\n @[%a@]@."
-        pp_request_id request_id c.id Request.pp r;
+    begin if c.debug then
+      begin
+        Lwt_log.debug_f
+          "Got request %s from %d\n %s"
+          (Extprot.Pretty_print.pp pp_request_id request_id)
+          c.id (Extprot.Pretty_print.pp Request.pp r)
+      end
+    else return () end >>
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
-        let ks_unique_id = ks_id_of_int (D.keyspace_id ks_ks) in
+        (* we use even ids for "toplevel" keyspaces, and odd ones for
+         * virtual keyspaces = transactions *)
+        let ks_unique_id = ks_id_of_int (2 * D.keyspace_id ks_ks) in
         let ks = { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); } in
-          H.add c.keyspaces ks_unique_id (ks, Stack.create ());
+          H.add c.keyspaces ks_unique_id (ks, None, Queue.create ());
+          Lwt_log.debug_f "Registered namespace %S:%d" name (ks_unique_id :> int) >>
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.server.db name with
             None -> P.return_keyspace_maybe ?buf c.och ~request_id None
           | Some ks_ks ->
-              let ks_unique_id = ks_id_of_int (D.keyspace_id ks_ks) in
+              (* we use even ids for "toplevel" keyspaces, and odd ones for
+               * virtual keyspaces = transactions *)
+              let ks_unique_id = ks_id_of_int (2 * D.keyspace_id ks_ks) in
               let ks = { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); } in
-                H.add c.keyspaces ks_unique_id (ks, Stack.create ());
+                H.add c.keyspaces ks_unique_id (ks, None, Queue.create ());
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
       end
     | Release_keyspace { Release_keyspace.keyspace } ->
-        H.remove c.keyspaces (ks_id_of_int keyspace);
+        begin try
+          let ks, _, _ = H.find c.keyspaces (ks_id_of_int keyspace) in
+            remove_keyspace c ks
+        with Not_found -> () end;
         P.return_ok ?buf c.och ~request_id ()
     | List_keyspaces _ ->
         D.list_keyspaces c.server.db >>=
           P.return_keyspace_list ?buf c.och ~request_id
     | List_tables { List_tables.keyspace } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              (D.list_tables ks.ks_ks :> string list Lwt.t) >>=
              P.return_table_list ?buf c.och ~request_id)
     | Table_size_on_disk { Table_size_on_disk.keyspace; table; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.table_size_on_disk ks.ks_ks table >>=
              P.return_table_size_on_disk ?buf c.och ~request_id)
     | Key_range_size_on_disk { Key_range_size_on_disk.keyspace; table; range; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.key_range_size_on_disk ks.ks_ks table
                ?first:range.first ?up_to:range.up_to >>=
              P.return_key_range_size_on_disk ?buf c.och ~request_id)
@@ -340,7 +368,7 @@ struct
     | Commit { Commit.keyspace; _ } ->
         (* only commit if we're inside a tx *)
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              begin match Lwt.get ks.ks_tx_key with
                  None -> P.return_ok ?buf c.och ~request_id ()
                | Some _ -> raise_lwt (Commit_exn request_id)
@@ -348,14 +376,16 @@ struct
     | Abort { Abort.keyspace; _ } ->
         (* only abort if we're inside a tx *)
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              begin match Lwt.get ks.ks_tx_key with
                  None -> P.return_ok ?buf c.och ~request_id ()
-               | Some _ -> raise_lwt (Abort_exn request_id)
+               | Some _ ->
+                   Lwt_log.debug_f "Abort req_id %S causes Abort_exn" request_id >>
+                   raise_lwt (Abort_exn request_id)
              end)
     | Lock { Lock.keyspace; names; shared; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              try_lwt
                D.lock ks.ks_ks ~shared names >>
                P.return_ok ?buf c.och ~request_id ()
@@ -364,35 +394,38 @@ struct
                raise_lwt (Abort_exn request_id))
     | Watch_keys { Watch_keys.keyspace; table; keys } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.watch_keys ks.ks_ks table keys >>
              P.return_ok ?buf c.och ~request_id ())
     | Watch_prefixes { Watch_prefixes.keyspace; table; prefixes; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.watch_prefixes ks.ks_ks table prefixes >>
              P.return_ok ?buf c.och ~request_id ())
     | Watch_columns { Watch_columns.keyspace; table; columns; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.watch_columns ks.ks_ks table columns; >>
              P.return_ok ?buf c.och ~request_id ())
     | Get_keys { Get_keys.keyspace; table; max_keys; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.get_keys ks.ks_ks table ?max_keys (krange' key_range) >>=
-                          P.return_keys ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.get_keys ks.ks_ks table ?max_keys (krange' key_range) >>=
+             P.return_keys ?buf c.och ~request_id)
     | Exist_keys { Exist_keys.keyspace; table; keys; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.exist_keys ks.ks_ks table keys >>=
-                          P.return_exist_result ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.exist_keys ks.ks_ks table keys >>=
+             P.return_exist_result ?buf c.och ~request_id)
     | Count_keys { Count_keys.keyspace; table; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.count_keys ks.ks_ks table (krange' key_range) >>=
-                          P.return_key_count ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.count_keys ks.ks_ks table (krange' key_range) >>=
+             P.return_key_count ?buf c.och ~request_id)
     | Get_slice { Get_slice.keyspace; table; max_keys; max_columns;
                   decode_timestamps; key_range; predicate; column_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.get_slice ks.ks_ks table ?max_keys ?max_columns ~decode_timestamps
                (krange' key_range) ?predicate (crange' column_range) >>=
              maybe_pp c pp_slice ~request_id >>=
@@ -400,54 +433,59 @@ struct
     | Get_slice_values { Get_slice_values.keyspace; table; max_keys;
                          key_range; columns; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.get_slice_values ks.ks_ks table ?max_keys (krange' key_range) columns >>=
              P.return_slice_values ?buf c.och ~request_id)
     | Get_slice_values_timestamps
         { Get_slice_values_timestamps.keyspace; table; max_keys; key_range; columns; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.get_slice_values_with_timestamps ks.ks_ks table ?max_keys
                (krange' key_range) columns >>=
              P.return_slice_values_timestamps ?buf c.och ~request_id)
     | Get_columns { Get_columns.keyspace; table; max_columns;
                     decode_timestamps; key; column_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.get_columns ks.ks_ks table ?max_columns ~decode_timestamps
                key (crange' column_range) >>=
              P.return_columns ?buf c.och ~request_id)
     | Get_column_values { Get_column_values.keyspace; table; key; columns; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.get_column_values ks.ks_ks table key columns >>=
              P.return_column_values ?buf c.och ~request_id)
     | Get_column { Get_column.keyspace; table; key; column; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.get_column ks.ks_ks table key column >>=
-                          P.return_column ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.get_column ks.ks_ks table key column >>=
+             P.return_column ?buf c.och ~request_id)
     | Put_columns { Put_columns.keyspace; table; data; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.put_multi_columns ks.ks_ks table data >>=
-                          P.return_ok ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.put_multi_columns ks.ks_ks table data >>=
+             P.return_ok ?buf c.och ~request_id)
     | Delete_columns { Delete_columns.keyspace; table; key; columns; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.delete_columns ks.ks_ks table key columns >>=
-                          P.return_ok ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.delete_columns ks.ks_ks table key columns >>=
+             P.return_ok ?buf c.och ~request_id)
     | Delete_key { Delete_key.keyspace; table; key; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.delete_key ks.ks_ks table key >>=
-                          P.return_ok ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.delete_key ks.ks_ks table key >>=
+             P.return_ok ?buf c.och ~request_id)
     | Delete_keys { Delete_keys.keyspace; table; key_range; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.delete_keys ks.ks_ks table (krange' key_range) >>=
-                          P.return_ok ?buf c.och ~request_id)
+          (fun (ks, _, _) ->
+             D.delete_keys ks.ks_ks table (krange' key_range) >>=
+             P.return_ok ?buf c.och ~request_id)
     | Dump { Dump.keyspace; only_tables; cursor; format; } ->
         let offset = match cursor with
             None -> None
           | Some c -> D.cursor_of_string c in
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              lwt x =
                D.dump ks.ks_ks ?format ?only_tables ?offset () >|= function
                    None -> None
@@ -457,31 +495,31 @@ struct
              in P.return_backup_dump ?buf c.och ~request_id x)
     | Load { Load.keyspace; data; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.load ks.ks_ks data >>=
              P.return_backup_load_result ?buf c.och ~request_id)
     | Stats { Stats.keyspace; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) -> D.load_stats ks.ks_ks >>=
+          (fun (ks, _, _) -> D.load_stats ks.ks_ks >>=
                           P.return_load_stats ?buf c.och ~request_id)
     | Listen { Listen.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.listen ks.ks_ks topic >>
              P.return_ok ?buf c.och ~request_id ())
     | Unlisten { Unlisten.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.unlisten ks.ks_ks topic >>
              P.return_ok ?buf c.och ~request_id ())
     | Notify { Notify.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.notify ks.ks_ks topic >>
              P.return_ok ?buf c.och ~request_id ())
     | Await { Await.keyspace; } ->
         with_keyspace c keyspace ~request_id
-          (fun (ks, _) ->
+          (fun (ks, _, _) ->
              D.await_notifications ks.ks_ks >>=
              P.return_notifications ?buf c.och ~request_id)
     | Trigger_raw_dump { Trigger_raw_dump.record; } ->
@@ -510,7 +548,7 @@ struct
         D.get_property c.server.db property >>=
         P.return_property ?buf c.och ~request_id
 
-  and respond_to_begin ?buf c (ks, handlers) ~request_id tx_type =
+  and respond_to_begin ?buf c (ks, _, children) ~request_id tx_type =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
     let transaction_f = match tx_type with
         Tx_type.Repeatable_read -> D.repeatable_read_transaction
@@ -521,39 +559,60 @@ struct
          * (carried by Commit_exn) *)
         let (req_stream, pushf) as handler = Lwt_stream.create () in
         lwt commit_reqid =
-          transaction_f ks.ks_ks begin fun _ ->
-            try_lwt
-              (* install handler *)
-              Stack.push handler handlers;
-              P.return_ok ?buf c.och ~request_id () >>
-              let rec handle_reqs () =
-                match_lwt Lwt_stream.get req_stream with
-                  | Some (Request (request_id, r)) ->
-                      (* we respond in a background thread so as to process
-                       * reqs in parallel but need to capture exns (in
-                       * particular, Abort_exn and Commit_exn) *)
-                      ignore begin
-                        try_lwt
-                          Lwt.with_value ks.ks_tx_key (Some ())
-                            (fun () -> respond c ~request_id r)
-                        with e ->
-                          pushf (Some (Exception e));
-                          return ()
-                      end;
-                      handle_reqs ()
-                  | Some (Exception (Commit_exn req_id)) ->
-                      commit_request_id := req_id;
-                      return req_id
-                  | Some (Exception e) -> raise_lwt e
-                  | None -> fail (Failure "TX request stream canceled")
-              in handle_reqs ()
-            finally
-              let _ : req_handler = Stack.pop handlers in
+          transaction_f ks.ks_ks begin fun ks' ->
+            let ks =
+              { ks_unique_id = new_transaction_id ();
+                ks_tx_key = ks.ks_tx_key; ks_ks = ks';
+              }
+            in
+              try_lwt
+                lwt () = Lwt_log.debug_f "Registering virtual (TX) keyspace %d"
+                           (ks.ks_unique_id :> int)
+                in
+                  (* install handler *)
+                  H.add c.keyspaces ks.ks_unique_id (ks, Some handler, Queue.create ());
+                  (* register it as child *)
+                  Queue.push ks children;
+                  P.return_keyspace ?buf c.och ~request_id (ks.ks_unique_id :> int) >>
+                  let rec handle_reqs () =
+                    match_lwt Lwt_stream.get req_stream with
+                      | Some (Request (request_id, r)) ->
+                          (* we respond in a background thread so as to process
+                           * reqs in parallel but need to capture exns (in
+                           * particular, Abort_exn and Commit_exn) *)
+                          ignore begin
+                            try_lwt
+                              Lwt.with_value ks.ks_tx_key (Some ())
+                                (fun () -> respond c ~request_id r)
+                            with
+                              | Abort_exn request_id as e ->
+                                  lwt () = Lwt_log.debug_f "PUSHING Abort_exn %S" request_id in
+                                    pushf (Some (Exception e));
+                                    return ()
+                              | e ->
+                                pushf (Some (Exception e));
+                                return ()
+                          end;
+                          handle_reqs ()
+                      | Some (Exception (Commit_exn req_id)) ->
+                          commit_request_id := req_id;
+                          Lwt_log.debug_f "Returning after Commit_exn in keyspace %d, req %s"
+                            (ks.ks_unique_id :> int)
+                            (Extprot.Pretty_print.pp pp_request_id req_id) >>
+                          return req_id
+                      | Some (Exception e) -> raise_lwt e
+                      | None -> fail (Failure "TX request stream canceled")
+                  in handle_reqs ()
+              finally
+                lwt () = Lwt_log.debug_f "Commit or abort ks %d" (ks.ks_unique_id :> int) in
+                remove_keyspace c ks;
                 return ()
           end
         in P.return_ok ?buf c.och ~request_id:commit_reqid ()
       with
-          | Abort_exn request_id -> P.return_ok ?buf c.och ~request_id ()
+          | Abort_exn request_id ->
+              Lwt_log.debug_f "Abort_exn for request_id %S caught, sending OK" request_id >>
+              P.return_ok ?buf c.och ~request_id ()
           | Obs_data_model.Dirty_data -> P.dirty_data ?buf c.och ~request_id:!commit_request_id ()
 
   and with_keyspace c ks_idx ~request_id f =
@@ -562,6 +621,14 @@ struct
     with Not_found ->
       let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
         P.unknown_keyspace c.och ~request_id ()
+
+  (* remove keyspace and its children (recursively) from keyspace table *)
+  and remove_keyspace c ks =
+    try
+      let _, _, children = H.find c.keyspaces ks.ks_unique_id in
+        H.remove c.keyspaces ks.ks_unique_id;
+        Queue.iter (remove_keyspace c) children
+    with Not_found -> ()
 
   let setup_auto_yield t c =
     incr num_clients;
@@ -615,11 +682,9 @@ struct
          raise_lwt End_of_file
        finally
          H.iter
-           (fun _ (_, handlers) ->
-              if Stack.is_empty handlers then ()
-              else
-                let _, push = Stack.top handlers in
-                  push (Some (Exception Abort_all_txs)))
+           (fun _ (_, handler, _) -> match handler with
+                None -> ()
+              | Some (_, push) -> push (Some (Exception Abort_all_txs)))
          c.keyspaces;
          return ()
 
@@ -667,8 +732,8 @@ struct
           | Some update ->
               begin try_lwt
                 lwt buf, off, len = D.Replication.get_update_data update in
-                  if debug then
-                    eprintf "Sending update (%d bytes)\n%!" len;
+                  begin if debug then Lwt_log.debug_f "Sending update (%d bytes)\n%!" len
+                  else return () end >>
                   write_checksummed_int64_le och (Int64.of_int len) >>
 
                   let rec copy_data () =

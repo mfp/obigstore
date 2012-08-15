@@ -579,6 +579,7 @@ module rec TYPES : sig
 
   and transaction =
       {
+        tx_id : int;
         mutable deleted_keys : S.t TM.t; (* table -> key set *)
         mutable added_keys : S.t TM.t; (* table -> key set *)
         mutable added : string column M.t M.t TM.t; (* table -> key -> column name -> column *)
@@ -594,6 +595,9 @@ module rec TYPES : sig
         dump_buffer : Obs_bytea.t;
         mutable tx_notifications : string Notif_queue.t;
         mutable tainted : DIRTY_FLAG.t option;
+
+        (* we serialize execution of nested TXs using the following mutex *)
+        nested_tx_mutex : Lwt_mutex.t;
       }
 end = TYPES
 
@@ -1017,12 +1021,16 @@ let dirty_prefix_watches ks table key =
             List.iter (DIRTY_FLAGS.iter DIRTY_FLAG.set) sets
         with Not_found -> ()
 
+let new_tx_id = let n = ref 1 in (fun () -> incr n; !n)
+
 let rec transaction_aux with_iter_pool ks f =
   match Lwt.get ks.ks_tx_key with
     | None ->
         with_iter_pool ks.ks_db None begin fun ~iter_pool ~repeatable_read ->
           let rec tx =
-            { added_keys = TM.empty; deleted_keys = TM.empty;
+            {
+              tx_id = new_tx_id ();
+              added_keys = TM.empty; deleted_keys = TM.empty;
               added = TM.empty; deleted = TM.empty;
               repeatable_read; iter_pool; ks;
               backup_writebatch = lazy (L.Batch.make ());
@@ -1030,7 +1038,7 @@ let rec transaction_aux with_iter_pool ks f =
               outermost_tx = tx; tx_locks = M.empty;
               dump_buffer = Obs_bytea.create 16;
               tx_notifications = Notif_queue.empty;
-              tainted = None;
+              tainted = None; nested_tx_mutex = Lwt_mutex.create ();
             } in
           try_lwt
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
@@ -1038,21 +1046,28 @@ let rec transaction_aux with_iter_pool ks f =
               return y
           finally
             (* release tx_locks *)
-            M.iter (fun name m -> Obs_shared_mutex.unlock m) tx.tx_locks;
+            M.iter (fun name m ->
+                      ignore (Lwt_log.debug_f "Releasing %S" name);
+                      Obs_shared_mutex.unlock m) tx.tx_locks;
             return ()
         end
     | Some parent_tx ->
-        with_iter_pool
-          ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
-            let tx = { parent_tx with iter_pool; repeatable_read; } in
-            lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
-              parent_tx.deleted_keys <- tx.deleted_keys;
-              parent_tx.added <- tx.added;
-              parent_tx.deleted <- tx.deleted;
-              parent_tx.added_keys <- tx.added_keys;
-              parent_tx.tx_notifications <- tx.tx_notifications;
-              return y
-          end
+        Lwt_mutex.with_lock parent_tx.nested_tx_mutex begin fun () ->
+          with_iter_pool
+            ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
+              let tx = { parent_tx with tx_id = new_tx_id (); iter_pool; repeatable_read;
+                                        nested_tx_mutex = Lwt_mutex.create (); } in
+              lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
+                (* because we serialize sub-transactions, it's safe to update
+                 * this way *)
+                parent_tx.deleted_keys <- tx.deleted_keys;
+                parent_tx.added <- tx.added;
+                parent_tx.deleted <- tx.deleted;
+                parent_tx.added_keys <- tx.added_keys;
+                parent_tx.tx_notifications <- tx.tx_notifications;
+                return y
+            end
+        end
 
 and commit_outermost_transaction ks tx =
   (* early termination for read-only or NOP txs if:

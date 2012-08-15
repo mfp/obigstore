@@ -28,6 +28,8 @@ module Option = BatOption
 
 let debug_deadlocks = ref true
 
+let debug_protocol = Lwt.new_key ()
+
 let section = Lwt_log.Section.make "obigstore:client"
 
 module Make(P : Obs_protocol_bin.S) =
@@ -70,7 +72,12 @@ struct
     password : string;
   }
 
-  type keyspace = { ks_name : string; ks_id : int; ks_db : db; }
+  type keyspace =
+    { ks_name : string; ks_id : int; ks_db : db;
+      (* we keep a ref to the parent keyspace so that it is not GCed and no
+       * Release_keyspace message is sent if there are nested
+       * transactions alive *)
+      ks_parent : keyspace option; }
 
   type transaction = keyspace
 
@@ -120,6 +127,7 @@ struct
     let pos = Lwt_io.position t.ich in
     let request_id = numeric_id_of_string_request_id request_id in
     let receiver = try_find t.pending_reqs request_id in
+      Lwt_log.debug_f ~section "Got response for request %d" request_id >>
       match receiver with
           None ->
             (* skip response *)
@@ -215,6 +223,9 @@ struct
       String.unsafe_set t.async_req_id i
         (Char.unsafe_chr ((request_id lsr (8 * i) land 0xFF)))
     done;
+    Lwt_log.debug_f ~section
+      "Sending request %d %s" request_id
+      (Extprot.Pretty_print.pp Request.pp req) >>
     P.write_msg t.och t.async_req_id t.buf
 
   let await_req_id_cnt = ref 1
@@ -233,13 +244,24 @@ struct
   let async_request (type a) t req f =
     check_closed t >>
     let wait, wakeup = Lwt.wait () in
+    let request_id = new_async_req_id req in
+    let () =
+      ignore begin
+        lwt () = Lwt_unix.sleep 3.0 in
+          match Lwt.poll wait with
+              None ->
+                Printf.printf "===XXX no response to request %d  %s\n%!"
+                        request_id (Extprot.Pretty_print.pp Request.pp req);
+                return ()
+            | Some _ -> return ()
+      end in
     let module R =
       struct
         type result = a
         let read_result = f
         let wakeup = wakeup
-      end in
-    let request_id = new_async_req_id req in
+      end
+    in
       H.add t.pending_reqs request_id (module R : PENDING_RESPONSE);
       Lwt_mutex.with_lock t.mutex (fun () -> send_request t ~request_id req) >>
       wait
@@ -254,7 +276,7 @@ struct
       async_request t
         (Register_keyspace { Register_keyspace.name; })
         P.read_keyspace in
-    let ks = { ks_id; ks_name = name; ks_db = t; } in
+    let ks = { ks_id; ks_name = name; ks_db = t; ks_parent = None; } in
       Lwt_gc.finalise
         (fun _ ->
            try_lwt
@@ -270,7 +292,7 @@ struct
       async_request t (Get_keyspace { Get_keyspace.name; }) P.read_keyspace_maybe
     with
         None -> return None
-      | Some ks_id -> return (Some { ks_id; ks_name = name; ks_db = t; })
+      | Some ks_id -> return (Some { ks_id; ks_name = name; ks_db = t; ks_parent = None; })
 
   let keyspace_name ks = ks.ks_name
   let keyspace_id ks = ks.ks_id
@@ -295,14 +317,22 @@ struct
       P.read_key_range_size_on_disk
 
   let transaction_aux tx_type ks f =
-    async_request_ks ks (Begin { Begin.keyspace = ks.ks_id; tx_type }) P.read_ok >>
-    try_lwt
-      lwt y = f ks in
-        async_request_ks ks (Commit { Commit.keyspace = ks.ks_id }) P.read_ok >>
-        return y
-    with e ->
-      async_request_ks ks (Abort { Abort.keyspace = ks.ks_id }) P.read_ok >>
-      raise_lwt e
+    lwt ks_id =
+      async_request_ks ks
+        (Begin { Begin.keyspace = ks.ks_id; tx_type }) P.read_keyspace in
+    let ks = { ks_id; ks_name = ks.ks_name; ks_db = ks.ks_db; ks_parent = Some ks; } in
+      try_lwt
+        lwt y = f ks in
+          async_request_ks ks (Commit { Commit.keyspace = ks.ks_id }) P.read_ok >>
+          return y
+      with
+          Dirty_data as e ->
+            (* tx already aborted implicitly, need not send Abort (which would
+             * hang because the virtual keyspace has already been disposed of) *)
+            raise_lwt e
+        | e ->
+            async_request_ks ks (Abort { Abort.keyspace = ks.ks_id }) P.read_ok >>
+            raise_lwt e
 
   let read_committed_transaction ks f =
     transaction_aux Tx_type.Read_committed ks f

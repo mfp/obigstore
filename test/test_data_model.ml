@@ -326,7 +326,7 @@ struct
     in
       D.put_columns ks1 T.tbl1 "key1" cols >>
       D.read_committed_transaction ks1
-        (fun tx -> D.put_columns ks1 T.tbl1 "key2" cols) >>
+        (fun tx -> D.put_columns tx T.tbl1 "key2" cols) >>
       check_ts "key1" "a" ts1 >>
       check_ts "key1" "b" ts2 >>
       check_ts "key2" "a" ts1 >>
@@ -361,62 +361,62 @@ struct
         (fun tx ->
            put tx T.tbl1 "fg" ["x", ""] >>
            put tx T.tbl1 "x" ["x", ""] >>
-           get_key_range ks1 T.tbl1 ~first:"e" >|=
+           get_key_range tx T.tbl1 ~first:"e" >|=
              aeq_string_list ~msg:"read updates in transaction"
                [ "e"; "f"; "fg"; "g"; "x" ] >>
-           get_key_range ks1 T.tbl1 ~first:"f" ~last:"g" >|=
+           get_key_range tx T.tbl1 ~first:"f" ~last:"g" >|=
              aeq_string_list [ "f"; "fg"; "g"; ] >>
            begin try_lwt
-             D.read_committed_transaction ks1
+             D.read_committed_transaction tx
                (fun tx ->
                   D.delete_columns tx T.tbl1 "fg" ["x"] >>
                   D.delete_columns tx T.tbl1 "xx" ["x"] >>
                   put tx T.tbl1 "fgh" ["x", ""] >>
                   put tx T.tbl1 "xx" ["x", ""] >>
-                  get_key_range ks1 T.tbl1 ~first:"f" >|=
+                  get_key_range tx T.tbl1 ~first:"f" >|=
                     aeq_string_list ~msg:"nested transactions"
                       [ "f"; "fgh"; "g"; "x"; "xx" ] >>
                   raise Exit)
            with Exit -> return ()
            end >>
-           get_key_range ks1 T.tbl1 ~first:"e" >|=
+           get_key_range tx T.tbl1 ~first:"e" >|=
              aeq_string_list [ "e"; "f"; "fg"; "g"; "x" ])
 
   let test_get_keys_reverse_ranges dbs =
     lwt ks = register_keyspace dbs "test_get_keys_ranges" in
 
-    let expect ?first ?up_to expected =
-      lwt actual = D.get_keys ks T.tbl (rev_key_range ?first ?up_to ()) in
+    let expect tx ?first ?up_to expected =
+      lwt actual = D.get_keys tx T.tbl (rev_key_range ?first ?up_to ()) in
       let range = rev_key_range ?first ?up_to () in
         aeq_string_list
           ~msg:(sprintf "range %s" (string_of_key_range range))
           expected actual;
         return ()
     in
-      expect [] >>
+      expect ks [] >>
       put_slice ks T.tbl
         ["a", ["x", ""]; "c", ["c", ""]; "d", ["d", ""]] >>
       D.read_committed_transaction ks
         (fun tx ->
-           expect [ "d"; "c"; "a"] >>
-           expect ~up_to:"b" ["d"; "c"] >>
-           expect ~up_to:"a" ["d"; "c"; "a"] >>
-           expect ~first:"c" ["a"] >>
-           put_slice ks T.tbl ["e", ["ee", "eee"]] >>
+           expect tx [ "d"; "c"; "a"] >>
+           expect tx ~up_to:"b" ["d"; "c"] >>
+           expect tx ~up_to:"a" ["d"; "c"; "a"] >>
+           expect tx ~first:"c" ["a"] >>
+           put_slice tx T.tbl ["e", ["ee", "eee"]] >>
            D.delete_columns tx T.tbl "d" ["d"] >>
-           expect ~up_to:"b" ["e"; "c"] >>
-           expect ~first:"e" ["c"; "a"] >>
-           expect ~first:"e" ~up_to:"b" ["c"] >>
-           expect ~first:"e" ~up_to:"a" ["c"; "a"] >>
-           expect ~first:"e" ~up_to:"e" []) >>
+           expect tx ~up_to:"b" ["e"; "c"] >>
+           expect tx ~first:"e" ["c"; "a"] >>
+           expect tx ~first:"e" ~up_to:"b" ["c"] >>
+           expect tx ~first:"e" ~up_to:"a" ["c"; "a"] >>
+           expect tx ~first:"e" ~up_to:"e" []) >>
       (* now after commit *)
       D.read_committed_transaction ks
         (fun tx ->
-           expect ~up_to:"b" ["e"; "c"] >>
-           expect ~first:"e" ["c"; "a"] >>
-           expect ~first:"e" ~up_to:"b" ["c"] >>
-           expect ~first:"e" ~up_to:"a" ["c"; "a"] >>
-           expect ~first:"e" ~up_to:"e" [])
+           expect tx ~up_to:"b" ["e"; "c"] >>
+           expect tx ~first:"e" ["c"; "a"] >>
+           expect tx ~first:"e" ~up_to:"b" ["c"] >>
+           expect tx ~first:"e" ~up_to:"a" ["c"; "a"] >>
+           expect tx ~first:"e" ~up_to:"e" [])
 
   let test_get_keys_with_del_put dbs =
     lwt ks = register_keyspace dbs "test_get_keys_with_del_put" in
@@ -426,12 +426,12 @@ struct
         (List.init 5 (fun i -> (key_name i, [ "x", "" ]))) >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_key_range ks T.tbl >|= aeq_string_list (List.init 5 key_name) >>
+           get_key_range tx T.tbl >|= aeq_string_list (List.init 5 key_name) >>
            D.delete_key tx T.tbl "001" >>
            D.delete_columns tx T.tbl "002" ["y"; "x"] >>
            D.delete_columns tx T.tbl "003" ["y"; "x"] >>
-           put_slice ks T.tbl ["002", ["z", "z"]] >>
-           get_key_range ks T.tbl >|= aeq_string_list ["000"; "002"; "004"]) >>
+           put_slice tx T.tbl ["002", ["z", "z"]] >>
+           get_key_range tx T.tbl >|= aeq_string_list ["000"; "002"; "004"]) >>
       get_key_range ks T.tbl >|= aeq_string_list ["000"; "002"; "004"]
 
   let test_get_keys_discrete dbs =
@@ -449,7 +449,7 @@ struct
              delete tx T.tbl "b" ["x"] >>
              delete tx T.tbl "d" ["x"] >>
              put tx T.tbl "x" ["x", ""] >>
-             get_keys ks1 T.tbl ["a"; "d"; "x"] >|=
+             get_keys tx T.tbl ["a"; "d"; "x"] >|=
                aeq_string_list ~msg:"data in transaction" ["a"; "x" ] >>
              raise Exit)
       with Exit -> return () end >>
@@ -462,22 +462,22 @@ struct
         (List.init 10 (fun i -> (key_name i, [ "x", ""; "y", "" ]))) >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_key_range ks T.tbl >|=
+           get_key_range tx T.tbl >|=
              aeq_string_list (List.init 10 key_name) >>
-           get_key_range ks T.tbl ~first:"002" ~max_keys:2 >|=
+           get_key_range tx T.tbl ~first:"002" ~max_keys:2 >|=
              aeq_string_list ["002"; "003"] >>
-           get_key_range ks T.tbl ~last:"002" ~max_keys:5 >|=
+           get_key_range tx T.tbl ~last:"002" ~max_keys:5 >|=
              aeq_string_list ["000"; "001"; "002"] >>
-           get_key_range ks T.tbl ~first:"008" ~max_keys:5 >|=
+           get_key_range tx T.tbl ~first:"008" ~max_keys:5 >|=
              aeq_string_list ["008"; "009"] >>
            D.delete_key tx T.tbl "001" >>
            D.delete_columns tx T.tbl "003" ["x"; "y"] >>
            D.delete_columns tx T.tbl "002" ["xxxx"] >>
-           get_key_range ks T.tbl ~max_keys:3 >|=
+           get_key_range tx T.tbl ~max_keys:3 >|=
              aeq_string_list ["000"; "002"; "004"]) >>
       D.read_committed_transaction ks
         (fun tx ->
-           get_key_range ks T.tbl ~max_keys:4 >|=
+           get_key_range tx T.tbl ~max_keys:4 >|=
              aeq_string_list ["000"; "002"; "004"; "005"])
 
   let test_count_keys dbs =
@@ -515,20 +515,20 @@ struct
         (fun tx ->
            put tx T.tbl1 "fg" ["x", ""] >>
            put tx T.tbl1 "x" ["x", ""] >>
-           aeq_nkeys ks1 T.tbl1 ~first:"e" 5 >> (* [ "e"; "f"; "fg"; "g"; "x" ] *)
-           aeq_nkeys ks1 T.tbl1 ~first:"f" ~last:"g" 3 >> (* [ "f"; "fg"; "g"; ] *)
+           aeq_nkeys tx T.tbl1 ~first:"e" 5 >> (* [ "e"; "f"; "fg"; "g"; "x" ] *)
+           aeq_nkeys tx T.tbl1 ~first:"f" ~last:"g" 3 >> (* [ "f"; "fg"; "g"; ] *)
            begin try_lwt
-             D.read_committed_transaction ks1
+             D.read_committed_transaction tx
                (fun tx ->
                   D.delete_columns tx T.tbl1 "fg" ["x"] >>
                   D.delete_columns tx T.tbl1 "xx" ["x"] >>
                   put tx T.tbl1 "fgh" ["x", ""] >>
                   put tx T.tbl1 "xx" ["x", ""] >>
-                  aeq_nkeys ks1 T.tbl1 ~first:"f" 5 >> (* [ "f"; "fgh"; "g"; "x"; "xx" ] *)
+                  aeq_nkeys tx T.tbl1 ~first:"f" 5 >> (* [ "f"; "fgh"; "g"; "x"; "xx" ] *)
                   raise Exit)
            with Exit -> return ()
            end >>
-           aeq_nkeys ks1 T.tbl1 ~first:"e" 5) (* [ "e"; "f"; "fg"; "g"; "x" ] *)
+           aeq_nkeys tx T.tbl1 ~first:"e" 5) (* [ "e"; "f"; "fg"; "g"; "x" ] *)
 
   let tuple_to_slice (last_key, data) =
     (last_key,
@@ -621,7 +621,7 @@ struct
     in
         D.read_committed_transaction ks
           (fun tx ->
-             put_slice ks T.tbl
+             put_slice tx T.tbl
                (List.init 10
                   (fun i -> (sprintf "%02d" i,
                              List.init 10 (fun i -> string_of_int i, "")))) >>
@@ -680,7 +680,7 @@ struct
     in
       D.read_committed_transaction ks
         (fun tx ->
-           put_slice ks T.tbl
+           put_slice tx T.tbl
              [
                "a", ["k", "kk"; "v", "vv"];
                "b", ["k1", "kk1"; "v", "vv1"];
@@ -690,7 +690,7 @@ struct
       D.read_committed_transaction ks expect1 >>
       D.read_committed_transaction ks
         (fun tx ->
-           put_slice ks T.tbl [ "a", ["k", "new"] ] >>
+           put_slice tx T.tbl [ "a", ["k", "new"] ] >>
            get_slice tx T.tbl
              (rev_key_range ~first:"b" ~up_to:"a" ())
              `All >|=
@@ -713,7 +713,7 @@ struct
            get_slice tx T.tbl ~max_keys:2 (key_range ~first:"002" ()) all >|=
              aeq_slice
                (Some "004", [ "003", "x", ["x", ""]; "004", "x", ["x", ""]]) >>
-           put_slice ks T.tbl [ "002", [ "y", "" ] ] >>
+           put_slice tx T.tbl [ "002", [ "y", "" ] ] >>
            get_slice tx T.tbl ~max_keys:2 (key_range ~first:"002" ()) all >|=
              aeq_slice
                (Some "003", [ "002", "y", ["y", ""]; "003", "x", ["x", ""]]) >>
@@ -726,7 +726,7 @@ struct
              aeq_slice
                (Some "003", [ "002", "y", ["y", ""]; "003", "x", ["x", ""]]) >>
            D.delete_columns tx T.tbl "002" ["y"] >>
-           put_slice ks T.tbl [ "002", ["x", ""] ] >>
+           put_slice tx T.tbl [ "002", ["x", ""] ] >>
            get_slice tx T.tbl ~max_keys:1000 (key_range ()) all >|=
              aeq_slice
                (Some "099",
@@ -760,7 +760,7 @@ struct
              aeq_slice
                (Some "01", ["00", "2", ["0", ""; "1", ""; "2", ""];
                             "01", "0", ["0", ""]]) >>
-           put_slice ks T.tbl [ "01",  ["10", "a"; "11", "b"] ] >>
+           put_slice tx T.tbl [ "01",  ["10", "a"; "11", "b"] ] >>
            get_slice tx T.tbl ~max_keys:2 ~max_columns:3
              (key_range ()) `All >|=
              aeq_slice
@@ -824,7 +824,7 @@ struct
     in
       D.read_committed_transaction ks
         (fun tx ->
-           put_slice ks T.tbl
+           put_slice tx T.tbl
              (List.init 10
                 (fun i -> (sprintf "%02d" i,
                            List.init 10 (fun i -> string_of_int i, "")))) >>
@@ -872,7 +872,7 @@ struct
     in
       D.read_committed_transaction ks
         (fun tx ->
-           put_slice ks T.tbl
+           put_slice tx T.tbl
              (List.init 10
                 (fun i -> (sprintf "%02d" i,
                            List.init 10 (fun i -> string_of_int i, "")))) >>
@@ -914,13 +914,13 @@ struct
              aeq_slice (Some "c",
                         ["b", "c2", [ "c1", ""; "c2", "" ];
                          "c", "c2",  [ "c1", ""; "c2", "" ]]) >>
-           put_slice ks T.tbl ["a", ["c4", "c4"]] >>
+           put_slice tx T.tbl ["a", ["c4", "c4"]] >>
            begin try_lwt
-             D.read_committed_transaction ks
+             D.read_committed_transaction tx
                (fun tx ->
                   delete tx T.tbl "b" ["c1"; "c2"] >>
                   delete tx T.tbl "c" ["c2"] >>
-                  put_slice ks T.tbl ["c", ["c3", "c3"]] >>
+                  put_slice tx T.tbl ["c", ["c3", "c3"]] >>
                   get_slice tx T.tbl (key_range ()) all >|=
                     aeq_slice
                       ~msg:"nested tx data"
@@ -934,14 +934,20 @@ struct
                (Some "c",
                 ["a", "c4", ["c1", ""; "c2", ""; "c4", "c4"];
                  "b", "c2", ["c1", ""; "c2", ""];
-                 "c", "c2", ["c1", ""; "c2", ""]]))
+                 "c", "c2", ["c1", ""; "c2", ""]])) >>
+      get_slice ks T.tbl (key_range ()) all >|=
+        aeq_slice ~msg:"after aborted transaction"
+          (Some "c",
+           ["a", "c4", ["c1", ""; "c2", ""; "c4", "c4"];
+            "b", "c2", ["c1", ""; "c2", ""];
+            "c", "c2", ["c1", ""; "c2", ""]])
 
   let test_get_slice_read_tx_data dbs =
     lwt ks = register_keyspace dbs "test_get_slice_read_tx_data" in
       put_slice ks T.tbl [ "a", ["0", ""; "1", ""]; "b", ["0", ""; "1", ""] ] >>
       D.read_committed_transaction ks
         (fun tx ->
-           put_slice ks T.tbl [ "a", ["00", ""]; "b", [ "10", ""] ] >>
+           put_slice tx T.tbl [ "a", ["00", ""]; "b", [ "10", ""] ] >>
            get_slice tx T.tbl (key_range ()) `All >|=
              aeq_slice
                (Some "b", ["a", "1", ["0", ""; "00", ""; "1", ""];
@@ -1046,8 +1052,8 @@ struct
 
   let test_get_slice_values dbs =
     lwt ks = register_keyspace dbs "test_get_slice_values" in
-    let add_data () =
-      put_slice ks T.tbl
+    let add_data tx =
+      put_slice tx T.tbl
         [ "a", (List.init 10 (fun n -> (sprintf "%d" n, sprintf "a%d" n)));
           "b", ["0", "b0"; "3", "b3"];
           "c", ["1", "c1"] ] in
@@ -1066,7 +1072,7 @@ struct
                       "b", [Some "b0"; None];
                       "c", [None; None]])
     in
-      D.read_committed_transaction ks (fun tx -> add_data () >> assertions tx) >>
+      D.read_committed_transaction ks (fun tx -> add_data tx >> assertions tx) >>
       (* also after commit *)
       D.read_committed_transaction ks assertions
 
@@ -1083,7 +1089,7 @@ struct
              aeq [Some "1"; None; Some ""] >>
            D.get_column_values tx T.tbl "b" ["1"] >|=
              aeq [None] >>
-           put_slice ks T.tbl [ "b", [ "1", "b1" ] ] >>
+           put_slice tx T.tbl [ "b", [ "1", "b1" ] ] >>
            D.get_column_values tx T.tbl "b" ["1"; "2"] >|=
              aeq [Some "b1"; None]) >>
       D.read_committed_transaction ks
@@ -1215,7 +1221,7 @@ struct
                 [ "a", "zz", [ "x", "x"; "y", ""; "z", ""; "zz", "" ];
                   "b", "z", [ "x", ""; "y", ""; "z", "" ];
                   "c", "z", [ "z", "" ]]) >>
-           put_slice ks T.tbl [ "c", ["c", "c"]] >>
+           put_slice tx T.tbl [ "c", ["c", "c"]] >>
            get_slice tx T.tbl (`Discrete ["c"]) `All >|=
              aeq_slice (Some "c", [ "c", "z", ["c", "c"; "z", ""] ])) >>
       D.read_committed_transaction ks
@@ -1226,19 +1232,19 @@ struct
   let test_lock_recursive db =
     lwt ks = D.register_keyspace db "test_lock_recursive" in
       D.read_committed_transaction ks
-        (fun _ ->
+        (fun ks ->
            D.lock ks ~shared:false ["test_lock_recursive"] >>
            D.lock ks ~shared:false ["test_lock_recursive"] >>
            D.read_committed_transaction ks
-             (fun _ ->
+             (fun ks ->
                 D.lock ks ~shared:false ["test_lock_recursive"]))
 
   let test_lock_nested db =
     lwt ks = D.register_keyspace db "test_lock_nested" in
       D.read_committed_transaction ks
-        (fun _ ->
+        (fun ks ->
            D.read_committed_transaction ks
-             (fun _ ->
+             (fun ks ->
                 D.lock ks ~shared:false ["test_lock_nested"] >>
                 D.lock ks ~shared:false ["test_lock_nested"]))
 
@@ -1250,7 +1256,7 @@ struct
         | Some (v, _) -> return (int_of_string v) in
     let transfer ks =
       D.read_committed_transaction ks
-        (fun _ ->
+        (fun ks ->
            D.lock ks ~shared:false ["transfer a:b"] >>
            lwt a = get_val ks "a" >|= succ in
            lwt b = get_val ks "b" >|= pred in
@@ -1377,6 +1383,47 @@ struct
   let test_watch_prefixes p =
     Lwt_pool.use p (fun db1 -> Lwt_pool.use p (test_watch_prefixes db1))
 
+  let test_concurrent_nested_txs dbs =
+    lwt ks = register_keyspace dbs "test_concurrent_nested_txs" in
+      D.repeatable_read_transaction ks
+        (fun ks ->
+           let n_sub_txs = ref 0 in
+           let check_serialization () =
+             incr n_sub_txs;
+             if !n_sub_txs > 1 then failwith "Nested TXs are not serialized!" in
+           let finish () = decr n_sub_txs; return () in
+             Lwt.join
+               [
+                 D.repeatable_read_transaction ks
+                   (fun ks ->
+                      check_serialization ();
+                      Lwt_unix.sleep 0.020 >> put_slice ks T.tbl [ "a", ["x", ""] ] >>
+                      finish ());
+                 D.repeatable_read_transaction ks
+                   (fun ks ->
+                      check_serialization ();
+                      Lwt_unix.sleep 0.010 >> put_slice ks T.tbl [ "b", ["x", ""] ] >>
+                      finish ());
+                 begin try_lwt
+                   D.repeatable_read_transaction ks
+                     (fun ks ->
+                        check_serialization ();
+                        Lwt_unix.sleep 0.010 >> put_slice ks T.tbl [ "e", ["x", ""] ] >>
+                        finish () >>
+                        raise Exit)
+                 with Exit -> return () end;
+                 D.repeatable_read_transaction ks
+                   (fun ks ->
+                      check_serialization ();
+                      put_slice ks T.tbl [ "a", ["y", ""] ] >>
+                      finish ());
+                 put ks T.tbl "c" ["d", "e"];
+               ]) >>
+      get_all ks T.tbl >|=
+        aeq_slice (Some "c", [ "a", "y", ["x", ""; "y", ""];
+                               "b", "x", ["x", ""];
+                               "c", "d", ["d", "e"] ])
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1393,23 +1440,23 @@ struct
     lwt ks2 = D.register_keyspace db2 "test_interlocked_txs" in
     lwt ks3 = D.register_keyspace db2 "test_interlocked_txs" in
       D.repeatable_read_transaction ks0
-        (fun _ ->
+        (fun ks0 ->
            get_all ks0 T.tbl >|= aeq_slice ~msg:"ks0 pre" (None, []) >>
            get_all ks1 T.tbl >|= aeq_slice ~msg:"ks1 pre" (None, []) >>
            get_all ks2 T.tbl >|= aeq_slice ~msg:"ks2 pre" (None, []) >>
            get_all ks3 T.tbl >|= aeq_slice ~msg:"ks3 pre" (None, []) >>
            D.read_committed_transaction ks1
-             (fun _ ->
+             (fun ks1 ->
                 put_slice ks1 T.tbl ["a", ["x", ""]] >>
                 D.repeatable_read_transaction ks3
-                  (fun _ -> put_slice ks3 T.tbl ["c", ["x", ""]]) >>
+                  (fun ks3 -> put_slice ks3 T.tbl ["c", ["x", ""]]) >>
                 get_all ks1 T.tbl >|=
                   aeq_slice ~msg:"read in ks1, ks3 committed"
                     (Some "c", ["a", "x", ["x", ""]; "c", "x", ["x", ""]]) >>
                 get_all ks0 T.tbl >|=
                   aeq_slice ~msg:"read in ks0, ks3 committed" (None, []) >>
                 D.read_committed_transaction ks2
-                  (fun _ ->
+                  (fun ks2 ->
                      put_slice ks2 T.tbl ["b", ["x", ""]] >>
                      get_all ks2 T.tbl >|=
                        aeq_slice ~msg:"read in ks2"
@@ -1581,6 +1628,7 @@ struct
       "await before subscription", test_await_before_subscription;
       "notify in transaction", test_notifications_in_tx;
       "simple notifications", test_notifications;
+      "concurrent nested TXs", test_concurrent_nested_txs;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [

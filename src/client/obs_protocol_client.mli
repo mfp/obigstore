@@ -22,6 +22,8 @@
   * Enabled by default.  *)
 val debug_deadlocks : bool ref
 
+val debug_protocol : bool Lwt.key
+
 module Make : functor(P : Obs_protocol_bin.S) ->
 sig
   include Obs_data_model.S with type backup_cursor = string
