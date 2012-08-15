@@ -174,7 +174,7 @@ struct
       { ich; och; buf = Obs_bytea.create 64;
         closed = false; closed_exn = Obs_protocol.Error Obs_protocol.Closed;
         mutex = Lwt_mutex.create (); pending_reqs = H.create 61;
-        async_req_id = "\001\000\000\000\000\000\000\000";
+        async_req_id = String.make 8 '\x00';
         data_address; role; password;
       } in
     lwt () = authenticate ich och ~role ~password in
@@ -206,18 +206,16 @@ struct
     if t.closed then raise_lwt t.closed_exn
     else return ()
 
-  let req_id_buf = String.make 8 '\x00'
-
   let send_request t ~request_id req =
     Obs_bytea.clear t.buf;
     Obs_bytea.add_int32_le t.buf
       (Obs_protocol_bin.Obs_request_serialization.format_id `Extprot);
     Request.write (t.buf :> Extprot.Msg_buffer.t) req;
     for i = 0 to 7 do
-      String.unsafe_set req_id_buf i
+      String.unsafe_set t.async_req_id i
         (Char.unsafe_chr ((request_id lsr (8 * i) land 0xFF)))
     done;
-    P.write_msg t.och req_id_buf t.buf
+    P.write_msg t.och t.async_req_id t.buf
 
   let await_req_id_cnt = ref 1
   let req_id_cnt = ref 2
