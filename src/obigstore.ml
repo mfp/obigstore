@@ -121,7 +121,7 @@ let run_slave ~dir ~address ~data_address host port auth protos ~role ~password 
           end;
           S.run_server
             ~max_async_reqs:!max_concurrency
-            ~debug:!debug db ~address ~data_address
+            db ~address ~data_address
             auth protos
     end
 
@@ -162,7 +162,7 @@ let () =
           match !master with
               None ->
                 let db = open_db dir in
-                  Lwt_unix.run (S.run_server ~debug:!debug db
+                  Lwt_unix.run (S.run_server db
                                   ~max_async_reqs:!max_concurrency
                                   ~replication_wait:!replication_wait
                                   ~address ~data_address auth protos)

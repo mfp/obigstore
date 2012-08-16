@@ -36,6 +36,8 @@ struct
     Obs_string_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
 
+let section = Lwt_log.Section.make "obigstore:storage"
+
 (* condition that cannot be signalled faster than a given time interval *)
 module Throttled_condition : sig
   type t
@@ -283,9 +285,8 @@ struct
             return ()
           end else writebatch_loop ()
         in writebatch_loop ()
-      with e ->
-        eprintf "WRITEBATCH error: %s\n%!" (Printexc.to_string e);
-        return ()
+      with exn ->
+        Lwt_log.error_f ~section ~exn "WRITEBATCH error"
       end;
       t
 
@@ -1046,9 +1047,7 @@ let rec transaction_aux with_iter_pool ks f =
               return y
           finally
             (* release tx_locks *)
-            M.iter (fun name m ->
-                      ignore (Lwt_log.debug_f "Releasing %S" name);
-                      Obs_shared_mutex.unlock m) tx.tx_locks;
+            M.iter (fun name m -> Obs_shared_mutex.unlock m) tx.tx_locks;
             return ()
         end
     | Some parent_tx ->
@@ -3025,9 +3024,7 @@ struct
                  List.iter hardlink_file src_files;
                  return ()
              with exn ->
-               (* FIXME: better log *)
-               eprintf "Error in Raw_dump.dump: %s\n%!" (Printexc.to_string exn);
-               return ()
+               Lwt_log.error_f ~section ~exn "Error in Raw_dump.dump"
              end >>
              return lldb) >>
     let ret = { id; directory = !dstdir; timestamp = !timestamp;

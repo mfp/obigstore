@@ -41,7 +41,7 @@ struct
     let server = SERVER.make db in
     lwt client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out
                    ~role:"guest" ~password:"guest"
-    and proto  = Obs_server.connection_handshake ~debug:false server
+    and proto  = Obs_server.connection_handshake server
                    Obs_auth.accept_all ([ (0, 0, 0), binary_protocol ], [])
                    ch1_in ch2_out
     in
@@ -65,7 +65,7 @@ struct
       let ch2_in, ch2_out = Lwt_io.pipe () in
       lwt client = CLIENT.make ~data_address:dummy_addr ch2_in ch1_out
                      ~role:"guest" ~password:"guest"
-      and proto  = Obs_server.connection_handshake ~debug:false server
+      and proto  = Obs_server.connection_handshake server
                      Obs_auth.accept_all ([ (0, 0, 0), binary_protocol ], [])
                      ch1_in ch2_out
       in

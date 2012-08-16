@@ -20,6 +20,8 @@
 open Lwt
 open Printf
 
+let section = Lwt_log.Section.make "obigstore:server:connection"
+
 let write_line och s = Lwt_io.write och s >> Lwt_io.write och "\r\n"
 
 let perform_auth auth ich och =
@@ -45,7 +47,7 @@ let find_protocol (bin, text) = function
     `Binary v -> find_compat_proto v bin
   | `Textual v -> find_compat_proto v text
 
-let connection_handshake ~debug server auth ((bin, text) as protos) ich och =
+let connection_handshake server auth ((bin, text) as protos) ich och =
   let read_version () =
     lwt s = Lwt_io.read_line ich in
       return (Scanf.sscanf s "%d.%d.%d" (fun a b c -> (a, b, c))) in
@@ -94,41 +96,34 @@ struct
       Unix.ADDR_UNIX s -> sprintf "unix socket %S" s
     | Unix.ADDR_INET (a, p) -> sprintf "%s:%d" (Unix.string_of_inet_addr a) p
 
-  let rec accept_loop handle_connection ~debug ~server auth protos sock =
+  let rec accept_loop handle_connection ~server auth protos sock =
     begin try_lwt
       lwt (fd, addr) = Lwt_unix.accept sock in
-        if debug then
-          eprintf "Got connection from %s\n%!" (string_of_addr addr);
+      lwt () = Lwt_log.info_f ~section
+                 "Got connection from %s" (string_of_addr addr)
+      in
         Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
         Lwt_unix.setsockopt fd Unix.SO_KEEPALIVE true;
         ignore begin try_lwt
           let ich = Lwt_io.of_fd Lwt_io.input fd in
           let och = Lwt_io.of_fd Lwt_io.output fd in
             try_lwt
-              handle_connection ~debug server auth protos { ich; och; addr }
+              handle_connection server auth protos { ich; och; addr }
             finally
               (try_lwt Lwt_io.flush och with _ -> return ()) >>
               Lwt_io.abort och
         with
           | End_of_file
           | Unix.Unix_error ((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
-              eprintf "Closing connection from %s\n%!" (string_of_addr addr);
-              return ()
-          | e ->
-              let bt = match Printexc.get_backtrace () with
-                  "" -> "<no backtrace>"
-                | s -> s
-              in
-                eprintf "Error with connection: %s\n%s\n%!" (Printexc.to_string e) bt;
-                return ()
+              Lwt_log.info_f ~section "Closing connection from %s" (string_of_addr addr)
+          | exn -> Lwt_log.error_f ~section ~exn "Error with connection"
         end;
         return ()
-    with e ->
-      eprintf "Got toplevel exception: %s\n%!" (Printexc.to_string e);
-      Printexc.print_backtrace stderr;
+    with exn ->
+      Lwt_log.error_f ~section ~exn "Got toplevel exception" >>
       Lwt_unix.sleep 0.05
     end >>
-    accept_loop handle_connection ~debug ~server auth protos sock
+    accept_loop handle_connection ~server auth protos sock
 
   let make_sock ?(reuseaddr=true) ?(backlog=1024) address =
     let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -140,18 +135,18 @@ struct
   let rec run_server
         ?(replication_wait = Obs_protocol_server.Await_commit)
         ?(max_async_reqs = 5000)
-        ?(debug=false) db ~address ~data_address auth protos =
+        db ~address ~data_address auth protos =
     let server = S.make ~max_async_reqs ~replication_wait db in
       Lwt.join
-        [ accept_loop handle_connection ~debug ~server auth protos (make_sock address);
-          accept_loop handle_data_connection ~debug ~server auth protos (make_sock data_address);
+        [ accept_loop handle_connection ~server auth protos (make_sock address);
+          accept_loop handle_data_connection ~server auth protos (make_sock data_address);
         ]
 
-  and handle_connection ~debug server auth protos conn =
-    lwt proto = connection_handshake ~debug server auth protos conn.ich conn.och in
-      S.service_client ~debug server proto conn.ich conn.och
+  and handle_connection server auth protos conn =
+    lwt proto = connection_handshake server auth protos conn.ich conn.och in
+      S.service_client server proto conn.ich conn.och
 
-  and handle_data_connection ~debug server auth protos conn =
+  and handle_data_connection server auth protos conn =
     perform_auth auth conn.ich conn.och >>
-    S.service_data_client ~debug server conn.ich conn.och
+    S.service_data_client server conn.ich conn.och
 end

@@ -23,7 +23,11 @@ open Obs_data_model
 open Obs_protocol
 open Obs_request
 
+module PP = Extprot.Pretty_print
+
 let data_protocol_version = (0, 0, 0)
+
+let section = Lwt_log.Section.make "obigstore:server:processing"
 
 type replication_wait = Await_reception | Await_commit
 
@@ -104,7 +108,6 @@ struct
         server : t;
         in_buf : string ref;
         out_buf : Obs_bytea.t;
-        debug : bool;
         signal_error : (Request.request * string * int) option waiter;
         read_request : client_state -> (Request.request * string * int) option Lwt.t;
         payload_writer : (module Obs_protocol.PAYLOAD_WRITER);
@@ -190,11 +193,9 @@ struct
         (pp_list pp_kd) kds
 
   let maybe_pp c pp ~request_id x =
-    if c.debug then begin
-      Format.eprintf
-        "Sending response for %a to %d:@\n @[%a@]@."
-        pp_request_id request_id c.id pp x;
-    end;
+    Lwt_log.debug_f ~section
+      "Sending response for %s to %d:\n%s"
+      (PP.pp pp_request_id request_id) c.id (PP.pp pp x) >>
     return x
 
   let rec service c =
@@ -227,12 +228,8 @@ struct
                            end;
                            return ()
                        | e ->
-                           Format.eprintf
-                             "Internal error %s@\n\
-                              request:@\n\
-                              %a@."
-                             (Printexc.to_string e)
-                             Request.pp r;
+                           Lwt_log.error_f ~section ~exn:e "Internal error\nrequest:\n%s"
+                             (PP.pp Request.pp r) >>
                            try_lwt
                              P.internal_error c.och ~request_id ()
                            with _ -> return ()
@@ -281,23 +278,23 @@ struct
             match handler with
                 None ->
                   (* toplevel (real) keyspace *)
-                  Lwt_log.debug_f "Toplevel respond for %s %s"
-                    (Extprot.Pretty_print.pp pp_request_id request_id)
-                    (Extprot.Pretty_print.pp Request.pp r) >>
+                  Lwt_log.debug_f ~section "Toplevel respond for %s %s"
+                    (PP.pp pp_request_id request_id)
+                    (PP.pp Request.pp r) >>
                   respond c ~request_id r
               | Some (_, push) ->
                   (* virtual keyspace = transaction *)
                   lwt () =
-                    Lwt_log.debug_f "Tunnelled respond for %s %s"
-                      (Extprot.Pretty_print.pp pp_request_id request_id)
-                      (Extprot.Pretty_print.pp Request.pp r) in
+                    Lwt_log.debug_f ~section "Tunnelled respond for %s %s"
+                      (PP.pp pp_request_id request_id)
+                      (PP.pp Request.pp r) in
                   push (Some (Request (request_id, r)));
                   return ()
         with Not_found ->
           (* will usually respond with a unknown_keyspace error *)
-          Lwt_log.debug_f "No handler found for for %s %s"
-            (Extprot.Pretty_print.pp pp_request_id request_id)
-            (Extprot.Pretty_print.pp Request.pp r) >>
+          Lwt_log.warning_f ~section "No handler found for for %s %s"
+            (PP.pp pp_request_id request_id)
+            (PP.pp Request.pp r) >>
           respond c ~request_id r
         end
     | Register_keyspace _ | Get_keyspace _ | List_keyspaces _
@@ -307,14 +304,10 @@ struct
 
   and respond ?buf c ~request_id r =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
-    begin if c.debug then
-      begin
-        Lwt_log.debug_f
-          "Got request %s from %d\n %s"
-          (Extprot.Pretty_print.pp pp_request_id request_id)
-          c.id (Extprot.Pretty_print.pp Request.pp r)
-      end
-    else return () end >>
+    Lwt_log.debug_f ~section
+      "Got request %s from %d\n %s"
+      (PP.pp pp_request_id request_id)
+      c.id (PP.pp Request.pp r) >>
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
@@ -323,7 +316,8 @@ struct
         let ks_unique_id = ks_id_of_int (2 * D.keyspace_id ks_ks) in
         let ks = { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); } in
           H.add c.keyspaces ks_unique_id (ks, None, Queue.create ());
-          Lwt_log.debug_f "Registered namespace %S:%d" name (ks_unique_id :> int) >>
+          Lwt_log.debug_f ~section
+            "Registered namespace %S:%d" name (ks_unique_id :> int) >>
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
         match_lwt D.get_keyspace c.server.db name with
@@ -380,7 +374,8 @@ struct
              begin match Lwt.get ks.ks_tx_key with
                  None -> P.return_ok ?buf c.och ~request_id ()
                | Some _ ->
-                   Lwt_log.debug_f "Abort req_id %S causes Abort_exn" request_id >>
+                   Lwt_log.debug_f ~section
+                     "Abort req_id %S causes Abort_exn" request_id >>
                    raise_lwt (Abort_exn request_id)
              end)
     | Lock { Lock.keyspace; names; shared; } ->
@@ -566,52 +561,52 @@ struct
               }
             in
               try_lwt
-                lwt () = Lwt_log.debug_f "Registering virtual (TX) keyspace %d"
-                           (ks.ks_unique_id :> int)
+                lwt () =
+                  Lwt_log.debug_f ~section "Registering virtual (TX) keyspace %d"
+                    (ks.ks_unique_id :> int)
                 in
-                  (* install handler *)
-                  H.add c.keyspaces ks.ks_unique_id (ks, Some handler, Queue.create ());
-                  (* register it as child *)
-                  Queue.push ks children;
-                  P.return_keyspace ?buf c.och ~request_id (ks.ks_unique_id :> int) >>
-                  let rec handle_reqs () =
-                    match_lwt Lwt_stream.get req_stream with
-                      | Some (Request (request_id, r)) ->
-                          (* we respond in a background thread so as to process
-                           * reqs in parallel but need to capture exns (in
-                           * particular, Abort_exn and Commit_exn) *)
-                          ignore begin
-                            try_lwt
-                              Lwt.with_value ks.ks_tx_key (Some ())
-                                (fun () -> respond c ~request_id r)
-                            with
-                              | Abort_exn request_id as e ->
-                                  lwt () = Lwt_log.debug_f "PUSHING Abort_exn %S" request_id in
-                                    pushf (Some (Exception e));
-                                    return ()
-                              | e ->
-                                pushf (Some (Exception e));
-                                return ()
-                          end;
-                          handle_reqs ()
-                      | Some (Exception (Commit_exn req_id)) ->
-                          commit_request_id := req_id;
-                          Lwt_log.debug_f "Returning after Commit_exn in keyspace %d, req %s"
-                            (ks.ks_unique_id :> int)
-                            (Extprot.Pretty_print.pp pp_request_id req_id) >>
-                          return req_id
-                      | Some (Exception e) -> raise_lwt e
-                      | None -> fail (Failure "TX request stream canceled")
-                  in handle_reqs ()
+                (* install handler *)
+                H.add c.keyspaces ks.ks_unique_id (ks, Some handler, Queue.create ());
+                (* register it as child *)
+                Queue.push ks children;
+                P.return_keyspace ?buf c.och ~request_id (ks.ks_unique_id :> int) >>
+                let rec handle_reqs () =
+                  match_lwt Lwt_stream.get req_stream with
+                    | Some (Request (request_id, r)) ->
+                        (* we respond in a background thread so as to process
+                         * reqs in parallel but need to capture exns (in
+                         * particular, Abort_exn and Commit_exn) *)
+                        ignore begin
+                          try_lwt
+                            Lwt.with_value ks.ks_tx_key (Some ())
+                              (fun () -> respond c ~request_id r)
+                          with e ->
+                              pushf (Some (Exception e));
+                              return ()
+                        end;
+                        handle_reqs ()
+                    | Some (Exception (Commit_exn req_id)) ->
+                        commit_request_id := req_id;
+                        Lwt_log.debug_f ~section
+                          "Returning after Commit_exn in keyspace %d, req %s"
+                          (ks.ks_unique_id :> int)
+                          (PP.pp pp_request_id req_id) >>
+                        return req_id
+                    | Some (Exception e) -> raise_lwt e
+                    | None -> fail (Failure "TX request stream canceled")
+                in handle_reqs ()
               finally
-                lwt () = Lwt_log.debug_f "Commit or abort ks %d" (ks.ks_unique_id :> int) in
-                remove_keyspace c ks;
-                return ()
+                lwt () = Lwt_log.debug_f ~section
+                           "Commit or abort ks %d" (ks.ks_unique_id :> int)
+                in
+                  remove_keyspace c ks;
+                  return ()
           end
         in P.return_ok ?buf c.och ~request_id:commit_reqid ()
       with
           | Abort_exn request_id ->
-              Lwt_log.debug_f "Abort_exn for request_id %S caught, sending OK" request_id >>
+              Lwt_log.debug_f ~section
+                "Abort_exn for request_id %S caught, sending OK" request_id >>
               P.return_ok ?buf c.och ~request_id ()
           | Obs_data_model.Dirty_data -> P.dirty_data ?buf c.och ~request_id:!commit_request_id ()
 
@@ -661,7 +656,7 @@ struct
 
   let client_id = ref 0
 
-  let service_client server protocol ?(debug=false) ich och =
+  let service_client server protocol ich och =
     let module PROTO = (val protocol : Obs_protocol.SERVER_FUNCTIONALITY) in
     let read_request c = PROTO.read_request c.in_buf c.ich c.och in
     let payload_writer = (module PROTO : Obs_protocol.PAYLOAD_WRITER) in
@@ -669,7 +664,7 @@ struct
       {
         id = (incr client_id; !client_id);
         keyspaces = H.create 13;
-        ich; och; server; debug;
+        ich; och; server;
         out_buf = Obs_bytea.create 1024;
         in_buf = ref (String.create 128);
         signal_error = Lwt.task ();
@@ -732,8 +727,7 @@ struct
           | Some update ->
               begin try_lwt
                 lwt buf, off, len = D.Replication.get_update_data update in
-                  begin if debug then Lwt_log.debug_f "Sending update (%d bytes)\n%!" len
-                  else return () end >>
+                  Lwt_log.debug_f ~section "Sending update (%d bytes)" len >>
                   write_checksummed_int64_le och (Int64.of_int len) >>
 
                   let rec copy_data () =

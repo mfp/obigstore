@@ -24,6 +24,7 @@ open Obs_request
 open Obs_protocol
 open Request
 
+module PP = Extprot.Pretty_print
 module Option = BatOption
 
 let debug_deadlocks = ref true
@@ -31,6 +32,11 @@ let debug_deadlocks = ref true
 let debug_protocol = Lwt.new_key ()
 
 let section = Lwt_log.Section.make "obigstore:client"
+
+let debug_enabled () =
+  match Lwt.get debug_protocol with
+      None | Some false -> false
+    | Some true -> true
 
 module Make(P : Obs_protocol_bin.S) =
 struct
@@ -127,7 +133,11 @@ struct
     let pos = Lwt_io.position t.ich in
     let request_id = numeric_id_of_string_request_id request_id in
     let receiver = try_find t.pending_reqs request_id in
-      Lwt_log.debug_f ~section "Got response for request %d" request_id >>
+      begin if debug_enabled () then
+        Lwt_log.debug_f ~section "Got response for request %d" request_id
+      else
+        return ()
+      end >>
       match receiver with
           None ->
             (* skip response *)
@@ -223,9 +233,13 @@ struct
       String.unsafe_set t.async_req_id i
         (Char.unsafe_chr ((request_id lsr (8 * i) land 0xFF)))
     done;
-    Lwt_log.debug_f ~section
-      "Sending request %d %s" request_id
-      (Extprot.Pretty_print.pp Request.pp req) >>
+    begin if debug_enabled () then
+      Lwt_log.debug_f ~section
+        "Sending request %d %s" request_id
+        (Extprot.Pretty_print.pp Request.pp req)
+    else
+      return ()
+    end >>
     P.write_msg t.och t.async_req_id t.buf
 
   let await_req_id_cnt = ref 1
@@ -246,15 +260,15 @@ struct
     let wait, wakeup = Lwt.wait () in
     let request_id = new_async_req_id req in
     let () =
-      ignore begin
-        lwt () = Lwt_unix.sleep 3.0 in
-          match Lwt.poll wait with
-              None ->
-                Printf.printf "===XXX no response to request %d  %s\n%!"
-                        request_id (Extprot.Pretty_print.pp Request.pp req);
-                return ()
-            | Some _ -> return ()
-      end in
+      if debug_enabled () then
+        ignore begin
+          lwt () = Lwt_unix.sleep 5.0 in
+            match Lwt.poll wait with
+                None ->
+                  Lwt_log.warning_f ~section "No response to request %d\n%s"
+                    request_id (PP.pp Request.pp req)
+              | Some _ -> return ()
+        end in
     let module R =
       struct
         type result = a
@@ -640,12 +654,9 @@ struct
                   | _ -> push None;
                          return ()
             with exn ->
-              (* FIXME: better logging *)
-              let bt = Printexc.get_backtrace () in
-                eprintf
-                  "Exception in protocol client get_update_stream:\n%s\n%s%!"
-                  (Printexc.to_string exn) bt;
-                Lwt_io.abort och
+              Lwt_log.error_f ~section ~exn
+                "Exception in protocol client get_update_stream" >>
+              Lwt_io.abort och
           end
         in return ret
 
