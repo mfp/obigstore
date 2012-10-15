@@ -1,5 +1,5 @@
 
-OCAMLINCLUDES += $(file libs/ocaml-leveldb/src libs/extprot/runtime)
+OCAMLINCLUDES += $(file libs/ocaml-leveldb/src $(EXTPROT_BASE)/runtime)
 
 CFLAGS += -g -Wall -O2 -I$(file libs/ocaml-leveldb/leveldb/include) -fPIC
 
@@ -14,7 +14,7 @@ section
     OCAMLPACKS[] += unix extlib threads oUnit num
     OCAML_LIBS[] +=
 	libs/ocaml-leveldb/src/leveldb
-	libs/extprot/runtime/extprot
+	$(EXTPROT_BASE)/runtime/extprot
 	core/obigstore_core
     OCAMLFLAGS += $(mapprefix -cclib, $(addprefix -L, $(LD_PATHS)))
 
@@ -33,7 +33,7 @@ section
 
     TOPLEVEL_LIBS[] =
 	libs/ocaml-leveldb/src/leveldb
-	libs/extprot/runtime/extprot
+	$(EXTPROT_BASE)/runtime/extprot
 	obigstore_core
 	obigstore_client
 	obigstore_server

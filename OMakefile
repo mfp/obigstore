@@ -14,7 +14,15 @@ OCAMLOPTFLAGS += -g -inline 100
 .PHONY: install
 .PHONY: uninstall
 
-.SUBDIRS: src/libs/ocaml-leveldb src/libs/extprot
+.SUBDIRS: src/libs/ocaml-leveldb
+
+if $(defined EXTPROT_DIR)
+    EXTPROT_BASE = $(EXTPROT_DIR)
+    export
+else
+    EXTPROT_BASE = $(file src/libs/extprot)
+    .SUBDIRS: src/libs/extprot
+    export
 
 OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread

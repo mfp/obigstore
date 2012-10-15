@@ -10,7 +10,7 @@ OCAMLINCLUDES += \
 
 OCAML_LIBS[] +=
     ../src/libs/ocaml-leveldb/src/leveldb
-    ../src/libs/extprot/runtime/extprot
+    $(EXTPROT_BASE)/runtime/extprot
     ../src/core/obigstore_core
     ../src/client/obigstore_client
     ../src/server/obigstore_server

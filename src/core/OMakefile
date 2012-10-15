@@ -16,8 +16,8 @@ OBJECTS[] =
   obs_weak_ref
   obs_load_stats
 
-obs_request.ml: obs_request.proto ../libs/extprot/extprotc
-	../libs/extprot/extprotc $<
+obs_request.ml: obs_request.proto $(EXTPROT_BASE)/extprotc
+	$(EXTPROT_BASE)/extprotc $<
 
 OCamlGeneratedFiles(obs_request.ml)
 
