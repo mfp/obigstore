@@ -22,8 +22,8 @@ open Printf
 
 module D = Obs_storage
 module DM = Obs_data_model
-module List = struct include List include BatList end
-module String = struct include String include BatString end
+module List = BatList
+module String = BatString
 
 type benchmark =
     Put_columns

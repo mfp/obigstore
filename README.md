@@ -55,7 +55,7 @@ Requirements
 * omake to build (omake)
 * snappy (libsnappy-dev)
 * GCC with C++ frontend (g++)
-* OCaml Batteries (libbatteries-ocaml-dev)
+* OCaml Batteries (libbatteries-ocaml-dev) (>= 2.0.0)
 * Cryptokit (libcryptokit-ocaml-dev)
 * Lwt (liblwt-ocaml-dev)
 * oUnit for the unit tests  (libounit-ocaml-dev)

@@ -21,8 +21,8 @@ open Printf
 open OUnit
 open Lwt
 
-module List = struct include List include BatList end
-module String = struct include String include BatString end
+module List = BatList
+module String = BatString
 
 let rounds = ref 1
 

@@ -22,8 +22,8 @@ open Printf
 
 module D = Obs_storage
 module DM = Obs_data_model
-module List = struct include List include BatList end
-module String = struct include String include BatString end
+module List = BatList
+module String = BatString
 module Option = BatOption
 
 module C = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)

@@ -21,7 +21,7 @@ open Printf
 open Lwt
 open Obs_data_model
 
-module List = struct include BatList include List end
+module List = BatList
 module Option = BatOption
 module L = LevelDB
 module RA = L.Read_access
@@ -29,7 +29,6 @@ module IT = L.Iterator
 
 module String =
 struct
-  include String
   include BatString
 
   let compare x y =

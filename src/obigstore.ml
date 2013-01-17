@@ -20,7 +20,7 @@
 open Printf
 open Lwt
 
-module String = struct include String include BatString end
+module String = BatString
 module S = Obs_server.Make(Obs_storage)
 
 let port = ref 12050

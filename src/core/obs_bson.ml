@@ -17,8 +17,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 
-module List = struct include List include BatList end
-module String = struct include String include BatString end
+module List = BatList
+module String = BatString
 
 type allowed_elm =
   [ `Double | `UTF8 | `Document | `Array | `Binary | `ObjectId
