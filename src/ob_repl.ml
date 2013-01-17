@@ -99,8 +99,12 @@ let prompt () =
       None -> "[]"
     | Some (name, _) -> sprintf "%S" name
   in
-    [ Lwt_term.Underlined; Lwt_term.text ks; Lwt_term.Reset;
-      Lwt_term.text (sprintf " (%d) > " !tx_level) ]
+    IFDEF HAS_LWT_TEXT THEN
+      [ Lwt_term.Underlined; Lwt_term.text ks; Lwt_term.Reset;
+        Lwt_term.text (sprintf " (%d) > " !tx_level) ]
+    ELSE
+      [ ks; sprintf " (%d) > " !tx_level ]
+    END
 
 let print_list f l =
   List.iter (fun x -> print_endline (f x)) l
@@ -516,6 +520,7 @@ let execute ?(fmt = Format.std_formatter) ks db loop req =
                if rate_info <> "" then puts "%s" rate_info;
                return ()
 
+IFDEF HAS_LWT_TEXT THEN
 module S = Set.Make(Text)
 
 let set_of_list l = List.fold_right S.add l S.empty
@@ -527,6 +532,7 @@ let is_directive = function
     s when String.contains s ' ' -> false
   | s when String.length s > 0 && s.[0] = '.' -> true
   | _ -> false
+
 
 let complete (before, after) =
     match before with
@@ -546,21 +552,28 @@ let complete (before, after) =
           with Not_found | Invalid_argument _ ->
               return (Lwt_read_line.complete "" before after
                         keyword_completions)
+END
 
 let phrase_history = ref []
 
+IFDEF HAS_LWT_TEXT THEN
 let get_phrase () =
   if !simple_repl then begin
     printf "%s%!" (Lwt_term.strip_styles (prompt ()));
     Lwt_io.read_line Lwt_io.stdin
   end else begin
-    Lwt_read_line.read_line
-      ~mode:`real_time
-      ~complete:(fun x -> complete x)
-      ~prompt:(prompt ())
-      ~history:!phrase_history
-      ()
+      Lwt_read_line.read_line
+        ~mode:`real_time
+        ~complete:(fun x -> complete x)
+        ~prompt:(prompt ())
+        ~history:!phrase_history
+        ()
   end
+ELSE
+let get_phrase () =
+  printf "%s%!" (String.concat "" (prompt ()));
+  Lwt_io.read_line Lwt_io.stdin
+END
 
 module Printer =
 struct
@@ -866,7 +879,6 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
         print_endline "Parse error";
         return ()
     | End_of_file | Abort_exn | Commit_exn | Reload_keyspace _ as e -> raise_lwt e
-    | Lwt_read_line.Interrupt -> exit 0
     | Obs_protocol.Error (Obs_protocol.Exception End_of_file)
     | Obs_protocol.Error (Obs_protocol.Closed) ->
         if !tx_level > 0 then begin
@@ -878,6 +890,12 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
           raise_lwt (Need_reconnect !last_phrase)
         end
     | e ->
+        IFDEF HAS_LWT_TEXT THEN
+          begin match e with
+              Lwt_read_line.Interrupt -> exit 0
+            | _ -> ()
+          end;
+        END;
         printf "Got exception: %s\n%!" (Printexc.to_string e);
         return ()
   end >>

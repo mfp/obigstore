@@ -28,7 +28,13 @@ OCAMLCFLAGS += -g
 OCAMLFLAGS += -annot -thread
 OCAMLFINDFLAGS += -syntax camlp4o
 
-OCAMLPACKS[] = batteries cryptokit lwt lwt.unix lwt.syntax lwt.preemptive lwt.text
+OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
+
+if $(eq $(shell-code ocamlfind query lwt.text), 0)
+    OCAMLFINDFLAGS += -ppopt -DHAS_LWT_TEXT
+    OCAMLPACKS[]   += lwt.text
+    export OCAMLFINDFLAGS
+    export OCAMLPACKS
 
 LD_PATHS[] =
 	$(file src/libs/ocaml-leveldb/leveldb)
