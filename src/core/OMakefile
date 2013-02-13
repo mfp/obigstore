@@ -5,6 +5,7 @@ OBJECTS[] =
   obs_conn
   obs_crc32c
   obs_data_model
+  obs_finalise
   obs_pp
   obs_protocol
   obs_protocol_bin
