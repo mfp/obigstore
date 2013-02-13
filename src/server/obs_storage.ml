@@ -598,6 +598,10 @@ module rec TYPES : sig
 
         (* we serialize execution of nested TXs using the following mutex *)
         nested_tx_mutex : Lwt_mutex.t;
+        (* used to ensure "single-stmt" writes within a TX are serialized with
+         * concurrent nested TXs, without slowing down writes when there are
+         * no concurrent nested TXs *)
+        mutable nested_tx_running : bool;
       }
 end = TYPES
 
@@ -1039,6 +1043,7 @@ let rec transaction_aux with_iter_pool ks f =
               dump_buffer = Obs_bytea.create 16;
               tx_notifications = Notif_queue.empty;
               tainted = None; nested_tx_mutex = Lwt_mutex.create ();
+              nested_tx_running = false;
             } in
           try_lwt
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
@@ -1050,20 +1055,26 @@ let rec transaction_aux with_iter_pool ks f =
             return ()
         end
     | Some parent_tx ->
+        parent_tx.nested_tx_running <- true;
         Lwt_mutex.with_lock parent_tx.nested_tx_mutex begin fun () ->
           with_iter_pool
             ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
               let tx = { parent_tx with tx_id = new_tx_id (); iter_pool; repeatable_read;
-                                        nested_tx_mutex = Lwt_mutex.create (); } in
-              lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
-                (* because we serialize sub-transactions, it's safe to update
-                 * this way *)
-                parent_tx.deleted_keys <- tx.deleted_keys;
-                parent_tx.added <- tx.added;
-                parent_tx.deleted <- tx.deleted;
-                parent_tx.added_keys <- tx.added_keys;
-                parent_tx.tx_notifications <- tx.tx_notifications;
-                return y
+                                        nested_tx_mutex = Lwt_mutex.create (); }
+              in
+                try_lwt
+                  lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
+                    (* because we serialize sub-transactions, it's safe to update
+                     * this way *)
+                    parent_tx.deleted_keys <- tx.deleted_keys;
+                    parent_tx.added <- tx.added;
+                    parent_tx.deleted <- tx.deleted;
+                    parent_tx.added_keys <- tx.added_keys;
+                    parent_tx.tx_notifications <- tx.tx_notifications;
+                    return y
+                finally
+                  parent_tx.nested_tx_running <- false;
+                  return ()
             end
         end
 
@@ -3158,62 +3169,78 @@ struct
     end
 end
 
-let with_transaction ks f =
+(* @param ensure_exclusion if true, check whether a nested TX is being
+ * performed, and serialize execution of [f tx] with it, so as to avoid the
+ * nested TX overwriting data written by [f tx].
+ *
+ * Condition:
+ * If ensure_exclusion is true, [f tx] must not perform nested transactions. *)
+let with_transaction ks ~ensure_exclusion f =
   match Lwt.get ks.ks_tx_key with
       None -> read_committed_transaction ks f
+    | Some tx when ensure_exclusion ->
+        if tx.nested_tx_running then
+          Lwt_mutex.with_lock tx.nested_tx_mutex (fun () -> f tx)
+        else
+          f tx
     | Some tx -> f tx
 
+let with_read_transaction ks f = with_transaction ks ~ensure_exclusion:false f
+let with_write_transaction ks f = with_transaction ks ~ensure_exclusion:true f
+
 let get_keys ks table ?max_keys key_range =
-  with_transaction ks (fun tx -> get_keys tx table ?max_keys key_range)
+  with_read_transaction ks (fun tx -> get_keys tx table ?max_keys key_range)
 
 let count_keys ks table key_range =
-  with_transaction ks (fun tx -> count_keys tx table key_range)
+  with_read_transaction ks (fun tx -> count_keys tx table key_range)
 
 let exists_key ks table key =
-  with_transaction ks (fun tx -> exists_key tx table key)
+  with_read_transaction ks (fun tx -> exists_key tx table key)
 
 let exist_keys ks table keys =
-  with_transaction ks (fun tx -> exist_keys tx table keys)
+  with_read_transaction ks (fun tx -> exist_keys tx table keys)
 
 let get_slice ks table ?max_keys ?max_columns ?decode_timestamps
       key_range ?predicate column_range =
-  with_transaction ks
+  with_read_transaction ks
     (fun tx ->
        get_slice tx table ?max_keys ?max_columns ?decode_timestamps
          key_range ?predicate column_range)
 
 let get_slice_values ks table ?max_keys key_range columns =
-  with_transaction ks
+  with_read_transaction ks
     (fun tx -> get_slice_values tx table ?max_keys key_range columns)
 
 let get_slice_values_with_timestamps ks table ?max_keys key_range columns =
-  with_transaction ks
+  with_read_transaction ks
     (fun tx -> get_slice_values_with_timestamps tx table ?max_keys key_range columns)
 
 let get_columns ks table ?max_columns ?decode_timestamps key column_range =
-  with_transaction ks
+  with_read_transaction ks
     (fun tx -> get_columns tx table ?max_columns ?decode_timestamps key column_range)
 
 let get_column_values ks table key columns =
-  with_transaction ks
+  with_read_transaction ks
     (fun tx -> get_column_values tx table key columns)
 
 let get_column ks table key column =
-  with_transaction ks (fun tx -> get_column tx table key column)
+  with_read_transaction ks (fun tx -> get_column tx table key column)
 
 let put_multi_columns ks table data =
   match Lwt.get ks.ks_tx_key with
     | None -> put_multi_columns_no_tx ks table data
-    | Some tx -> put_multi_columns tx table data
+    | Some tx ->
+        with_write_transaction ks
+          (fun tx -> put_multi_columns tx table data)
 
 let put_columns ks table key columns =
   put_multi_columns ks table [key, columns]
 
 let delete_columns ks table key columns =
-  with_transaction ks (fun tx -> delete_columns tx table key columns)
+  with_write_transaction ks (fun tx -> delete_columns tx table key columns)
 
 let delete_key ks table key =
-  with_transaction ks (fun tx -> delete_key tx table key)
+  with_write_transaction ks (fun tx -> delete_key tx table key)
 
 let delete_keys ks table key_range =
   (* actual delete_keys wants non-reverse ranges, so adjust key_range if
@@ -3223,15 +3250,15 @@ let delete_keys ks table key_range =
     | `Continuous { reverse = true; first; up_to } ->
         `Continuous { reverse = false; first = up_to; up_to = first }
   in
-    with_transaction ks
+    with_write_transaction ks
       (fun tx -> delete_keys tx table (expand_key_range key_range))
 
 let dump ks ?format ?only_tables ?offset () =
-  with_transaction ks (fun tx -> dump tx ?format ?only_tables ?offset ())
+  with_read_transaction ks (fun tx -> dump tx ?format ?only_tables ?offset ())
 
-let load ks data = with_transaction ks (fun tx -> load tx data)
+let load ks data = with_transaction ks ~ensure_exclusion:false (fun tx -> load tx data)
 
-let load_stats ks = with_transaction ks load_stats
+let load_stats ks = with_read_transaction ks load_stats
 
 let read_committed_transaction ks f =
   read_committed_transaction ks (fun _ -> f ks)

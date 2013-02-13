@@ -1424,6 +1424,30 @@ struct
                                "b", "x", ["x", ""];
                                "c", "d", ["d", "e"] ])
 
+  let test_nested_tx_serialization dbs =
+    lwt ks = register_keyspace dbs "test_nested_tx_serialization" in
+    let t1, u1 = Lwt.wait () in
+    let t2, u2 = Lwt.wait () in
+      D.read_committed_transaction ks
+        (fun ks ->
+           let f1 () =
+             t1 >>
+             put ks T.tbl "a" ["x", "" ] >>
+             t2 >>
+             put ks T.tbl "a" ["y", ""] in
+
+           let f2 () =
+             D.read_committed_transaction ks
+               (fun ks ->
+                  Lwt.wakeup u1 ();
+                  put ks T.tbl "b" ["x", ""]) >>
+             return (Lwt.wakeup u2 ())
+           in
+             Lwt.join [ f1 (); f2 () ]) >>
+      get_all ks T.tbl >|=
+        aeq_slice (Some "b", [ "a", "y", ["x", ""; "y", ""];
+                               "b", "x", ["x", ""] ])
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1629,6 +1653,7 @@ struct
       "notify in transaction", test_notifications_in_tx;
       "simple notifications", test_notifications;
       "concurrent nested TXs", test_concurrent_nested_txs;
+      "nested TX and single-write TX serialization", test_nested_tx_serialization;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [
