@@ -517,7 +517,7 @@ struct
   let add t x =
     if not (W.mem t.set x) then begin
       t.nelms <- t.nelms + 1;
-      Gc.finalise t.decr_counter x;
+      Lwt_gc.finalise (fun x -> t.decr_counter x; return ()) x;
       W.add t.set x
     end
 
@@ -754,7 +754,7 @@ let open_db
         lldb
     in
       (* must ensure this is run in the main thread *)
-      Obs_finalise.finalise_in_main_thread close_db db;
+      Lwt_gc.finalise close_db db;
       reload_keyspaces db lldb;
       db
 
@@ -824,7 +824,7 @@ let clone_keyspace (Proto proto) =
     }
   in
     (* must ensure it's run in the main thread *)
-    Obs_finalise.finalise_in_main_thread
+    Lwt_gc.finalise
       (fun ks -> terminate_keyspace_subs ks; return ()) ks;
     ks
 
@@ -1254,7 +1254,7 @@ let remove_watch_if_empty watches table key flag =
   with Not_found -> ()
 
 let setup_flag_key_cleanup watches table key flag =
-  Obs_finalise.finalise_in_main_thread
+  Lwt_gc.finalise
     (fun flag -> remove_watch_if_empty watches table key flag; return ()) flag
 
 let remove_col_watch_if_empty watches table key column flag =
@@ -1271,7 +1271,7 @@ let remove_col_watch_if_empty watches table key column flag =
   with Not_found -> ()
 
 let setup_flag_column_cleanup watches table key column flag =
-  Obs_finalise.finalise_in_main_thread
+  Lwt_gc.finalise
     (fun flag -> remove_col_watch_if_empty watches table key column flag; return ())
     flag
 
@@ -1315,7 +1315,7 @@ let remove_prefix_watch_if_empty watches table prefix flag =
   with Not_found -> ()
 
 let setup_prefix_flag_cleanup watches table prefix flag =
-  Obs_finalise.finalise_in_main_thread
+  Lwt_gc.finalise
     (fun flag -> remove_prefix_watch_if_empty watches table prefix flag; return ())
     flag
 

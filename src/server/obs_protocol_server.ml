@@ -633,13 +633,14 @@ struct
         auto_yielder := f
     end;
     let db = t.db in
-      Gc.finalise
+      Lwt_gc.finalise
         (fun _ ->
            decr num_clients;
            if !num_clients <= 1 then begin
              D.use_thread_pool db false;
              auto_yielder := dummy_auto_yield
-           end)
+           end;
+           return ())
         c
 
   let make ?(replication_wait = Await_commit) ?(max_async_reqs = 5000) db =
