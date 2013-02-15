@@ -553,6 +553,7 @@ struct
         (* we get the request_id from the request that forced the commit
          * (carried by Commit_exn) *)
         let (req_stream, pushf) as handler = Lwt_stream.create () in
+        let outer_ks_id = ks.ks_unique_id in
         lwt commit_reqid =
           transaction_f ks.ks_ks begin fun ks' ->
             let ks =
@@ -562,8 +563,8 @@ struct
             in
               try_lwt
                 lwt () =
-                  Lwt_log.debug_f ~section "Registering virtual (TX) keyspace %d"
-                    (ks.ks_unique_id :> int)
+                  Lwt_log.debug_f ~section "Registering virtual (TX) keyspace %d for %d"
+                    (ks.ks_unique_id :> int) (outer_ks_id :> int)
                 in
                 (* install handler *)
                 H.add c.keyspaces ks.ks_unique_id (ks, Some handler, Queue.create ());
