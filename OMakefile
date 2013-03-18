@@ -9,6 +9,7 @@ RM = rm -f
 
 .PHONY: clean
 
+OCAMLFLAGS = -warn-error +a-4-6-9-18-27-28..99
 OCAMLOPTFLAGS += -g -inline 100
 
 .PHONY: install
