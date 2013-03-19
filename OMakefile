@@ -9,7 +9,6 @@ RM = rm -f
 
 .PHONY: clean
 
-OCAMLFLAGS = -warn-error +a-4-6-9-18-27-28..99
 OCAMLOPTFLAGS += -g -inline 100
 
 .PHONY: install
@@ -26,7 +25,7 @@ else
     export
 
 OCAMLCFLAGS += -g
-OCAMLFLAGS += -annot -thread
+OCAMLFLAGS += -annot -thread -warn-error a -warn-error +a-4-6-9-18-27-28-29..99
 OCAMLFINDFLAGS += -syntax camlp4o
 
 OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
