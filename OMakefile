@@ -30,7 +30,7 @@ OCAMLFINDFLAGS += -syntax camlp4o
 
 OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
 
-if $(eq $(shell-code ocamlfind query lwt.text), 0)
+if $(eq $(shell-code ocamlfind query lwt.text 2>/dev/null), 0)
     OCAMLFINDFLAGS += -ppopt -DHAS_LWT_TEXT
     OCAMLPACKS[]   += lwt.text
     export OCAMLFINDFLAGS
