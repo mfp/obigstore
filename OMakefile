@@ -24,9 +24,8 @@ else
     .SUBDIRS: src/libs/extprot
     export
 
-OCAMLCFLAGS += -g
-OCAMLFLAGS += -annot -thread -warn-error a -warn-error +a-4-6-9-18-27-28-29..99
-OCAMLFINDFLAGS += -syntax camlp4o
+OCAMLFLAGS     = -g -bin-annot -thread -w +a-4-6-9-27..29-32..99 -warn-error +a-4-6-9-18-27-28-29..99
+OCAMLFINDFLAGS = -syntax camlp4o
 
 OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
 
