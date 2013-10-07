@@ -7,6 +7,12 @@ prefix = /usr/local
 INSTALL = install
 RM = rm -f
 
+match $(string $(shell ocaml -version))
+case $"\([0-9]\)\.\([0-9]+\)\."
+       OCAML_MAJOR = $1
+       OCAML_MINOR = $2
+       export
+
 .PHONY: clean
 
 OCAMLOPTFLAGS += -g -inline 100
@@ -24,8 +30,12 @@ else
     .SUBDIRS: src/libs/extprot
     export
 
-OCAMLFLAGS     = -g -bin-annot -thread -w +a-4-6-9-27..29-32..99 -warn-error +a-4-6-9-18-27-28-29..99
+OCAMLFLAGS     = -g -thread -w +a-4-6-9-27..29-32..99 -warn-error +a-4-6-9-18-27-28-29..99
 OCAMLFINDFLAGS = -syntax camlp4o
+
+if $(ge $(OCAML_MAJOR), 4)
+       OCAMLFLAGS += -bin-annot
+       export
 
 OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
 
