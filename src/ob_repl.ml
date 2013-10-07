@@ -360,7 +360,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
           (fun ks ->
              incr tx_level;
              try_lwt
-               loop ()
+               loop (Some ks)
              with Commit_exn ->
                print_endline "Committing";
                Timing.set_time_ref ();
@@ -751,7 +751,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
        * be corrected in case of syntax error *)
       phrase_history := phrase :: !phrase_history;
     in
-    let loop () = inner_exec_loop get_phrase db ks in
+    let loop ks = inner_exec_loop get_phrase db ks in
     let lexbuf = Lexing.from_string phrase in
       match Obs_repl_gram.input Obs_repl_lex.token lexbuf with
           Command (req, None) -> execute ks db loop req
@@ -774,10 +774,10 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
               lwt ic = Lwt_io.open_file Lwt_io.input file in
               let get_phrase () =
                 lwt l = Lwt_io.read_line ic in puts "%s" l; return l in
-              let loop () = inner_exec_loop get_phrase db ks in
+              let loop ks = inner_exec_loop get_phrase db ks in
                 try_lwt
                   puts "Executing commands from %S" file;
-                  loop ()
+                  loop ks
                 with End_of_file -> return ()
                 finally
                   puts "Done reading commands from %S" file;
