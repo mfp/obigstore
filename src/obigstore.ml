@@ -146,6 +146,9 @@ let () =
               Arg.usage params usage_message;
               exit 1)
     usage_message;
+  Lwt_log.default := Lwt_log.channel
+                       ~template:"$(date).$(milliseconds) [$(pid)] $(message)"
+                       ~close_mode:`Keep ~channel:Lwt_io.stderr ();
   let address = Unix.ADDR_INET (Unix.inet_addr_any, !port) in
   let data_address = Unix.ADDR_INET (Unix.inet_addr_any, !port + 1) in
   let auth = Obs_auth.accept_all in
