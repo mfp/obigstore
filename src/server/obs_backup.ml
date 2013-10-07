@@ -131,7 +131,7 @@ struct
   let add_datum dst table it
         ~key_buf ~key_len ~column_buf ~column_len ~timestamp_buf ~value_buf =
     Obs_bytea.add_vint dst (String.length (table : table :> string));
-    Obs_bytea.add_string dst (table :> string);
+    Obs_bytea.add_string dst (table : table :> string);
     Obs_bytea.add_vint dst key_len;
     Obs_bytea.add_substring dst key_buf 0 key_len;
     Obs_bytea.add_vint dst column_len;
