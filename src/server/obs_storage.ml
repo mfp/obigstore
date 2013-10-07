@@ -80,10 +80,16 @@ struct
       Obs_weak_ref.get (M.find k !t)
     with Not_found -> None
 
-  let add t k v =
-    t := M.add k (Obs_weak_ref.make v) !t
-
   let remove t k = t := M.remove k !t
+
+  let add t k v =
+    t := M.add k (Obs_weak_ref.make v) !t;
+    Gc.finalise
+      (fun v ->
+         match get t k with
+             Some v' when v <> v' -> ()
+           | _ -> remove t k)
+      v
 end
 
 let make_iter_pool db =
