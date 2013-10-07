@@ -530,6 +530,14 @@ struct
               | Some s -> write_nargs och 1 >>
                          write_datum och s)
 
+  let return_tx_id =
+    writer (fun ?buf och -> function
+                None -> write_nargs och 0
+              | Some (cur, outer) ->
+                  write_nargs och 2 >>
+                  write_int och cur >>
+                  write_int och outer)
+
   let not_implemented ?buf och ~request_id x = failwith "NOT IMPLEMENTED"
 
   let return_backup_dump = not_implemented

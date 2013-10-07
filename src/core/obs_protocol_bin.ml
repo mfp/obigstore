@@ -178,8 +178,8 @@ struct
 
   let writer f ?(buf=Obs_bytea.create 16) och ~request_id x =
     Obs_bytea.clear buf;
-    f buf x;
-    write_msg och request_id buf
+    let () = f buf x in
+      write_msg och request_id buf
 
   let raise_error_status = let open Obs_protocol in function
       -1 -> raise_lwt (Error Bad_request)
@@ -472,6 +472,15 @@ struct
   let read_property =
     reader (D.get_option D.get_string)
 
+  let return_tx_id =
+    writer
+      (fun b data ->
+         E.add_status b 0;
+         E.add_option (E.add_tuple2 E.add_int32_le E.add_int32_le) b data)
+
+  let read_tx_id =
+    reader (D.get_option (D.get_tuple2 D.get_int32_le D.get_int32_le))
+
   let read_request in_buf ich och =
     lwt request_id, len, crc =
       match_lwt read_header ich with
@@ -509,4 +518,3 @@ struct
             | `Unknown -> unknown_serialization och ~request_id () >> return None
         end
 end
-

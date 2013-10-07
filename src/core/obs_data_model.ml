@@ -149,6 +149,11 @@ sig
 
   val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
+  (** [transaction_id ks] returns the ID of the current and outermost
+    * transaction (useful for logging and reporting), or None if not inside a
+    * transaction. *)
+  val transaction_id : keyspace -> (int * int) option Lwt.t
+
   (** Acquire locks with the given names. The locks will be released
     * automatically when the outermost transaction is committed or aborted.
     * This is a NOP unless inside a transaction.

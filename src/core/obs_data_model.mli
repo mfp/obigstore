@@ -194,6 +194,11 @@ sig
     * *)
   val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
+  (** [transaction_id ks] returns the ID of the current and outermost
+    * transaction (useful for logging and reporting), or None if not inside a
+    * transaction. *)
+  val transaction_id : keyspace -> (int * int) option Lwt.t
+
   (** [lock ks ~shared l] acquire locks with names given in [l] for the DB
     * keyspace [keyspace_name ks]. Each DB keyspace defines a different
     * lock namespace; therefore different [keyspace] values for the same

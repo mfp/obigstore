@@ -249,6 +249,7 @@ struct
     | Commit { Commit.keyspace; _ }
     | Abort { Abort.keyspace; _ }
     | Lock { Lock.keyspace; _ }
+    | Get_transaction_id { Get_transaction_id.keyspace; _ }
     | Exist_keys { Exist_keys.keyspace; _ }
     | Get_keys { Get_keys.keyspace; _ }
     | Count_keys { Count_keys.keyspace; _ }
@@ -542,6 +543,11 @@ struct
     | Get_property { Get_property.property; } ->
         D.get_property c.server.db property >>=
         P.return_property ?buf c.och ~request_id
+    | Get_transaction_id { Get_transaction_id.keyspace } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _, _) ->
+             D.transaction_id ks.ks_ks >>=
+             P.return_tx_id ?buf c.och ~request_id)
 
   and respond_to_begin ?buf c (ks, _, children) ~request_id tx_type =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in

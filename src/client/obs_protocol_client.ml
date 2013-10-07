@@ -522,6 +522,10 @@ struct
     async_request t (Get_property { Get_property.property })
       P.read_property
 
+  let transaction_id ks =
+    async_request_ks ks (Get_transaction_id { Get_transaction_id.keyspace = ks.ks_id; })
+      P.read_tx_id
+
   let data_protocol_version = (0, 0, 0)
 
   let write_data_req och req =

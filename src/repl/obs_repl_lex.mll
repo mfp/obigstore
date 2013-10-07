@@ -36,6 +36,7 @@
       "put", PUT;
       "delete", DELETE;
       "lock", LOCK;
+      "txid", TXID;
       "stats", STATS;
       "listen", LISTEN;
       "unlisten", UNLISTEN;

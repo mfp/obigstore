@@ -3288,6 +3288,11 @@ let repeatable_read_transaction ks f =
 let get_property t property =
   Miniregion.use t.db (fun lldb -> return (L.get_property lldb property))
 
+let transaction_id ks =
+  match Lwt.get ks.ks_tx_key with
+    | None -> return None
+    | Some tx -> return (Some (tx.tx_id, tx.outermost_tx.tx_id))
+
 module RAW =
 struct
   type keyspace_ = keyspace
