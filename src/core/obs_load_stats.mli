@@ -31,6 +31,7 @@ type stats = {
   total_cols_rd : Int64.t;
   total_seeks : Int64.t;
   total_near_seeks : Int64.t;
+  total_transactions : Int64.t;
   averages : (int * rates) list;
 }
 
@@ -43,6 +44,7 @@ and rates = {
   cols_rd : float;
   seeks : float;
   near_seeks : float;
+  transactions : float;
 }
 
 (* val update_avg : t -> int -> now:float -> dt:float -> rates -> rates -> rates *)
@@ -68,3 +70,4 @@ val record_cols_wr : t -> int -> unit
 val record_cols_rd : t -> int -> unit
 val record_seeks : t -> int -> unit
 val record_near_seeks : t -> int -> unit
+val record_transaction : t -> unit

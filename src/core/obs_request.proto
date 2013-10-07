@@ -70,6 +70,7 @@ type rates =
     bytes_wr : float; bytes_rd : float;
     cols_wr : float; cols_rd : float;
     seeks : float; near_seeks : float;
+    transactions : float;
   }
   options "ocaml.type_equals" = "Obs_load_stats.rates"
 
@@ -84,6 +85,7 @@ type load_stats_ =
       total_cols_rd : long;
       total_seeks : long;
       total_near_seeks : long;
+      total_transactions : long;
       averages : [(int * rates)];
     }
   options "ocaml.type_equals" = "Obs_load_stats.stats"

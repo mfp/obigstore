@@ -1096,8 +1096,10 @@ and commit_outermost_transaction ks tx =
   if not (Lazy.lazy_is_val tx.backup_writebatch) &&
      TM.is_empty tx.deleted && TM.is_empty tx.added
   then begin
-    Notif_queue.iter (notify ks) tx.tx_notifications;
-    return ()
+    let stats = tx.ks.ks_db.load_stats in
+      Obs_load_stats.record_transaction stats;
+      Notif_queue.iter (notify ks) tx.tx_notifications;
+      return ()
   end
 
   else begin
@@ -1184,6 +1186,7 @@ and commit_outermost_transaction ks tx =
       end in
     let stats = tx.ks.ks_db.load_stats in
     lwt () = wait_sync in
+      Obs_load_stats.record_transaction stats;
       Obs_load_stats.record_writes stats 1;
       Obs_load_stats.record_bytes_wr stats !bytes_written;
       Obs_load_stats.record_cols_wr stats !cols_written;
@@ -2751,6 +2754,7 @@ let rec put_multi_columns_no_tx ks table data =
       end in
   lwt () = wait_sync in
   let stats = ks.ks_db.load_stats in
+    Obs_load_stats.record_transaction stats;
     Obs_load_stats.record_writes stats 1;
     Obs_load_stats.record_bytes_wr stats !bytes_written;
     Obs_load_stats.record_cols_wr stats !cols_written;

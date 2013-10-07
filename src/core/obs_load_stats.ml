@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2012 Mauricio Fernandez <mfp@acm.org>
+ * Copyright (C) 2011-2013 Mauricio Fernandez <mfp@acm.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -31,6 +31,7 @@ type t = {
   mutable curr_cols_rd : int;
   mutable curr_seeks : int;
   mutable curr_near_seeks : int;
+  mutable curr_transactions : int;
 }
 
 and stats =
@@ -44,6 +45,7 @@ and stats =
     total_cols_rd : Int64.t;
     total_seeks : Int64.t;
     total_near_seeks : Int64.t;
+    total_transactions : Int64.t;
     averages : (int * rates) list;
   }
 
@@ -53,6 +55,7 @@ and rates =
     bytes_wr : float; bytes_rd : float;
     cols_wr : float; cols_rd : float;
     seeks : float; near_seeks : float;
+    transactions : float;
   }
 
 let update_avg t period ~now ~dt prev sample =
@@ -69,6 +72,7 @@ let update_avg t period ~now ~dt prev sample =
       cols_rd = avg prev.cols_rd sample.cols_rd;
       seeks = avg prev.seeks sample.seeks;
       near_seeks = avg prev.near_seeks sample.near_seeks;
+      transactions = avg prev.transactions sample.transactions;
     }
 
 let update t =
@@ -83,6 +87,7 @@ let update t =
       cols_rd = float t.curr_cols_rd /. dt;
       seeks = float t.curr_seeks /. dt;
       near_seeks = float t.curr_near_seeks /. dt;
+      transactions = float t.curr_transactions /. dt;
     } in
   let prev = t.stats in
   let stats =
@@ -96,6 +101,7 @@ let update t =
       total_cols_rd = Int64.(add prev.total_cols_rd (of_int t.curr_cols_rd));
       total_seeks = Int64.(add prev.total_seeks (of_int t.curr_seeks));
       total_near_seeks = Int64.(add prev.total_near_seeks (of_int t.curr_near_seeks));
+      total_transactions = Int64.(add prev.total_transactions (of_int t.curr_transactions));
       averages =
         List.map
           (fun (period, prev) ->
@@ -112,6 +118,7 @@ let update t =
     t.curr_cols_rd <- 0;
     t.curr_seeks <- 0;
     t.curr_near_seeks <- 0;
+    t.curr_transactions <- 0;
     t.t0 <- now
 
 let zero_rates =
@@ -119,6 +126,7 @@ let zero_rates =
     bytes_wr = 0.; bytes_rd = 0.;
     cols_wr = 0.; cols_rd = 0.;
     seeks = 0.; near_seeks = 0.;
+    transactions = 0.;
   }
 
 let zero_stats periods =
@@ -128,6 +136,7 @@ let zero_stats periods =
     total_bytes_wr = 0L; total_bytes_rd = 0L;
     total_cols_wr = 0L; total_cols_rd = 0L;
     total_seeks = 0L; total_near_seeks = 0L;
+    total_transactions = 0L;
     averages = List.map (fun p -> (p, zero_rates))
                  (List.filter ((<) 0) periods) (* only period > 0 *)
   }
@@ -140,6 +149,7 @@ let make avg_periods =
       init_time = now; t0 = now;
       curr_writes = 0; curr_reads = 0; curr_bytes_wr = 0; curr_bytes_rd = 0;
       curr_cols_wr = 0; curr_cols_rd = 0; curr_seeks = 0; curr_near_seeks = 0;
+      curr_transactions = 0;
     } in
   let r = Obs_weak_ref.make t in
     ignore begin
@@ -164,4 +174,5 @@ let record_cols_wr t n = t.curr_cols_wr <- t.curr_cols_wr + n
 let record_cols_rd t n = t.curr_cols_rd <- t.curr_cols_rd + n
 let record_seeks t n = t.curr_seeks <- t.curr_seeks + n
 let record_near_seeks t n = t.curr_near_seeks <- t.curr_near_seeks + n
+let record_transaction t = t.curr_transactions <- t.curr_transactions + 1
 

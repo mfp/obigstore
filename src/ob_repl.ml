@@ -439,6 +439,7 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       let pr_avg (period, r) =
         puts "";
         puts "%d-second average rates" period;
+        puts "%.0f transactions" r.transactions;
         puts "%.0f writes, %.0f reads" r.writes r.reads;
         puts "%.0f columns written, %.0f columns read" r.cols_wr r.cols_rd;
         puts "%s written, %s read"
@@ -448,6 +449,8 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
       let dt = stats.uptime in
         puts "Totals:";
         puts "Uptime: %.1fs" dt;
+        puts "%Ld transactions (%.0f/s)"
+          stats.total_transactions (Int64.to_float stats.total_transactions /. dt);
         puts "%Ld writes (%.0f/s), %Ld reads (%.0f/s)"
           stats.total_writes (Int64.to_float stats.total_writes /. dt)
           stats.total_reads (Int64.to_float stats.total_reads /. dt);
