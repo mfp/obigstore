@@ -279,18 +279,17 @@ struct
             match handler with
                 None ->
                   (* toplevel (real) keyspace *)
-                  Lwt_log.debug_f ~section "Toplevel respond for %s %s"
-                    (PP.pp pp_request_id request_id)
-                    (PP.pp Request.pp r) >>
+                  Lwt_log.debug_f ~section "Toplevel respond for %s"
+                    (PP.pp pp_request_id request_id) >>
                   respond c ~request_id r
               | Some (_, push) ->
                   (* virtual keyspace = transaction *)
                   lwt () =
-                    Lwt_log.debug_f ~section "Tunnelled respond for %s %s"
+                    Lwt_log.debug_f ~section "Tunnelled respond for %s"
                       (PP.pp pp_request_id request_id)
-                      (PP.pp Request.pp r) in
-                  push (Some (Request (request_id, r)));
-                  return ()
+                  in
+                    push (Some (Request (request_id, r)));
+                    return ()
         with Not_found ->
           (* will usually respond with a unknown_keyspace error *)
           Lwt_log.warning_f ~section "No handler found for for %s %s"
@@ -306,7 +305,7 @@ struct
   and respond ?buf c ~request_id r =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
     Lwt_log.debug_f ~section
-      "Got request %s from %d\n %s"
+      "Got request %s from %d\n%s"
       (PP.pp pp_request_id request_id)
       c.id (PP.pp Request.pp r) >>
     match r with
@@ -679,6 +678,7 @@ struct
         payload_writer; read_request;
       }
     in setup_auto_yield server c;
+       Lwt_log.debug_f ~section "New client %d" c.id >>
        try_lwt
          service c
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
