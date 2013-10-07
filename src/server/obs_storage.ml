@@ -35,6 +35,8 @@ struct
     Obs_string_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
 
+let locks_section = Lwt_log.Section.make "obigstore:locks"
+
 let section = Lwt_log.Section.make "obigstore:storage"
 
 (* condition that cannot be signalled faster than a given time interval *)
@@ -1061,8 +1063,15 @@ let rec transaction_aux with_iter_pool ks f =
               return y
           finally
             (* release tx_locks *)
-            M.iter (fun name m -> Obs_shared_mutex.unlock m) tx.tx_locks;
-            return ()
+            let locks = M.bindings tx.tx_locks in
+              Lwt_list.iter_s
+                (fun (name, m) ->
+                   lwt () =
+                     Lwt_log.debug_f ~section:locks_section
+                       "Unlocking mutex %s (tx_id %d)" name tx.tx_id
+                   in Obs_shared_mutex.unlock m;
+                      return ())
+                locks
         end
     | Some parent_tx ->
         parent_tx.nested_tx_running <- true;
@@ -1249,6 +1258,9 @@ let lock_one ks ~shared name =
                     mutex
         in
           tx.outermost_tx.tx_locks <- M.add name mutex tx.outermost_tx.tx_locks;
+          Lwt_log.debug_f ~section:locks_section
+            "Locking mutex %s exclusive:%b (tx_id %d)"
+            name (not shared) tx.tx_id >>
           Obs_shared_mutex.lock ~shared mutex
 
 let lock ks ~shared names = Lwt_list.iter_s (lock_one ks ~shared) names
