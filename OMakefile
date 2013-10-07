@@ -39,12 +39,6 @@ if $(ge $(OCAML_MAJOR), 4)
 
 OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
 
-if $(eq $(shell-code ocamlfind query lwt.text 2>/dev/null), 0)
-    OCAMLFINDFLAGS += -ppopt -DHAS_LWT_TEXT
-    OCAMLPACKS[]   += lwt.text
-    export OCAMLFINDFLAGS
-    export OCAMLPACKS
-
 LD_PATHS[] =
 	$(file src/libs/ocaml-leveldb/leveldb)
 	$(file src/libs/ocaml-leveldb/src)

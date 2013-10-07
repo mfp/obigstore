@@ -99,12 +99,7 @@ let prompt () =
       None -> "[]"
     | Some (name, _) -> sprintf "%S" name
   in
-    IFDEF HAS_LWT_TEXT THEN
-      [ Lwt_term.Underlined; Lwt_term.text ks; Lwt_term.Reset;
-        Lwt_term.text (sprintf " (%d) > " !tx_level) ]
-    ELSE
-      [ ks; sprintf " (%d) > " !tx_level ]
-    END
+    [ ks; sprintf " (%d) > " !tx_level ]
 
 let print_list f l =
   List.iter (fun x -> print_endline (f x)) l
@@ -523,60 +518,11 @@ let execute ?(fmt = Format.std_formatter) ks db loop req =
                if rate_info <> "" then puts "%s" rate_info;
                return ()
 
-IFDEF HAS_LWT_TEXT THEN
-module S = Set.Make(Text)
-
-let set_of_list l = List.fold_right S.add l S.empty
-
-let keyword_completions = set_of_list (List.map fst Obs_repl_lex.keywords)
-let directive_completions = set_of_list Directives.list
-
-let is_directive = function
-    s when String.contains s ' ' -> false
-  | s when String.length s > 0 && s.[0] = '.' -> true
-  | _ -> false
-
-
-let complete (before, after) =
-    match before with
-        s when is_directive s ->
-          return (Lwt_read_line.complete
-                    "." (String.sub s 1 (String.length s - 1)) after
-                    directive_completions)
-      | _ ->
-          try
-            let prev_sp = String.rindex_from before (String.length before) ' ' in
-            let word =
-              String.sub before (prev_sp + 1) (String.length before - prev_sp - 1)
-            in
-              return (Lwt_read_line.complete
-                        (String.sub before 0 prev_sp) word after
-                        keyword_completions)
-          with Not_found | Invalid_argument _ ->
-              return (Lwt_read_line.complete "" before after
-                        keyword_completions)
-END
-
 let phrase_history = ref []
 
-IFDEF HAS_LWT_TEXT THEN
-let get_phrase () =
-  if !simple_repl then begin
-    printf "%s%!" (Lwt_term.strip_styles (prompt ()));
-    Lwt_io.read_line Lwt_io.stdin
-  end else begin
-      Lwt_read_line.read_line
-        ~mode:`real_time
-        ~complete:(fun x -> complete x)
-        ~prompt:(prompt ())
-        ~history:!phrase_history
-        ()
-  end
-ELSE
 let get_phrase () =
   printf "%s%!" (String.concat "" (prompt ()));
   Lwt_io.read_line Lwt_io.stdin
-END
 
 module Printer =
 struct
@@ -893,12 +839,6 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
           raise_lwt (Need_reconnect !last_phrase)
         end
     | e ->
-        IFDEF HAS_LWT_TEXT THEN
-          begin match e with
-              Lwt_read_line.Interrupt -> exit 0
-            | _ -> ()
-          end;
-        END;
         printf "Got exception: %s\n%!" (Printexc.to_string e);
         return ()
   end >>
