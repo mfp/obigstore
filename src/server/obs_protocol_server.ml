@@ -27,7 +27,10 @@ module PP = Extprot.Pretty_print
 
 let data_protocol_version = (0, 0, 0)
 
-let section = Lwt_log.Section.make "obigstore:server:processing"
+let gen_section  = Lwt_log.Section.make "obigstore:server"
+let req_section  = Lwt_log.Section.make "obigstore:server:req"
+let resp_section = Lwt_log.Section.make "obigstore:server:resp"
+let tx_section   = Lwt_log.Section.make "obigstore:server:tx"
 
 type replication_wait = Await_reception | Await_commit
 
@@ -193,7 +196,7 @@ struct
         (pp_list pp_kd) kds
 
   let maybe_pp c pp ~request_id x =
-    Lwt_log.debug_f ~section
+    Lwt_log.debug_f ~section:resp_section
       "Sending response for %s to %d:\n%s"
       (PP.pp pp_request_id request_id) c.id (PP.pp pp x) >>
     return x
@@ -228,7 +231,8 @@ struct
                            end;
                            return ()
                        | e ->
-                           Lwt_log.error_f ~section ~exn:e "Internal error\nrequest:\n%s"
+                           Lwt_log.error_f ~section:gen_section
+                             ~exn:e "Internal error\nrequest:\n%s"
                              (PP.pp Request.pp r) >>
                            try_lwt
                              P.internal_error c.och ~request_id ()
@@ -279,20 +283,20 @@ struct
             match handler with
                 None ->
                   (* toplevel (real) keyspace *)
-                  Lwt_log.debug_f ~section "Toplevel respond for %s"
+                  Lwt_log.debug_f ~section:req_section "Toplevel respond for %s"
                     (PP.pp pp_request_id request_id) >>
                   respond c ~request_id r
               | Some (_, push) ->
                   (* virtual keyspace = transaction *)
                   lwt () =
-                    Lwt_log.debug_f ~section "Tunnelled respond for %s"
+                    Lwt_log.debug_f ~section:req_section "Tunnelled respond for %s"
                       (PP.pp pp_request_id request_id)
                   in
                     push (Some (Request (request_id, r)));
                     return ()
         with Not_found ->
           (* will usually respond with a unknown_keyspace error *)
-          Lwt_log.warning_f ~section "No handler found for for %s %s"
+          Lwt_log.warning_f ~section:resp_section "No handler found for for %s %s"
             (PP.pp pp_request_id request_id)
             (PP.pp Request.pp r) >>
           respond c ~request_id r
@@ -302,12 +306,15 @@ struct
     | Raw_dump_file_digest _ | Get_property _ as r ->
         respond c ~request_id r
 
-  and respond ?buf c ~request_id r =
+  and respond ?txid ?buf c ~request_id r =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
-    Lwt_log.debug_f ~section
-      "Got request %s from %d\n%s"
+    Lwt_log.debug_f ~section:req_section
+      "Got request %s from %d (tx: %s)\n%s"
       (PP.pp pp_request_id request_id)
-      c.id (PP.pp Request.pp r) >>
+      c.id
+      (match txid with None -> "<none>"
+         | Some (cur, outer) -> sprintf "cur:%d outer:%d" cur outer)
+      (PP.pp Request.pp r) >>
     match r with
       Register_keyspace { Register_keyspace.name } ->
         lwt ks_ks = D.register_keyspace c.server.db name in
@@ -316,7 +323,7 @@ struct
         let ks_unique_id = ks_id_of_int (2 * D.keyspace_id ks_ks) in
         let ks = { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); } in
           H.add c.keyspaces ks_unique_id (ks, None, Queue.create ());
-          Lwt_log.debug_f ~section
+          Lwt_log.info_f ~section:gen_section
             "Registered namespace %S:%d" name (ks_unique_id :> int) >>
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
     | Get_keyspace { Get_keyspace.name; } -> begin
@@ -374,7 +381,7 @@ struct
              begin match Lwt.get ks.ks_tx_key with
                  None -> P.return_ok ?buf c.och ~request_id ()
                | Some _ ->
-                   Lwt_log.debug_f ~section
+                   Lwt_log.debug_f ~section:gen_section
                      "Abort req_id %S causes Abort_exn" request_id >>
                    raise_lwt (Abort_exn request_id)
              end)
@@ -568,7 +575,8 @@ struct
             in
               try_lwt
                 lwt () =
-                  Lwt_log.debug_f ~section "Registering virtual (TX) keyspace %d for %d"
+                  Lwt_log.debug_f ~section:gen_section
+                    "Registering virtual (TX) keyspace %d for %d"
                     (ks.ks_unique_id :> int) (outer_ks_id :> int)
                 in
                 (* install handler *)
@@ -576,6 +584,13 @@ struct
                 (* register it as child *)
                 Queue.push ks children;
                 P.return_keyspace ?buf c.och ~request_id (ks.ks_unique_id :> int) >>
+                lwt txid = D.transaction_id ks.ks_ks in
+                Lwt_log.debug_f ~section:tx_section
+                  "BEGIN transaction by client %d, id %s"
+                  c.id
+                  (match txid with
+                     | None -> "<none>"
+                     | Some (cur, outer) -> sprintf "cur:%d outer:%d" cur outer) >>
                 let rec handle_reqs () =
                   match_lwt Lwt_stream.get req_stream with
                     | Some (Request (request_id, r)) ->
@@ -585,7 +600,7 @@ struct
                         ignore begin
                           try_lwt
                             Lwt.with_value ks.ks_tx_key (Some ())
-                              (fun () -> respond c ~request_id r)
+                              (fun () -> respond ?txid c ~request_id r)
                           with e ->
                               pushf (Some (Exception e));
                               return ()
@@ -593,7 +608,7 @@ struct
                         handle_reqs ()
                     | Some (Exception (Commit_exn req_id)) ->
                         commit_request_id := req_id;
-                        Lwt_log.debug_f ~section
+                        Lwt_log.debug_f ~section:resp_section
                           "Returning after Commit_exn in keyspace %d, req %s"
                           (ks.ks_unique_id :> int)
                           (PP.pp pp_request_id req_id) >>
@@ -602,7 +617,7 @@ struct
                     | None -> fail (Failure "TX request stream canceled")
                 in handle_reqs ()
               finally
-                lwt () = Lwt_log.debug_f ~section
+                lwt () = Lwt_log.debug_f ~section:resp_section
                            "Commit or abort ks %d" (ks.ks_unique_id :> int)
                 in
                   remove_keyspace c ks;
@@ -611,7 +626,7 @@ struct
         in P.return_ok ?buf c.och ~request_id:commit_reqid ()
       with
           | Abort_exn request_id ->
-              Lwt_log.debug_f ~section
+              Lwt_log.debug_f ~section:resp_section
                 "Abort_exn for request_id %S caught, sending OK" request_id >>
               P.return_ok ?buf c.och ~request_id ()
           | Obs_data_model.Dirty_data -> P.dirty_data ?buf c.och ~request_id:!commit_request_id ()
@@ -678,7 +693,7 @@ struct
         payload_writer; read_request;
       }
     in setup_auto_yield server c;
-       Lwt_log.debug_f ~section "New client %d" c.id >>
+       Lwt_log.debug_f ~section:req_section "New client %d" c.id >>
        try_lwt
          service c
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
@@ -735,7 +750,7 @@ struct
           | Some update ->
               begin try_lwt
                 lwt buf, off, len = D.Replication.get_update_data update in
-                  Lwt_log.debug_f ~section "Sending update (%d bytes)" len >>
+                  Lwt_log.debug_f ~section:gen_section "Sending update (%d bytes)" len >>
                   write_checksummed_int64_le och (Int64.of_int len) >>
 
                   let rec copy_data () =
