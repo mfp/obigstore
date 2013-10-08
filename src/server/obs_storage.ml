@@ -1068,7 +1068,8 @@ let rec transaction_aux with_iter_pool ks f =
                 (fun (name, m) ->
                    lwt () =
                      Lwt_log.debug_f ~section:locks_section
-                       "Unlocking mutex %s (tx_id %d)" name tx.tx_id
+                       "UNLOCK mutex %s (tx_id cur:%d outer:%d)" name
+                       tx.tx_id tx.outermost_tx.tx_id
                    in Obs_shared_mutex.unlock m;
                       return ())
                 locks
@@ -1259,9 +1260,12 @@ let lock_one ks ~shared name =
         in
           tx.outermost_tx.tx_locks <- M.add name mutex tx.outermost_tx.tx_locks;
           Lwt_log.debug_f ~section:locks_section
-            "Locking mutex %s exclusive:%b (tx_id %d)"
-            name (not shared) tx.tx_id >>
-          Obs_shared_mutex.lock ~shared mutex
+            "LOCK mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
+            name (not shared) tx.tx_id tx.outermost_tx.tx_id >>
+          Obs_shared_mutex.lock ~shared mutex >>
+          Lwt_log.debug_f ~section:locks_section
+            "LOCKED mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
+            name (not shared) tx.tx_id tx.outermost_tx.tx_id
 
 let lock ks ~shared names = Lwt_list.iter_s (lock_one ks ~shared) names
 
