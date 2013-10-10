@@ -89,7 +89,10 @@ struct
     Gc.finalise
       (fun v ->
          match get t k with
-             Some v' when v <> v' -> ()
+           | Some v' when v != v' ->
+               (* we use physical comparison because it's faster and prevents
+                * stack overflows due to polymorphic comparison *)
+               ()
            | _ -> remove t k)
       v
 end
