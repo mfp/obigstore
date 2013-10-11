@@ -31,13 +31,13 @@ else
     export
 
 OCAMLFLAGS     = -g -thread -w +a-4-6-9-27..29-32..99 -warn-error +a-4-6-9-18-27-28-29..99
-OCAMLFINDFLAGS = -syntax camlp4o
+OCAMLFINDFLAGS = -syntax camlp4o -ppopt -lwt-debug
 
 if $(ge $(OCAML_MAJOR), 4)
        OCAMLFLAGS += -bin-annot
        export
 
-OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.preemptive
+OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.syntax.log lwt.preemptive
 
 LD_PATHS[] =
 	$(file src/libs/ocaml-leveldb/leveldb)
