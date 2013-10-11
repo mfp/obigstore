@@ -141,7 +141,7 @@ let () =
   Arg.parse
     params
     (function
-       | s when !db_dir = None && s <> "" & s.[0] <> '-' -> db_dir := Some s
+       | s when !db_dir = None && s <> "" && s.[0] <> '-' -> db_dir := Some s
        | s -> eprintf "Unknown argument: %S\n%!" s;
               Arg.usage params usage_message;
               exit 1)
