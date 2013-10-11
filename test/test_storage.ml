@@ -28,7 +28,7 @@ module TEST =
 
        let with_db f =
          let dir = make_temp_dir () in
-         let db = Obs_storage.open_db dir in
+         let db = Obs_storage.open_db ~unsafe_mode:true dir in
            try_lwt
              f db
            finally
