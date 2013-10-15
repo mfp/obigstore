@@ -173,7 +173,7 @@ struct
             let crc2 = Obs_crc32c.substring_masked (Obs_bytea.unsafe_string msg) 0 len in
               Obs_crc32c.xor crc2 crc;
               Lwt_io.write och crc2 >>
-              (if flush then Lwt_io.flush och else return ()))
+              (if flush then Lwt_io.flush och else return_unit))
       och
 
   let writer f ?(buf=Obs_bytea.create 16) och ~request_id x =
@@ -384,7 +384,7 @@ struct
   let return_ok = writer (fun b () -> E.add_status b 0)
 
   let read_ok ich =
-    match_lwt D.get_status ich with 0 -> return () | n -> raise_error_status n
+    match_lwt D.get_status ich with 0 -> return_unit | n -> raise_error_status n
 
   let add_backup_dump =
     E.add_tuple2 E.add_string (E.add_option E.add_string)

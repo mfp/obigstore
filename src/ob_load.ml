@@ -58,16 +58,16 @@ let load db ~keyspace ?size ich =
                          (fun () -> D.load tx buf >|= ignore)
                      with e ->
                        error := Some e;
-                       return ()
+                       return_unit
                    end;
                    (* wait until one of the reqs is done *)
-                   Lwt_util.run_in_region region 1 (fun () -> return ()) >>
+                   Lwt_util.run_in_region region 1 (fun () -> return_unit) >>
                    loop_load progress
              | Some error -> raise_lwt error
          in try_lwt
               Progress_report.with_progress_report
                 ?max:size Lwt_io.stderr loop_load
-            with End_of_file -> return ())
+            with End_of_file -> return_unit)
 
 let role = "guest"
 let password = "guest"

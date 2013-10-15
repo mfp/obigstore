@@ -43,13 +43,13 @@ let rec lock kind m =
       `Free, _ ->
         m.procs <- m.procs + 1;
         m.state <- (kind :> state);
-        Lwt.return ()
+        Lwt.return_unit
     | `Shared, `Shared when Lwt_sequence.is_empty m.waiters ->
         (* we only allow it to enter if there are no other waiters (the first
          * of them being necessarily exclusive as per (3)) in order to ensure
          * fairness *)
         m.procs <- m.procs + 1;
-        Lwt.return ()
+        Lwt.return_unit
     | `Shared, `Shared | `Shared, `Exclusive | `Exclusive, _ ->
         let (res, w) = Lwt.task () in
         let node = Lwt_sequence.add_r (res, w, kind) m.waiters in
@@ -107,7 +107,7 @@ let with_lock ?shared m f =
     f ()
   finally
     unlock m;
-    return ()
+    return_unit
 
 let is_locked m = m.state <> `Free
 let is_locked_shared m = m.state = `Shared

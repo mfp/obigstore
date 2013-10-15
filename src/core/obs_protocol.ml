@@ -66,7 +66,7 @@ let skip_buf = String.create 4096
 
 let rec skip ich count =
   match_lwt Lwt_io.read_into ich skip_buf 0 (min 4096 count) with
-      n when n >= count -> return ()
+      n when n >= count -> return_unit
     | n -> skip ich (count - n)
 
 

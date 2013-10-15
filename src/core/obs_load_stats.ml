@@ -157,10 +157,10 @@ let make avg_periods =
         let rec update_stats () =
           Lwt_unix.sleep 1.0 >>
           match Obs_weak_ref.get r with
-              None -> return ()
+              None -> return_unit
             | Some t -> update t; update_stats ()
         in update_stats ()
-      with _ -> return ()
+      with _ -> return_unit
     end;
     t
 

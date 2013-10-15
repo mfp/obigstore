@@ -105,7 +105,7 @@ struct
   let close t =
     if not t.closed then begin
       t.closed <- true;
-      ignore (try_lwt Lwt_io.abort t.ich >> Lwt_io.abort t.och with _ -> return ());
+      ignore (try_lwt Lwt_io.abort t.ich >> Lwt_io.abort t.och with _ -> return_unit);
       send_exn_to_waiters t (Obs_protocol.Error Obs_protocol.Closed);
       H.clear t.pending_reqs;
     end
@@ -136,7 +136,7 @@ struct
       begin if debug_enabled () then
         Lwt_log.debug_f ~section "Got response for request %d" request_id
       else
-        return ()
+        return_unit
       end >>
       match receiver with
           None ->
@@ -184,7 +184,7 @@ struct
     in
       Lwt_io.write_line och response >>
       match_lwt Lwt_io.read_line ich with
-          "+OK" -> return ()
+          "+OK" -> return_unit
         | _ -> raise_lwt (Failure (sprintf "Authentication error (role %S)" role))
 
   let make ~data_address ich och ~role ~password =
@@ -205,7 +205,7 @@ struct
       Lwt_io.write_line och (let a, b, c = P.version in sprintf "%d.%d.%d" a b c) >>
       begin match_lwt Lwt_io.read_line ich with
           "-ERR" -> raise_lwt (Failure "Protocol negotiation failure")
-        | _ -> return ()
+        | _ -> return_unit
               (* TODO: check returned version and select appropriate proto *)
       end
     in
@@ -216,13 +216,13 @@ struct
           send_exn_to_waiters t exn;
           t.closed_exn <- exn;
           close t;
-          return ()
+          return_unit
       end;
       return t
 
   let check_closed t =
     if t.closed then raise_lwt t.closed_exn
-    else return ()
+    else return_unit
 
   let send_request t ~request_id req =
     Obs_bytea.clear t.buf;
@@ -238,7 +238,7 @@ struct
         "Sending request %d %s" request_id
         (Extprot.Pretty_print.pp Request.pp req)
     else
-      return ()
+      return_unit
     end >>
     P.write_msg t.och t.async_req_id t.buf
 
@@ -267,7 +267,7 @@ struct
                 None ->
                   Lwt_log.warning_f ~section "No response to request %d\n%s"
                     request_id (PP.pp Request.pp req)
-              | Some _ -> return ()
+              | Some _ -> return_unit
         end in
     let module R =
       struct
@@ -297,7 +297,7 @@ struct
              async_request t
              (Release_keyspace { Release_keyspace.keyspace = ks_id })
              P.read_ok
-           with _ -> return ())
+           with _ -> return_unit)
         ks;
       return ks
 
@@ -622,7 +622,7 @@ struct
               let rec read_update ret =
                 match_lwt read_checksummed_int64_le ich with
                     None -> raise_lwt Corrupted_data_header
-                  | Some -1L -> return ()
+                  | Some -1L -> return_unit
                   | Some len ->
                       (* we need to keep a reference to the stream ([push] alone
                        * doesn't suffice, as it only holds a weak ref) *)
@@ -656,7 +656,7 @@ struct
                     Some `OK -> read_update ret
                   | None -> raise_lwt Corrupted_data_header
                   | _ -> push None;
-                         return ()
+                         return_unit
             with exn ->
               Lwt_log.error_f ~section ~exn
                 "Exception in protocol client get_update_stream" >>
@@ -670,11 +670,11 @@ struct
 
     let ack_update u =
       (try Lwt.wakeup (snd u.await_ack) `ACK with _ -> ());
-      return ()
+      return_unit
 
     let nack_update u =
       (try Lwt.wakeup (snd u.await_ack) `NACK with _ -> ());
-      return ()
+      return_unit
 
     let is_sync_update update = return false (* FIXME *)
 

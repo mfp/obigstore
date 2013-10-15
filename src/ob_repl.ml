@@ -365,13 +365,13 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
                print_endline "Committing";
                Timing.set_time_ref ();
                Timing.ignore_read_count ();
-               return ()
+               return_unit
              finally
                decr tx_level;
-               return ())
+               return_unit)
       with Abort_exn -> print_endline "Aborting";
                         Timing.abort_timing ();
-                        return ()
+                        return_unit
       end >>=
       ret_nothing
   | Abort _ -> raise_lwt Abort_exn
@@ -492,8 +492,8 @@ let execute ?(fmt = Format.std_formatter) ks db loop req =
     Timing.set_time_ref ();
     lwt print = execute ~fmt ks db loop req in
       match Timing.get_time_delta () with
-          None -> print (); return ()
-        | Some _ when not (Timing.enabled ()) -> print (); return ()
+          None -> print (); return_unit
+        | Some _ when not (Timing.enabled ()) -> print (); return_unit
         | Some (dt, sysdt) ->
             let d_keys = Int64.(to_int (sub !Timing.cnt_keys keys)) in
             let d_cols = Int64.(to_int (sub !Timing.cnt_cols cols)) in
@@ -524,7 +524,7 @@ let execute ?(fmt = Format.std_formatter) ks db loop req =
                print ();
                puts "%s in %8.5fs (cpu %8.5fs)" did_what dt sysdt;
                if rate_info <> "" then puts "%s" rate_info;
-               return ()
+               return_unit
 
 let phrase_history = ref []
 
@@ -740,7 +740,7 @@ exception Need_reconnect of string option
 
 let save_printer ks table desc =
   match ks with
-      None -> return ()
+      None -> return_unit
     | Some ks ->
         D.put_columns ks (table_of_string "@meta.printers") table
           [ { name = "@printer";
@@ -771,10 +771,10 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
                     (Pervasives.output oc)
                     (fun () -> Pervasives.flush oc) in
                 lwt () = execute ~fmt ks db loop req in
-                  return ()
+                  return_unit
               finally
                 close_out oc;
-                return ()
+                return_unit
         | Directive ("read", [file]) -> begin
             (* we handle .read here directly, the declaration in Directives is
             * just for the help message *)
@@ -786,13 +786,13 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
                 try_lwt
                   puts "Executing commands from %S" file;
                   loop ks
-                with End_of_file -> return ()
+                with End_of_file -> return_unit
                 finally
                   puts "Done reading commands from %S" file;
                   Lwt_io.close ic
             with Unix.Unix_error _ ->
               printf "Couldn't open file %S." file;
-              return ()
+              return_unit
           end
         | Directive ("size", _) -> begin
             let t0 = Unix.gettimeofday () in
@@ -807,13 +807,13 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
             let sysdt = Sys.time () -. s0 in
               List.iter (fun (table, siz) -> printf "%20s\t%Ld\n" table siz) sizes;
               puts " in %8.5fs (cpu %8.5fs)" dt sysdt;
-              return ()
+              return_unit
           end
         | Directive (directive, args) ->
             Directives.eval_directive directive args;
-            return ()
-        | Nothing -> return ()
-        | Error s -> printf "Error: %s\n%!" s; return ()
+            return_unit
+        | Nothing -> return_unit
+        | Error s -> printf "Error: %s\n%!" s; return_unit
         | Dump_local destdir ->
             let module DUMP = Obs_dump.Make(struct
                                               include D
@@ -821,12 +821,12 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
                                             end ) in
             lwt raw_dump = D.Raw_dump.dump db in
             lwt _ = DUMP.dump_local raw_dump ?destdir in
-              return ()
+              return_unit
         | Codec_directive (table, desc) ->
             match Printer.build_codec desc with
                 `Error s ->
                   printf "Couldn't install printer for table %S: %s\n%!" table s;
-                  return ()
+                  return_unit
               | `OK c ->
                   install_key_codec (table_of_string table)
                     (pretty_printer_of_codec c) (Printer.parse_value desc);
@@ -834,7 +834,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
   with
     | Parsing.Parse_error ->
         print_endline "Parse error";
-        return ()
+        return_unit
     | End_of_file | Abort_exn | Commit_exn | Reload_keyspace _ as e -> raise_lwt e
     | Obs_protocol.Error (Obs_protocol.Exception End_of_file)
     | Obs_protocol.Error (Obs_protocol.Closed) ->
@@ -848,7 +848,7 @@ let rec inner_exec_loop get_phrase ?phrase db ks =
         end
     | e ->
         printf "Got exception: %s\n%!" (Printexc.to_string e);
-        return ()
+        return_unit
   end >>
   inner_exec_loop get_phrase db ks
 
@@ -878,7 +878,7 @@ let recover_saved_printers ks =
            end
          | _ -> ())
       (snd saved_printers);
-    return ()
+    return_unit
 
 let role = "guest"
 let password = "guest"

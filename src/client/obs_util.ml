@@ -78,11 +78,11 @@ struct
         t.delta_start <- t.curr;
         t.eta_counter <- t.eta_counter + 1;
       end;
-      return ()
+      return_unit
 
   let update t counter =
     t.curr <- counter;
-    return ()
+    return_unit
 
   let make ?max och =
     let now = Unix.gettimeofday () in
@@ -96,14 +96,14 @@ struct
     in
       ignore begin try_lwt
         let rec loop_output () =
-          if t.finished then return ()
+          if t.finished then return_unit
           else begin
             Lwt_unix.sleep 0.05 >>
             output t >>
             loop_output ()
           end
         in loop_output ()
-      with _ -> return ()
+      with _ -> return_unit
       end;
       t
 

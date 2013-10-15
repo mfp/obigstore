@@ -191,14 +191,14 @@ struct
       let wait_for_signal () =
         try_lwt
           match_lwt waiter with
-              `ACK -> return ()
+              `ACK -> return_unit
             | `NACK ->
                 t.slave_tbl <- IM.remove slave_id t.slave_tbl;
                 unregister slave_id;
-                return ()
+                return_unit
         finally
           slave.slave_pending_updates <- slave.slave_pending_updates - 1;
-          return ()
+          return_unit
       in
         match slave.slave_mode with
             Sync -> begin
@@ -211,9 +211,9 @@ struct
                 wait_for_signal ()
               with exn ->
                 (* FIXME: log? *)
-                return ()
+                return_unit
               end;
-              return ()
+              return_unit
             end
 
   let push_to_slaves t serialized_update =
@@ -257,11 +257,11 @@ struct
         let rec writebatch_loop () =
           begin if not t.dirty && not t.closed then
               Throttled_condition.wait t.wait_for_dirty
-          else return ()
+          else return_unit
           end >>
           if t.closed && not t.dirty then begin
             Lwt.wakeup (snd t.wait_last_sync) ();
-            return ()
+            return_unit
           end else if not t.dirty then
             writebatch_loop ()
           else begin
@@ -288,11 +288,11 @@ struct
               iter_pool := make_iter_pool t.db;
               Lwt.wakeup u ();
               Lwt.wakeup u' ();
-              return ()
+              return_unit
           end >>
           if t.closed then begin
             Lwt.wakeup (snd t.wait_last_sync) ();
-            return ()
+            return_unit
           end else writebatch_loop ()
         in writebatch_loop ()
       with exn ->
@@ -306,7 +306,7 @@ struct
   let close t =
     t.closed <- true;
     Throttled_condition.signal t.wait_for_dirty;
-    if t.dirty then fst t.wait_last_sync else return ()
+    if t.dirty then fst t.wait_last_sync else return_unit
 
   let perform t f =
     if t.closed then
@@ -382,7 +382,7 @@ struct
       (fun () ->
          lwt new_v = f t.v in
            t.v <- new_v;
-           return ())
+           return_unit)
 end
 
 module S =
@@ -528,7 +528,7 @@ struct
   let add t x =
     if not (W.mem t.set x) then begin
       t.nelms <- t.nelms + 1;
-      Lwt_gc.finalise (fun x -> t.decr_counter x; return ()) x;
+      Lwt_gc.finalise (fun x -> t.decr_counter x; return_unit) x;
       W.add t.set x
     end
 
@@ -713,7 +713,7 @@ let close_db t =
     (fun lldb ->
        lwt () = WRITEBATCH.close t.writebatch in
          L.close lldb;
-         return ())
+         return_unit)
 
 let throttling t = WRITEBATCH.throttling t.writebatch
 
@@ -771,7 +771,7 @@ let open_db
 
 let reset_iter_pool t =
   Miniregion.use t.db
-    (fun lldb -> t.db_iter_pool := make_iter_pool lldb; return ())
+    (fun lldb -> t.db_iter_pool := make_iter_pool lldb; return_unit)
 
 let use_thread_pool db v = db.use_thread_pool <- v
 
@@ -836,7 +836,7 @@ let clone_keyspace (Proto proto) =
   in
     (* must ensure it's run in the main thread *)
     Lwt_gc.finalise
-      (fun ks -> terminate_keyspace_subs ks; return ()) ks;
+      (fun ks -> terminate_keyspace_subs ks; return_unit) ks;
     ks
 
 let register_keyspace t ks_name =
@@ -1074,7 +1074,7 @@ let rec transaction_aux with_iter_pool ks f =
                        "UNLOCK mutex %s (tx_id cur:%d outer:%d)" name
                        tx.tx_id tx.outermost_tx.tx_id
                    in Obs_shared_mutex.unlock m;
-                      return ())
+                      return_unit)
                 locks
         end
     | Some parent_tx ->
@@ -1097,7 +1097,7 @@ let rec transaction_aux with_iter_pool ks f =
                     return y
                 finally
                   parent_tx.nested_tx_running <- false;
-                  return ()
+                  return_unit
             end
         end
 
@@ -1112,7 +1112,7 @@ and commit_outermost_transaction ks tx =
     let stats = tx.ks.ks_db.load_stats in
       Obs_load_stats.record_transaction stats;
       Notif_queue.iter (notify ks) tx.tx_notifications;
-      return ()
+      return_unit
   end
 
   else begin
@@ -1120,7 +1120,7 @@ and commit_outermost_transaction ks tx =
 
     (* sync backup writebatch if needed *)
     begin if not (Lazy.lazy_is_val tx.backup_writebatch) then
-      return ()
+      return_unit
     else
       let b = Lazy.force tx.backup_writebatch in
         Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
@@ -1129,7 +1129,7 @@ and commit_outermost_transaction ks tx =
              Lwt_preemptive.detach
                (L.Batch.write ~sync:ks.ks_db.fsync lldb) b >>
              reset_iter_pool ks.ks_db >>
-             return ())
+             return_unit)
     end >>
 
     (* write normal data and wait for group commit sync *)
@@ -1207,7 +1207,7 @@ and commit_outermost_transaction ks tx =
        * (otherwise, new data wouldn't be found if another client
        *  performs a query right away) *)
       Notif_queue.iter (notify tx.ks) tx.tx_notifications;
-      return ()
+      return_unit
   end
 
 and notify ks topic =
@@ -1243,11 +1243,11 @@ let repeatable_read_transaction ks f =
 
 let lock_one ks ~shared name =
   match Lwt.get ks.ks_tx_key with
-      None -> return ()
+      None -> return_unit
     | Some tx ->
       (* we use tx.outermost_tx.tx_locks instead of tx.tx_locks because tx_locks are
        * always associated to the outermost transaction! *)
-      if M.mem name tx.outermost_tx.tx_locks then return ()
+      if M.mem name tx.outermost_tx.tx_locks then return_unit
       else
         (* try to get mutex from global (per keyspace-name) map *)
         let mutex =
@@ -1283,7 +1283,7 @@ let remove_watch_if_empty watches table key flag =
 
 let setup_flag_key_cleanup watches table key flag =
   Lwt_gc.finalise
-    (fun flag -> remove_watch_if_empty watches table key flag; return ()) flag
+    (fun flag -> remove_watch_if_empty watches table key flag; return_unit) flag
 
 let remove_col_watch_if_empty watches table key column flag =
   try
@@ -1300,7 +1300,7 @@ let remove_col_watch_if_empty watches table key column flag =
 
 let setup_flag_column_cleanup watches table key column flag =
   Lwt_gc.finalise
-    (fun flag -> remove_col_watch_if_empty watches table key column flag; return ())
+    (fun flag -> remove_col_watch_if_empty watches table key column flag; return_unit)
     flag
 
 let get_tainted_flag tx =
@@ -1327,8 +1327,8 @@ let watch_key tx table key =
 
 let watch_keys ks table keys =
   match Lwt.get ks.ks_tx_key with
-      None -> return ()
-    | Some tx -> List.iter (watch_key tx table) keys; return ()
+      None -> return_unit
+    | Some tx -> List.iter (watch_key tx table) keys; return_unit
 
 let remove_prefix_watch_if_empty watches table prefix flag =
   try
@@ -1344,7 +1344,7 @@ let remove_prefix_watch_if_empty watches table prefix flag =
 
 let setup_prefix_flag_cleanup watches table prefix flag =
   Lwt_gc.finalise
-    (fun flag -> remove_prefix_watch_if_empty watches table prefix flag; return ())
+    (fun flag -> remove_prefix_watch_if_empty watches table prefix flag; return_unit)
     flag
 
 let watch_prefix tx table prefix =
@@ -1369,8 +1369,8 @@ let watch_prefix tx table prefix =
 
 let watch_prefixes ks table keys =
   match Lwt.get ks.ks_tx_key with
-      None -> return ()
-    | Some tx -> List.iter (watch_prefix tx table) keys; return ()
+      None -> return_unit
+    | Some tx -> List.iter (watch_prefix tx table) keys; return_unit
 
 let watch_column tx table key column =
   match find_maybe tx.ks.ks_tables table with
@@ -1397,10 +1397,10 @@ let watch_column tx table key column =
 
 let watch_columns ks table l =
   match Lwt.get ks.ks_tx_key with
-      None -> return ()
+      None -> return_unit
     | Some tx ->
         List.iter (fun (k, cols) -> List.iter (watch_column tx table k) cols) l;
-        return ()
+        return_unit
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =
@@ -2729,7 +2729,7 @@ let put_columns tx table key columns =
                  m columns)
             M.empty key m))
       M.empty table tx.added;
-  return ()
+  return_unit
 
 let put_multi_columns tx table data =
   Lwt_list.iter_s
@@ -2777,7 +2777,7 @@ let rec put_multi_columns_no_tx ks table data =
     Obs_load_stats.record_writes stats 1;
     Obs_load_stats.record_bytes_wr stats !bytes_written;
     Obs_load_stats.record_cols_wr stats !cols_written;
-    return ()
+    return_unit
 
 and put_multi_columns_no_tx_buf = Obs_bytea.create 10
 
@@ -2805,20 +2805,20 @@ let delete_columns tx table key cols =
            (fun s -> List.fold_left (fun s c -> S.add c s) s cols)
            S.empty key m)
       M.empty table tx.deleted;
-  return ()
+  return_unit
 
 let delete_key tx table key =
   match_lwt
     get_columns tx table ~max_columns:max_int ~decode_timestamps:false
       key `All
   with
-      None -> return ()
+      None -> return_unit
     | Some (_, columns) ->
         lwt () = delete_columns tx table key
                    (List.map (fun c -> c.name) columns)
         in
           tx.deleted_keys <- TM.modify (S.add key) S.empty table tx.deleted_keys;
-          return ()
+          return_unit
 
 (* assumes that [reverse = false] if the range is [`Continuous _] *)
 let rec delete_keys tx table key_range =
@@ -2827,11 +2827,11 @@ let rec delete_keys tx table key_range =
     | `Continuous _ -> Some 16384
   in
     match_lwt get_keys tx table ?max_keys key_range with
-        [] -> return ()
+        [] -> return_unit
       | l ->
           Lwt_list.iter_p (delete_key tx table) l >>
           match key_range with
-              `Discrete _ -> return ()
+              `Discrete _ -> return_unit
             | `Continuous range ->
                let first = Some (List.last l ^ "\x00") in
                  delete_keys tx table (`Continuous { range with first })
@@ -2852,7 +2852,7 @@ let listen ks topic =
       Hashtbl.replace ks.ks_subscriptions topic ();
       H.add tbl ks.ks_unique_id ks.ks_subs_stream;
     end;
-    return ()
+    return_unit
 
 let unlisten ks topic =
   let ks_name = ks.ks_name in
@@ -2865,14 +2865,14 @@ let unlisten ks topic =
         if H.length tbl = 0 then Hashtbl.remove ks.ks_db.subscriptions k;
         Hashtbl.remove ks.ks_subscriptions ks_name;
     with Not_found -> () end;
-    return ()
+    return_unit
 
 let notify ks topic =
   match Lwt.get ks.ks_tx_key with
-    | None -> notify ks topic; return ()
+    | None -> notify ks topic; return_unit
     | Some tx ->
         tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
-        return ()
+        return_unit
 
 let await_notifications ks =
   let stream = fst ks.ks_subs_stream in
@@ -2984,7 +2984,7 @@ let load tx data =
         (* we check if there's enough data in this batch, and write it if so *)
         if tx.backup_writebatch_size < 40_000_000 then
           (* FIXME: allow to set this constant somewhere *)
-          return ()
+          return_unit
         else begin
           tx.backup_writebatch <- lazy (L.Batch.make ());
           tx.backup_writebatch_size <- 0;
@@ -3070,7 +3070,7 @@ struct
                in
                  Unix.mkdir !dstdir 0o755;
                  List.iter hardlink_file src_files;
-                 return ()
+                 return_unit
              with exn ->
                Lwt_log.error_f ~section ~exn "Error in Raw_dump.dump"
              end >>
@@ -3108,7 +3108,7 @@ struct
           in return (Some digest)
         finally
           close_in ic;
-          return ()
+          return_unit
     with _ -> return None
 
   let file_digest d fname =
@@ -3131,7 +3131,7 @@ struct
       (fun fname -> ign_unix_error Unix.unlink (Filename.concat d.directory fname))
       (Sys.readdir d.directory);
     ign_unix_error Unix.rmdir d.directory;
-    return ()
+    return_unit
 end
 
 module Replication =
@@ -3146,7 +3146,7 @@ struct
 
   let signal u x =
     (try Option.may (fun u -> Lwt.wakeup u x) u.up_signal_ack with _ -> ());
-    return ()
+    return_unit
 
   let ack_update u = signal u `ACK
   let nack_update u = signal u `NACK
@@ -3203,7 +3203,7 @@ struct
          end in
       lwt () = wait_sync in
         if !must_reload then reload_keyspaces db lldb;
-        return ()
+        return_unit
     end
 end
 

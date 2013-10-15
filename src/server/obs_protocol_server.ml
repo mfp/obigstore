@@ -83,7 +83,7 @@ struct
 
   let num_clients = ref 0
 
-  let dummy_auto_yield () = return ()
+  let dummy_auto_yield () = return_unit
 
   let auto_yielder = ref dummy_auto_yield
 
@@ -229,20 +229,20 @@ struct
                              Lwt.wakeup_exn (snd c.signal_error) End_of_file
                            with _ -> ()
                            end;
-                           return ()
+                           return_unit
                        | e ->
                            Lwt_log.error_f ~section:gen_section
                              ~exn:e "Internal error\nrequest:\n%s"
                              (PP.pp Request.pp r) >>
                            try_lwt
                              P.internal_error c.och ~request_id ()
-                           with _ -> return ()
+                           with _ -> return_unit
                      end)
               end;
               (* here we block if the allowed number of async reqs is reached
                * until one of them is done. Using [cost] here ensures we block
                * if the request consumed all of [curr_concurrency_factor - 1]. *)
-              Lwt_util.run_in_region c.server.async_req_region cost (fun () -> return ()) >>
+              Lwt_util.run_in_region c.server.async_req_region cost (fun () -> return_unit) >>
               service c
 
   and relay_to_handler c ~request_id = function
@@ -293,7 +293,7 @@ struct
                       (PP.pp pp_request_id request_id)
                   in
                     push (Some (Request (request_id, r)));
-                    return ()
+                    return_unit
         with Not_found ->
           (* will usually respond with a unknown_keyspace error *)
           Lwt_log.warning_f ~section:resp_section "No handler found for for %s %s"
@@ -603,7 +603,7 @@ struct
                               (fun () -> respond ?txid c ~request_id r)
                           with e ->
                               pushf (Some (Exception e));
-                              return ()
+                              return_unit
                         end;
                         handle_reqs ()
                     | Some (Exception (Commit_exn req_id)) ->
@@ -621,7 +621,7 @@ struct
                            "Commit or abort ks %d" (ks.ks_unique_id :> int)
                 in
                   remove_keyspace c ks;
-                  return ()
+                  return_unit
           end
         in P.return_ok ?buf c.och ~request_id:commit_reqid ()
       with
@@ -661,7 +661,7 @@ struct
              D.use_thread_pool db false;
              auto_yielder := dummy_auto_yield
            end;
-           return ())
+           return_unit)
         c
 
   let make ?(replication_wait = Await_commit) ?(max_async_reqs = 5000) db =
@@ -704,7 +704,7 @@ struct
                 None -> ()
               | Some (_, push) -> push (Some (Exception Abort_all_txs)))
          c.keyspaces;
-         return ()
+         return_unit
 
   let send_response_code code och =
     write_checksummed_int32_le och (data_response_code code)
@@ -723,14 +723,14 @@ struct
                 let buf = String.create 16384 in
                 let rec loop_copy_data () =
                   match_lwt Lwt_io.read_into ic buf 0 16384 with
-                      0 -> return ()
+                      0 -> return_unit
                     | n -> Lwt_io.write_from_exactly och buf 0 n >>
                            loop_copy_data ()
                 in loop_copy_data ()
       with Not_found -> send_response_code `Unknown_dump och
 
   let rec write_and_update_crc crc och buf off len =
-    if len <= 0 then return ()
+    if len <= 0 then return_unit
     else begin
       lwt n = Lwt_io.write_from och buf off len in
         Obs_crc32c.update crc buf off len;
@@ -759,7 +759,7 @@ struct
                     Lwt_io.flush och >>
                     match_lwt read_checksummed_int ich with
                         None -> raise_lwt Corrupted_data_header
-                      | Some 0 -> return ()
+                      | Some 0 -> return_unit
                       | Some (1 | _) -> copy_data ()
                   in
                     Obs_crc32c.reset crc;
@@ -768,7 +768,7 @@ struct
                         Await_reception ->
                           D.Replication.ack_update update >>
                           lwt _ = read_checksummed_int ich in
-                            return ()
+                            return_unit
                       | Await_commit ->
                           match_lwt read_checksummed_int ich with
                               Some 0 -> D.Replication.ack_update update
@@ -799,7 +799,7 @@ struct
                 match_lwt Lwt_io.LE.read_int req_ch >|= data_request_of_code with
                     `Get_file -> handle_get_file ~debug server req_ch ich och
                   | `Get_updates -> handle_get_updates ~debug server req_ch ich och
-                  | _ -> return ()
+                  | _ -> return_unit
         with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
           raise_lwt End_of_file
 

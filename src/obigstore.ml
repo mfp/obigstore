@@ -95,7 +95,7 @@ let run_slave ~dir ~address ~data_address host port auth protos ~role ~password 
             let rec get_updates () =
               match_lwt C.Replication.get_update stream with
                   None ->
-                    return ()
+                    return_unit
                 | Some update ->
                     lwt s, off, len = C.Replication.get_update_data update in
                     let () =
@@ -117,7 +117,7 @@ let run_slave ~dir ~address ~data_address host port auth protos ~role ~password 
             let bt = Printexc.get_backtrace () in
               eprintf "Exception in replication thread: %s\n%s\n%!"
                 (Printexc.to_string exn) bt;
-              return ()
+              return_unit
           end;
           S.run_server
             ~max_async_reqs:!max_concurrency

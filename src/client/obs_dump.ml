@@ -26,7 +26,7 @@ let copy_stream ic oc =
   let buf = String.create 16384 in
   let rec copy_loop () =
     match_lwt Lwt_io.read_into ic buf 0 16384 with
-        0 -> return ()
+        0 -> return_unit
       | n -> Lwt_io.write_from_exactly oc buf 0 n >>
              copy_loop ()
   in copy_loop ()
@@ -64,10 +64,10 @@ struct
              if file_exists_with_size dst size && size > 100_000L then begin
                if verbose then
                  puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
-               return ()
+               return_unit
              end else begin
                match_lwt D.open_file dump file with
-                   None -> return ()
+                   None -> return_unit
                  | Some ic ->
                      try_lwt
                        if verbose then

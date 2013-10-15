@@ -26,10 +26,10 @@ let open_connection ?buffer_size sockaddr =
   let close = lazy begin
     try_lwt
       Lwt_unix.shutdown fd Unix.SHUTDOWN_ALL;
-      return ()
+      return_unit
     with Unix.Unix_error(Unix.ENOTCONN, _, _) ->
       (* This may happen if the server closed the connection before us *)
-      return ()
+      return_unit
     finally
       Lwt_unix.close fd
   end in

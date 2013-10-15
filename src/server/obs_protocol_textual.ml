@@ -66,7 +66,7 @@ struct
   let cmds = Hashtbl.create 13
 
   let rec discard_args nargs ich och =
-    if nargs <= 0 then return ()
+    if nargs <= 0 then return_unit
     else begin
       lwt _ = read_arg ich in
         discard_args (nargs - 1) ich och

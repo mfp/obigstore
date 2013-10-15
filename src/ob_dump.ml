@@ -50,7 +50,7 @@ let params =
 
 let dump db ~keyspace ~only_tables och =
   match_lwt D.get_keyspace db keyspace with
-      None -> return ()
+      None -> return_unit
     | Some ks ->
         lwt all_tables = match only_tables with
             Some l -> return l
@@ -65,13 +65,13 @@ let dump db ~keyspace ~only_tables och =
                let rec loop_dump offset progress =
                  Progress_report.update progress (Lwt_io.position och) >>
                  match_lwt D.dump tx ?only_tables ?offset () with
-                     None -> return ()
+                     None -> return_unit
                    | Some (data, cursor) ->
                        Lwt_io.LE.write_int och (String.length data) >>
                        Lwt_io.write och data >>
                        match cursor with
                          | Some _ -> loop_dump cursor progress
-                         | None -> return ()
+                         | None -> return_unit
                in Progress_report.with_progress_report ~max:approx_size
                     Lwt_io.stderr (loop_dump None))
 
@@ -110,5 +110,5 @@ let () =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
             lwt raw_dump = D.Raw_dump.dump db in
             lwt _ = DUMP.dump_local ~verbose:!verbose ~destdir raw_dump in
-              return ()
+              return_unit
   end
