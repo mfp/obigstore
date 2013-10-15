@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2012 Mauricio Fernandez <mfp@acm.org>
+ * Copyright (C) 2011-2013 Mauricio Fernandez <mfp@acm.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -467,22 +467,24 @@ module H = Hashtbl.Make(struct
                           end)
 
 module Notif_queue : sig
-  type 'a t
-  val empty : 'a t
-  val push : 'a -> 'a t -> 'a t
-  val iter : ('a -> unit) -> 'a t  -> unit
+  type t
+  val empty : t
+  val push : string -> t -> t
+  val iter : (string -> unit) -> t  -> unit
 end =
 struct
-  type 'a t = 'a list
+  module S = Set.Make(String)
+  type t = string list * S.t
 
-  let empty = []
+  let empty = ([], S.empty)
 
-  (* TODO: further "compression" by keeping set of previous notifications? *)
   let push x = function
-      y :: _ as l when y = x -> l
-    | l -> x :: l
+      (y :: _, s) as t when y = x -> t
+    | (l, s) as t ->
+        if S.mem x s then t
+        else (x :: l, S.add x s)
 
-  let iter f t = List.iter f (List.rev t)
+  let iter f (l, s) = List.iter f (List.rev l)
 end
 
 type keyspace_name = string
@@ -604,7 +606,7 @@ module rec TYPES : sig
         outermost_tx : transaction;
         mutable tx_locks : Obs_shared_mutex.t M.t;
         dump_buffer : Obs_bytea.t;
-        mutable tx_notifications : string Notif_queue.t;
+        mutable tx_notifications : Notif_queue.t;
         mutable tainted : DIRTY_FLAG.t option;
 
         (* we serialize execution of nested TXs using the following mutex *)

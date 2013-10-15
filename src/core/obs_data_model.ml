@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2012 Mauricio Fernandez <mfp@acm.org>
+ * Copyright (C) 2011-2013 Mauricio Fernandez <mfp@acm.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -330,6 +330,10 @@ sig
     * transactions, i.e., the notification will be actually performed only
     * when/if the outermost surrounding transaction is committed, and no
     * notification is sent if any of the surrounding transactions is aborted.
+    *
+    * Multiple notifications for the same topic might be coalesced, and no
+    * assumption should be made about the order in which the notifications are
+    * reported to the listeners.
     * *)
   val notify : keyspace -> string -> unit Lwt.t
 
