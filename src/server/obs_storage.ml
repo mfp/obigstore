@@ -63,6 +63,42 @@ struct
     end
 end
 
+
+(*  Copyright 2010-2013   --   INRIA - CNRS - Paris-Sud University  *)
+module ProdConsume :
+sig
+  type 'a t
+  val create : unit -> 'a t
+  val add : 'a -> 'a t -> unit
+  val iter_remove : ('a -> unit) -> 'a t -> unit
+end
+= struct
+  (* One thing can produce, one thing can consume concurrently *)
+
+  type 'a cell =
+    | Empty
+    | Cons of 'a * 'a list
+  and 'a list = 'a cell ref
+
+  let rec iter f = function
+    | Empty -> ()
+    | Cons (x,l) -> f x; iter f !l
+
+  (* a reference on a mutable singly linked list *)
+  type 'a t = 'a list ref
+
+  let create () = ref (ref (Empty))
+  let add x t = t := ref (Cons(x,!t))
+  let iter_remove f t =
+    if !(!t) = Empty then () else
+    let r = !t in (* atomic one cell of the list *)
+    let l = !r in (* the content of the cell *)
+    r := Empty; (* Work even if there are some production,
+                   just not anymore the head *)
+    iter f l
+end
+(*  End of Copyright 2010-2013   --   INRIA - CNRS - Paris-Sud University  *)
+
 module WeakTbl : sig
   type ('a, 'b) t
 
@@ -73,19 +109,37 @@ module WeakTbl : sig
 end =
 struct
   module M = BatMap
-  type ('a, 'b) t = ('a, 'b Obs_weak_ref.t) M.t ref
 
-  let create () = ref M.empty
+  type ('a, 'b) t =
+      { mutable m : ('a, 'b Obs_weak_ref.t) M.t;
+        to_remove : 'a ProdConsume.t;
+      }
+
+  let create () =
+    { m = M.empty; to_remove = ProdConsume.create (); }
+
+  let cleanup t =
+    ProdConsume.iter_remove
+      (fun k -> t.m <- M.remove k t.m)
+      t.to_remove
 
   let get t k =
+    cleanup t;
     try
-      Obs_weak_ref.get (M.find k !t)
+      Obs_weak_ref.get (M.find k t.m)
     with Not_found -> None
 
-  let remove t k = t := M.remove k !t
+  let remove t k =
+    ProdConsume.add k t.to_remove;
+    cleanup t
 
   let add t k v =
-    t := M.add k (Obs_weak_ref.make v) !t;
+    cleanup t;
+    t.m <- M.add k (Obs_weak_ref.make v) t.m;
+    (* Finalizers can be invoked at any time, including when t.m is being
+     * updated, so we cannot change t.m directly --- instead, we add to an
+     * imperative list the element to remove and check for pending removals
+     * before all operations. *)
     Gc.finalise
       (fun v ->
          match get t k with
@@ -93,7 +147,7 @@ struct
                (* we use physical comparison because it's faster and prevents
                 * stack overflows due to polymorphic comparison *)
                ()
-           | _ -> remove t k)
+           | _ -> ProdConsume.add k t.to_remove)
       v
 end
 
