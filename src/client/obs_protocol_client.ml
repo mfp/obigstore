@@ -510,6 +510,14 @@ struct
     async_request_ks ks (Unlisten { Unlisten.keyspace = ks.ks_id; topic; })
       P.read_ok
 
+  let listen_prefix ks topic =
+    async_request_ks ks (Listen_prefix { Listen_prefix.keyspace = ks.ks_id; topic; })
+      P.read_ok
+
+  let unlisten_prefix ks topic =
+    async_request_ks ks (Unlisten_prefix { Unlisten_prefix.keyspace = ks.ks_id; topic; })
+      P.read_ok
+
   let notify ks topic =
     async_request_ks ks (Notify { Notify.keyspace = ks.ks_id; topic; })
       P.read_ok

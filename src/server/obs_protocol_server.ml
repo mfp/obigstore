@@ -272,6 +272,8 @@ struct
     | Stats { Stats.keyspace; _ }
     | Listen { Listen.keyspace; _ }
     | Unlisten { Unlisten.keyspace; _ }
+    | Listen_prefix { Listen_prefix.keyspace; _ }
+    | Unlisten_prefix { Unlisten_prefix.keyspace; _ }
     | Notify { Notify.keyspace; _ }
     | Await { Await.keyspace; _ }
     | Release_keyspace { Release_keyspace.keyspace; _ }
@@ -513,6 +515,16 @@ struct
         with_keyspace c keyspace ~request_id
           (fun (ks, _, _) ->
              D.unlisten ks.ks_ks topic >>
+             P.return_ok ?buf c.och ~request_id ())
+    | Listen_prefix { Listen_prefix.keyspace; topic; } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _, _) ->
+             D.listen_prefix ks.ks_ks topic >>
+             P.return_ok ?buf c.och ~request_id ())
+    | Unlisten_prefix { Unlisten_prefix.keyspace; topic; } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _, _) ->
+             D.unlisten_prefix ks.ks_ks topic >>
              P.return_ok ?buf c.och ~request_id ())
     | Notify { Notify.keyspace; topic; } ->
         with_keyspace c keyspace ~request_id

@@ -364,6 +364,21 @@ sig
     * *)
   val listen : keyspace -> string -> unit Lwt.t
 
+  (** [listen_prefix ks prefix] allows to receive notifications sent to topics
+    * which are (possibly improper) suffixes of [prefix] in the keyspace [ks].
+    * Note that [listen_prefix] is not affected by surrounding transactions,
+    * i.e., the subscription is performed even if the surrounding transaction
+    * is canceled.
+    *
+    * If a notification would match several regular topics and prefixes, only
+    * one notification is returned.
+    *
+    * Note that subscriptions are per [keyspace], not per keyspace name: it is
+    * possible to subscribe to different topics in two different [keyspace]
+    * objects which operate on the same DB keyspace.
+    * *)
+  val listen_prefix : keyspace -> string -> unit Lwt.t
+
   (** [unlisten ks topìc] signals that further notifications sent to the [topic]
     * in the keyspace [ks] will not be received. Notifications that were
     * already queued in the server will not be discarded, however.
@@ -372,6 +387,16 @@ sig
     * canceled. *)
   val unlisten : keyspace -> string -> unit Lwt.t
 
+  (** [unlisten_prefix ks prefix] signals that further notifications sent to
+    * topics which are (possibly improper) suffixes of [prefix] are not to be
+    * received anymore. Notifications that were already queued in the server
+    * will not be discarded, however.
+    *
+    * Note that [unlisten_prefix] is not affected by surrounding transactions,
+    * i.e., the unsubscription is performed even if the surrounding
+    * transaction is canceled. *)
+  val unlisten_prefix : keyspace -> string -> unit Lwt.t
+
   (** [notify ks topic] sends a notification associated to the given [topic]
     * in keyspace [ks], which will be received by all the connections that
     * performed [listen] on the same [ks]/[topic]. [notify] honors surrounding
@@ -379,9 +404,9 @@ sig
     * when/if the outermost surrounding transaction is committed, and no
     * notification is sent if any of the surrounding transactions is aborted.
     *
-    * Multiple notifications for the same topic might be coalesced, and no
-    * assumption should be made about the order in which the notifications are
-    * reported to the listeners.
+    * Multiple notifications for the same topic within a transaction might be
+    * coalesced, and no assumption should be made about the order in which the
+    * notifications are reported to the listeners.
     * *)
   val notify : keyspace -> string -> unit Lwt.t
 

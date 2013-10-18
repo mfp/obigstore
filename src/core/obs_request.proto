@@ -159,5 +159,7 @@ message request =
   | Delete_keys { keyspace : keyspace; table: table; key_range : key_range }
   | Watch_prefixes { keyspace : keyspace; table : table; prefixes : [string] }
   | Get_transaction_id { keyspace : keyspace }
+  | Listen_prefix { keyspace : keyspace; topic : string; }
+  | Unlisten_prefix { keyspace : keyspace; topic : string }
 
 (* vim:set ft=omlet: *) 

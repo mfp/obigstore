@@ -474,6 +474,8 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
         ret_nothing ()
     | Listen { Listen.topic } -> D.listen (get ks) topic >>= ret_nothing
     | Unlisten { Unlisten.topic } -> D.unlisten (get ks) topic >>= ret_nothing
+    | Listen_prefix { Listen_prefix.topic } -> D.listen_prefix (get ks) topic >>= ret_nothing
+    | Unlisten_prefix { Unlisten_prefix.topic } -> D.unlisten_prefix (get ks) topic >>= ret_nothing
     | Notify { Notify.topic } -> D.notify (get ks) topic >>= ret_nothing
     | Await _ ->
         lwt l = D.await_notifications (get ks) in

@@ -40,6 +40,8 @@
       "stats", STATS;
       "listen", LISTEN;
       "unlisten", UNLISTEN;
+      "listenp", LISTENP;
+      "unlistenp", UNLISTENP;
       "notify", NOTIFY;
       "await", AWAIT;
       "shared", SHARED;

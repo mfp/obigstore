@@ -1555,6 +1555,25 @@ struct
            with Exit -> return ()) >>
       expect ks ["bar"; "baz"]
 
+  let test_prefix_notifications_in_tx dbs =
+    lwt ks  = register_keyspace dbs "test_prefix_notifications_in_tx" in
+    lwt ks' = register_keyspace dbs "test_prefix_notifications_in_tx" in
+      D.listen_prefix ks "foo" >>
+      D.listen_prefix ks "bar" >>
+      D.listen_prefix ks "baz" >>
+      D.notify ks' "barX" >>
+      D.read_committed_transaction ks'
+        (fun ks' ->
+           D.notify ks' "bazX" >>
+           try_lwt
+             D.read_committed_transaction ks'
+               (fun ks' ->
+                  D.notify ks' "fooX" >>
+                  (* abort the tx *)
+                  raise_lwt Exit)
+           with Exit -> return ()) >>
+      expect ks ["barX"; "bazX"]
+
   let test_notifications dbs =
     lwt ks1a = register_keyspace dbs "test_notifications1" in
     lwt ks1b = register_keyspace dbs "test_notifications1" in
@@ -1575,6 +1594,26 @@ struct
       D.notify ks2 "bar" >>
       D.notify ks1b "babar" >>
       expect ks1a ["babar"]
+
+  let test_prefix_notifications dbs =
+    lwt ks1a = register_keyspace dbs "test_prefix_notifications1" in
+    lwt ks1b = register_keyspace dbs "test_prefix_notifications1" in
+    lwt ks2  = register_keyspace dbs "test_prefix_notifications2" in
+      D.listen_prefix ks1a "foo" >>
+      D.notify ks1b "foobar" >>
+      expect ks1a ["foobar"] >>
+      D.listen ks1a "foo" >>
+      D.notify ks1b "foo" >>
+      expect ks1a ["foo"] >>
+      D.notify ks2 "foobabaz" >>
+      D.notify ks1b "foobar" >>
+      D.notify ks1b "foo" >>
+      expect ks1a ["foobar"; "foo"] >>
+      D.unlisten_prefix ks1a "foo" >>
+      D.listen ks1a "x" >>
+      D.notify ks1b "foobar" >>
+      D.notify ks1b "x" >>
+      expect ks1a ["x"]
 
   let test_interlocked_txs p =
     Lwt_pool.use p (fun db1 -> Lwt_pool.use p (do_test_interlocked_txs db1))
@@ -1651,7 +1690,9 @@ struct
       "notification follows data commit", test_notification_follows_commit;
       "await before subscription", test_await_before_subscription;
       "notify in transaction", test_notifications_in_tx;
+      "notify in transaction with prefix topic", test_prefix_notifications_in_tx;
       "simple notifications", test_notifications;
+      "prefix notifications", test_prefix_notifications;
       "concurrent nested TXs", test_concurrent_nested_txs;
       "nested TX and single-write TX serialization", test_nested_tx_serialization;
     ] @

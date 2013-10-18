@@ -32,3 +32,7 @@ val find_prefixes : string -> 'a t -> 'a list
 val mem : string -> 'a t -> bool
 val add : string -> 'a -> 'a t -> 'a t
 val remove : string -> 'a t -> 'a t
+
+val iter : (string -> 'a -> unit) -> 'a t -> unit
+
+val fold : (string -> 'a -> 'b -> 'b) -> 'a t -> 'b -> 'b

@@ -573,6 +573,8 @@ module rec TYPES : sig
         (* keyspace name -> lock name -> weak ref to lock *)
 
         subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
+        mutable prefix_subscriptions :
+          (keyspace_name, (string * subs_stream H.t) Obs_ternary.t ref) Hashtbl.t;
       }
 
   and keyspace =
@@ -584,6 +586,7 @@ module rec TYPES : sig
       ks_tx_key : transaction Lwt.key;
       ks_subs_stream : subs_stream;
       ks_subscriptions : mutable_string_set;
+      ks_prefix_subscriptions : mutable_string_set;
       ks_watches : (table_idx * key, DIRTY_FLAGS.t * (column_name, DIRTY_FLAGS.t) Hashtbl.t) Hashtbl.t;
       ks_prefix_watches : (table_idx, DIRTY_FLAGS.t Obs_ternary.t) Hashtbl.t;
     }
@@ -663,12 +666,14 @@ let read_keyspaces db lldb =
                let ks_tx_key = Lwt.new_key () in
                let ks_subs_stream = Lwt_stream.create () in
                let ks_subscriptions = Hashtbl.create 13 in
+               let ks_prefix_subscriptions = Hashtbl.create 13 in
                  Hashtbl.iter
                    (fun k v -> Hashtbl.add ks_rev_tables v k)
                    ks_tables;
                  Hashtbl.add h keyspace_name
                    { ks_db; ks_id; ks_name; ks_tables; ks_rev_tables;
                      ks_unique_id; ks_tx_key; ks_subs_stream; ks_subscriptions;
+                     ks_prefix_subscriptions;
                      ks_watches = Hashtbl.create 13;
                      ks_prefix_watches = Hashtbl.create 13;
                    };
@@ -746,6 +751,7 @@ let open_db
         assume_page_fault; fsync = fsync;
         locks = M.empty;
         subscriptions = Hashtbl.create 13;
+        prefix_subscriptions = Hashtbl.create 13;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -807,20 +813,34 @@ let get_keyspace_set t ks_name proto =
       s
 
 let terminate_keyspace_subs ks =
+  snd ks.ks_subs_stream None;
+  let subs_ks      = ks.ks_name in
   let empty_topics =
-    snd ks.ks_subs_stream None;
-    let subs_ks = ks.ks_name in
-      Hashtbl.fold
-        (fun subs_topic _ l ->
-           let k =  { subs_ks; subs_topic; } in
-           try
-             let t = Hashtbl.find ks.ks_db.subscriptions k in
-               H.remove t ks.ks_unique_id;
-               if H.length t = 0 then k :: l
-               else l
-           with Not_found -> l)
-        ks.ks_subscriptions []
-  in List.iter (Hashtbl.remove ks.ks_db.subscriptions) empty_topics
+    Hashtbl.fold
+      (fun subs_topic _ l ->
+         let k =  { subs_ks; subs_topic; } in
+         try
+           let t = Hashtbl.find ks.ks_db.subscriptions k in
+             H.remove t ks.ks_unique_id;
+             if H.length t = 0 then k :: l
+             else l
+         with Not_found -> l)
+      ks.ks_subscriptions [] in
+  let empty_prefix_tables =
+    Hashtbl.fold
+      (fun prefix _ l ->
+         try
+           let t    = Hashtbl.find ks.ks_db.prefix_subscriptions ks.ks_name in
+           let _, h = Obs_ternary.find prefix !t in
+             H.remove h ks.ks_unique_id;
+             if H.length h = 0 then t := Obs_ternary.remove prefix !t;
+             if Obs_ternary.is_empty !t then prefix :: l
+             else l
+         with Not_found -> l)
+      ks.ks_prefix_subscriptions []
+  in
+    List.iter (Hashtbl.remove ks.ks_db.subscriptions) empty_topics;
+    List.iter (Hashtbl.remove ks.ks_db.prefix_subscriptions) empty_prefix_tables
 
 let clone_keyspace (Proto proto) =
   let ks =
@@ -832,6 +852,7 @@ let clone_keyspace (Proto proto) =
       ks_tx_key = Lwt.new_key ();
       ks_subs_stream = Lwt_stream.create ();
       ks_subscriptions = Hashtbl.create 13;
+      ks_prefix_subscriptions = Hashtbl.create 13;
       ks_watches = proto.ks_watches;
       ks_prefix_watches = proto.ks_prefix_watches;
     }
@@ -868,6 +889,7 @@ let register_keyspace t ks_name =
           ks_tx_key = Lwt.new_key ();
           ks_subs_stream = Lwt_stream.create ();
           ks_subscriptions = Hashtbl.create 13;
+          ks_prefix_subscriptions = Hashtbl.create 13;
           ks_watches = Hashtbl.create 13;
           ks_prefix_watches = Hashtbl.create 13;
         } in
@@ -1214,9 +1236,28 @@ and commit_outermost_transaction ks tx =
 
 and notify ks topic =
   let k = { subs_ks = ks.ks_name; subs_topic = topic; } in
+  let already_notified = H.create 3 in
+    begin try
+      let t    = Hashtbl.find ks.ks_db.prefix_subscriptions ks.ks_name in
+      let tbls = Obs_ternary.find_prefixes topic !t in
+        List.iter
+          (fun (_, h) ->
+             H.iter
+               (fun id (_, pushf) ->
+                  if not (H.mem already_notified id) then begin
+                    H.add already_notified id ();
+                    pushf (Some topic)
+                  end)
+               h)
+          tbls
+    with Not_found -> ()
+    end;
     begin try
       let subs = Hashtbl.find ks.ks_db.subscriptions k in
-        H.iter (fun _ (_, pushf) -> pushf (Some topic)) subs
+        H.iter
+          (fun id (_, pushf) ->
+             if not (H.mem already_notified id) then pushf (Some topic))
+          subs
     with _ -> () end
 
 let read_committed_transaction ks f =
@@ -2847,11 +2888,36 @@ let listen ks topic =
   let tbl =
     find_or_add
       Hashtbl.find
-      (fun h k -> let v = H.create 13 in Hashtbl.add h k v; v)
+      (fun h k -> let v = H.create 3 in Hashtbl.add h k v; v)
       ks.ks_db.subscriptions k
   in
     if not (H.mem tbl ks.ks_unique_id) then begin
       Hashtbl.replace ks.ks_subscriptions topic ();
+      H.add tbl ks.ks_unique_id ks.ks_subs_stream;
+    end;
+    return_unit
+
+let listen_prefix ks prefix =
+  let ks_name = ks.ks_name in
+  let t =
+    find_or_add
+      Hashtbl.find
+      (fun h k ->
+         let v = ref Obs_ternary.empty in
+           Hashtbl.add h k v;
+           v)
+      ks.ks_db.prefix_subscriptions ks_name in
+  let _, tbl =
+    find_or_add
+      (fun t k -> Obs_ternary.find k !t)
+      (fun t k ->
+         let v = (prefix, H.create 3) in
+           t := Obs_ternary.add k v !t;
+           v)
+      t prefix
+  in
+    if not (H.mem tbl ks.ks_unique_id) then begin
+      Hashtbl.replace ks.ks_prefix_subscriptions prefix ();
       H.add tbl ks.ks_unique_id ks.ks_subs_stream;
     end;
     return_unit
@@ -2867,6 +2933,19 @@ let unlisten ks topic =
         if H.length tbl = 0 then Hashtbl.remove ks.ks_db.subscriptions k;
         Hashtbl.remove ks.ks_subscriptions ks_name;
     with Not_found -> () end;
+    return_unit
+
+let unlisten_prefix ks prefix =
+  let ks_name = ks.ks_name in
+    begin try
+      let t    = Hashtbl.find ks.ks_db.prefix_subscriptions ks_name in
+      let _, h = Obs_ternary.find prefix !t in
+        H.remove h ks.ks_unique_id;
+        (* remove empty tables if needed *)
+        if H.length h = 0 then t := Obs_ternary.remove prefix !t;
+        if Obs_ternary.is_empty !t then Hashtbl.remove ks.ks_prefix_subscriptions ks_name
+    with Not_found -> ()
+    end;
     return_unit
 
 let notify ks topic =

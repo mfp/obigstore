@@ -1,5 +1,5 @@
 (*
- * Copyright (C) 2011-2012 Mauricio Fernandez <mfp@acm.org>
+ * Copyright (C) 2011-2013 Mauricio Fernandez <mfp@acm.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -122,3 +122,31 @@ let remove k t =
     else match t with
         E | NV _ as t -> t (* nothing associated to "" *)
       | V (c, l, m, r, _) -> NV (c, l, m, r)
+
+let rec iter f = function
+    E -> ()
+  | V (c, l, eq, r, v) ->
+      let s = String.make 1 c in
+        iter f l;
+        f s v;
+        iter (fun c v -> f (s ^ c) v) eq;
+        iter f r
+  | NV (c, l, eq, r) ->
+      let s = String.make 1 c in
+        iter f l;
+        iter (fun c v -> f (s ^ c) v) eq;
+        iter f r
+
+let rec fold f t acc = match t with
+  | E -> acc
+  | V (c, l, eq, r, v) ->
+      let s   = String.make 1 c in
+      let acc = fold f l acc in
+      let acc = f s v acc in
+      let acc = fold (fun c v acc -> f (s ^ c) v acc) eq acc in
+        fold f r acc
+  | NV (c, l, eq, r) ->
+      let s   = String.make 1 c in
+      let acc = fold f l acc in
+      let acc = fold (fun c v acc -> f (s ^ c) v acc) eq acc in
+        fold f r acc
