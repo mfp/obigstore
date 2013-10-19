@@ -795,7 +795,7 @@ let open_db
   in
     (* ensure we have a end_of_db record *)
     if not (L.mem lldb Obs_datum_encoding.end_of_db_key) then
-      L.put ~sync:true lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
+      L.put ~sync:fsync lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
     let rec db =
       { basedir; db = Miniregion.make lldb;
         keyspaces = Hashtbl.create 13;
