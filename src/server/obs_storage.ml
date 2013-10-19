@@ -868,33 +868,26 @@ let get_keyspace_set t ks_name proto =
 
 let terminate_keyspace_subs ks =
   snd ks.ks_subs_stream None;
-  let subs_ks      = ks.ks_name in
-  let empty_topics =
-    Hashtbl.fold
-      (fun subs_topic _ l ->
-         let k =  { subs_ks; subs_topic; } in
+  Hashtbl.iter
+    (fun subs_topic _ ->
+       let k =  { subs_ks = ks.ks_name; subs_topic; } in
          try
            let t = Hashtbl.find ks.ks_db.subscriptions k in
              H.remove t ks.ks_unique_id;
-             if H.length t = 0 then k :: l
-             else l
-         with Not_found -> l)
-      ks.ks_subscriptions [] in
-  let empty_prefix_tables =
-    Hashtbl.fold
-      (fun prefix _ l ->
-         try
-           let t    = Hashtbl.find ks.ks_db.prefix_subscriptions ks.ks_name in
-           let _, h = Obs_ternary.find prefix !t in
-             H.remove h ks.ks_unique_id;
-             if H.length h = 0 then t := Obs_ternary.remove prefix !t;
-             if Obs_ternary.is_empty !t then prefix :: l
-             else l
-         with Not_found -> l)
-      ks.ks_prefix_subscriptions []
-  in
-    List.iter (Hashtbl.remove ks.ks_db.subscriptions) empty_topics;
-    List.iter (Hashtbl.remove ks.ks_db.prefix_subscriptions) empty_prefix_tables
+             if H.length t = 0 then Hashtbl.remove ks.ks_db.subscriptions k
+         with Not_found -> ())
+    ks.ks_subscriptions;
+  Hashtbl.iter
+    (fun prefix _ ->
+       try
+         let t    = Hashtbl.find ks.ks_db.prefix_subscriptions ks.ks_name in
+         let _, h = Obs_ternary.find prefix !t in
+           H.remove h ks.ks_unique_id;
+           if H.length h = 0 then t := Obs_ternary.remove prefix !t;
+           if Obs_ternary.is_empty !t then
+             Hashtbl.remove ks.ks_db.prefix_subscriptions ks.ks_name
+       with Not_found -> ())
+    ks.ks_prefix_subscriptions
 
 let clone_keyspace (Proto proto) =
   let ks =
