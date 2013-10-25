@@ -2999,8 +2999,15 @@ let notify ks topic =
   match Lwt.get ks.ks_tx_key with
     | None -> notify ks topic; return_unit
     | Some tx ->
-        tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
-        return_unit
+        if not tx.nested_tx_running then begin
+          tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
+          return_unit
+        end else begin
+          Lwt_mutex.with_lock tx.nested_tx_mutex
+            (fun () ->
+               tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
+               return_unit)
+        end
 
 let await_notifications ks =
   let stream = fst ks.ks_subs_stream in

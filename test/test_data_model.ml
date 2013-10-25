@@ -1525,7 +1525,8 @@ struct
           assert_failure "Wrong data committed before notification"
 
   let expect ?msg ks l =
-    D.await_notifications ks >|= aeq ?msg (string_of_list (sprintf "%S")) l
+    D.await_notifications ks >|= List.sort String.compare >|=
+      aeq ?msg (string_of_list (sprintf "%S")) (List.sort String.compare l)
 
   let test_await_before_subscription dbs =
     lwt ks = register_keyspace dbs "test_await_before_subscription" in
@@ -1554,6 +1555,24 @@ struct
                   raise_lwt Exit)
            with Exit -> return ()) >>
       expect ks ["bar"; "baz"]
+
+  let test_notifications_concurrent_with_long_running_tx dbs =
+    let notif ks topic = Lwt_unix.sleep (Random.float 0.02) >> D.notify ks topic in
+
+    lwt ks = register_keyspace dbs "test_notifications_in_tx" in
+    lwt ks' = register_keyspace dbs "test_notifications_in_tx" in
+      D.listen ks "foo" >>
+      D.listen ks "bar" >>
+      D.listen ks "baz" >>
+        for_lwt i = 1 to 20 do
+          D.read_committed_transaction ks'
+            (fun ks' ->
+               D.read_committed_transaction ks' (fun ks' -> notif ks' "foo") <&>
+               notif ks' "bar" <&>
+               notif ks' "bar" <&>
+               notif ks' "baz") >>
+          expect ks ["foo"; "bar"; "baz"]
+        done
 
   let test_prefix_notifications_in_tx dbs =
     lwt ks  = register_keyspace dbs "test_prefix_notifications_in_tx" in
@@ -1693,6 +1712,8 @@ struct
       "notify in transaction with prefix topic", test_prefix_notifications_in_tx;
       "simple notifications", test_notifications;
       "prefix notifications", test_prefix_notifications;
+      "notifications concurrent with long-running nested TX",
+        test_notifications_concurrent_with_long_running_tx;
       "concurrent nested TXs", test_concurrent_nested_txs;
       "nested TX and single-write TX serialization", test_nested_tx_serialization;
     ] @
