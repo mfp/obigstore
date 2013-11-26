@@ -310,7 +310,9 @@ struct
       ignore begin try_lwt
         let rec writebatch_loop () =
           begin if not t.dirty && not t.closed then
-              Throttled_condition.wait t.wait_for_dirty
+            lwt () = Throttled_condition.wait t.wait_for_dirty in
+              t.wait_for_dirty <- Throttled_condition.make 0.001;
+              return_unit
           else return_unit
           end >>
           if t.closed && not t.dirty then begin
