@@ -371,8 +371,12 @@ struct
       let tx = { t; valid = true; timestamp; } in
         try
           f tx;
-          Throttled_condition.signal t.wait_for_dirty;
-          waiter
+          if not t.dirty then
+            return_unit
+          else begin
+            Throttled_condition.signal t.wait_for_dirty;
+            waiter
+          end
         with exn ->
           tx.valid <- false;
           raise exn
