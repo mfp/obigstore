@@ -59,7 +59,7 @@ struct
   let signal t =
     if not t.timer_launched then begin
       t.timer_launched <- true;
-      ignore (Lwt_unix.sleep t.dt >> return (Lwt.wakeup (snd t.waiter) ()))
+      ignore (Lwt_unix.sleep t.dt >> return (Lwt.wakeup_later (snd t.waiter) ()))
     end
 end
 
@@ -309,48 +309,46 @@ struct
     in
       ignore begin try_lwt
         let rec writebatch_loop () =
-          begin if not t.dirty && not t.closed then
+          if not (t.dirty || t.closed) then begin
             lwt () = Throttled_condition.wait t.wait_for_dirty in
               t.wait_for_dirty <- Throttled_condition.make 0.001;
+              writebatch_loop ()
+          end else begin
+            (* at this point, dirty || closed *)
+            if not t.dirty then begin
+              Lwt.wakeup_later (snd t.wait_last_sync) ();
+              (* exit the writebatch_loop *)
               return_unit
-          else return_unit
-          end >>
-          if t.closed && not t.dirty then begin
-            Lwt.wakeup (snd t.wait_last_sync) ();
-            return_unit
-          end else if not t.dirty then
-            writebatch_loop ()
-          else begin
-            (* need a "reload keyspace" record if needed *)
-            if t.need_keyspace_reload then
-              Obs_bytea.add_byte t.serialized_update 0xFF;
-            let wb = t.wb in
-            let u = snd t.sync_wait in
-            let u' = snd t.wait_last_sync in
-            let serialized_update = t.serialized_update in
-            let () =
-              t.dirty <- false;
-              t.wb <- L.Batch.make ();
-              t.need_keyspace_reload <- false;
-              t.wait_for_dirty <- Throttled_condition.make 0.001;
-              t.sync_wait <- Lwt.wait ();
-              t.wait_last_sync <- Lwt.wait ();
-              t.serialized_update <- Obs_bytea.create 128 in
-            let () = control_throttling t in
-            lwt () =
-              Lwt_preemptive.detach
-                (L.Batch.write ~sync:t.fsync t.db) wb
-            and () = push_to_slaves t serialized_update in
-              iter_pool := make_iter_pool t.db;
-              Lwt.wakeup u ();
-              Lwt.wakeup u' ();
-              return_unit
-          end >>
-          if t.closed then begin
-            Lwt.wakeup (snd t.wait_last_sync) ();
-            return_unit
-          end else writebatch_loop ()
-        in writebatch_loop ()
+            end else begin
+              (* closed && dirty || not closed && dirty *)
+              (* need a "reload keyspace" record if needed *)
+              if t.need_keyspace_reload then
+                Obs_bytea.add_byte t.serialized_update 0xFF;
+              let wb = t.wb in
+              let u = snd t.sync_wait in
+              let u' = snd t.wait_last_sync in
+              let serialized_update = t.serialized_update in
+              let () =
+                t.dirty <- false;
+                t.wb <- L.Batch.make ();
+                t.need_keyspace_reload <- false;
+                t.wait_for_dirty <- Throttled_condition.make 0.001;
+                t.sync_wait <- Lwt.wait ();
+                t.wait_last_sync <- Lwt.wait ();
+                t.serialized_update <- Obs_bytea.create 128 in
+              let () = control_throttling t in
+              lwt () =
+                Lwt_preemptive.detach
+                  (L.Batch.write ~sync:t.fsync t.db) wb
+              and () = push_to_slaves t serialized_update in
+                iter_pool := make_iter_pool t.db;
+                Lwt.wakeup_later u ();
+                Lwt.wakeup_later u' ();
+                writebatch_loop ()
+            end
+          end
+        in
+          writebatch_loop ()
       with exn ->
         Lwt_log.error_f ~section ~exn "WRITEBATCH error"
       end;
@@ -3282,7 +3280,7 @@ struct
   let get_update = Lwt_stream.get
 
   let signal u x =
-    (try Option.may (fun u -> Lwt.wakeup u x) u.up_signal_ack with _ -> ());
+    (try Option.may (fun u -> Lwt.wakeup_later u x) u.up_signal_ack with _ -> ());
     return_unit
 
   let ack_update u = signal u `ACK
