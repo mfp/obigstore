@@ -231,9 +231,11 @@ struct
                            end;
                            return_unit
                        | e ->
+                           let backtrace = Printexc.get_backtrace () in
                            Lwt_log.error_f ~section:gen_section
-                             ~exn:e "Internal error\nrequest:\n%s"
-                             (PP.pp Request.pp r) >>
+                             ~exn:e "Internal error\nrequest:\n%s\n%s"
+                             (PP.pp Request.pp r)
+                             backtrace >>
                            try_lwt
                              P.internal_error c.och ~request_id ()
                            with _ -> return_unit
