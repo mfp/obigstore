@@ -1,0 +1,40 @@
+version= "VERSION"
+name="obigstore"
+description="Client/server + embeddable semi-structured database."
+requires="batteries cryptokit extprot lwt.unix lwt.preemptive leveldb"
+archive(byte)="obigstore_core.cma"
+archive(byte, plugin)="obigstore_core.cma"
+archive(native)="obigstore_core.cmxa"
+
+package "client" (
+    version = "VERSION"
+    description = "obigstore client"
+    requires = "obigstore"
+    archive(byte) = "obigstore_client.cma"
+    archive(byte, plugin) = "obigstore_client.cma"
+    archive(native) = "obigstore_client.cmxa"
+    archive(native, plugin) = "obigstore_client.cmxs"
+    exists_if = "obigstore_client.cma"
+)
+
+package "server" (
+    version = "VERSION"
+    description = "obigstore server"
+    requires = "obigstore obigstore.client"
+    archive(byte) = "obigstore_server.cma"
+    archive(byte, plugin) = "obigstore_server.cma"
+    archive(native) = "obigstore_server.cmxa"
+    archive(native, plugin) = "obigstore_server.cmxs"
+    exists_if = "obigstore_server.cma"
+)
+
+package "util" (
+    version = "VERSION"
+    description = "obigstore utility modules (key encoding and typed tables)"
+    requires = "obigstore"
+    archive(byte) = "obigstore_util.cma"
+    archive(byte, plugin) = "obigstore_util.cma"
+    archive(native) = "obigstore_util.cmxa"
+    archive(native, plugin) = "obigstore_util.cmxs"
+    exists_if = "obigstore_util.cma"
+)

@@ -1,11 +1,16 @@
 
+prefix = /usr/local
+INSTALL = install
+RM = rm -f
+
+# allow to override the above variables from command line
+DefineCommandVars()
+
 USE_OCAMLFIND = true
 NATIVE_ENABLED = true
 BYTE_ENABLED = true
 
-prefix = /usr/local
-INSTALL = install
-RM = rm -f
+VERSION = 0.9.0
 
 match $(string $(shell ocaml -version))
 case $"\([0-9]\)\.\([0-9]+\)\."
@@ -85,8 +90,17 @@ CamlSources(mods) =
 
 .SUBDIRS: doc src test
 
-EXECS[] = obigstore ob_dump ob_load ob_repl
-LIBS[] = src/core/obigstore_core src/client/obigstore_client
+EXECS[] =
+    obigstore
+    ob_dump
+    ob_load
+    ob_repl
+
+LIBS[] =
+    src/core/obigstore_core
+    src/client/obigstore_client
+    src/server/obigstore_server
+    src/util/obigstore_util
 
 LIBS = $(addsuffixes .cma .cmxa, $(LIBS))
 
@@ -96,11 +110,16 @@ foreach(exec, $(EXECS))
 
 .DEFAULT: $(EXECS) $(LIBS)
 
-install: $(EXECS) $(LIBS)
-	$(INSTALL) $+ $(prefix)/bin
-	ocamlfind install obigstore META \
-	    $(cd src/core, $(ls *.cmi *.so *.cmxa *.cma *.cmx *.a *.mli)) \
-	    $(cd src/client, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli))
+META: META.in
+        sed s/VERSION/$(VERSION)/g $< > $@
+
+install: $(EXECS) $(LIBS) META
+    $(INSTALL) $(EXECS) $(prefix)/bin
+    ocamlfind install obigstore META \
+        $(cd src/core, $(ls *.cmi *.so *.cmxa *.cma *.cmx *.a *.mli)) \
+        $(cd src/client, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli)) \
+        $(cd src/server, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli)) \
+        $(cd src/util, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli))
 
 uninstall:
 	$(RM) $(addprefix $(prefix)/, $(EXECS))
