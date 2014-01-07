@@ -3,7 +3,7 @@
 
 obigstore: multi-dimensional DB with BigTable-like data model atop LevelDB
 ==========================================================================
-Copyright (C) 2012 Mauricio Fernandez <mfp@acm.org>
+Copyright (C) 2012-2014 Mauricio Fernandez <mfp@acm.org>
 
 obigstore is a database server + client library and associated tools. It
 exposes a multidimensional BigTable-like data model built on top of the Google
@@ -53,21 +53,13 @@ Requirements
 * OCaml >= 3.12.0 (ocaml-nox)
 * findlib (ocaml-findlib)
 * omake to build (omake)
-* snappy (libsnappy-dev)
 * GCC with C++ frontend (g++)
 * OCaml Batteries (libbatteries-ocaml-dev) (>= 2.0.0)
 * Cryptokit (libcryptokit-ocaml-dev)
 * Lwt (liblwt-ocaml-dev)
 * oUnit for the unit tests  (libounit-ocaml-dev)
-* extlib (libextlib-ocaml-dev)
-
-obigstore's tree includes a number of git submodules that will be
-automatically fetched if you run  git clone  with the  --recursive  option,
-including:
-
 * extprot
 * ocaml-leveldb
-* leveldb
 
 Building
 --------
@@ -80,8 +72,8 @@ You can run the tests with
 
     $ omake test
 
-You can then install at once the obigstore, extprot and ocaml-leveldb
-libraries with:
+You can then install at once the obigstore core, client, server and util
+libraries, as well as the executables with:
 
     $ omake install
 
