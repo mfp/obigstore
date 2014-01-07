@@ -20,30 +20,49 @@ OCAMLOPTFLAGS += -g -inline 100
 .PHONY: install
 .PHONY: uninstall
 
-.SUBDIRS: src/libs/ocaml-leveldb
-
-if $(defined EXTPROT_DIR)
-    EXTPROT_BASE = $(EXTPROT_DIR)
-    export
-else
-    EXTPROT_BASE = $(file src/libs/extprot)
-    .SUBDIRS: src/libs/extprot
-    export
-
 OCAMLFLAGS     = -g -thread -w +a-4-6-9-27..29-32..99 -warn-error +a-4-6-9-18-27-28-29..99
 OCAMLFINDFLAGS = -syntax camlp4o -ppopt -lwt-debug
+CFLAGS         = -g -Wall -O2 -fPIC
 
 if $(ge $(OCAML_MAJOR), 4)
        OCAMLFLAGS += -bin-annot
        export
 
-OCAMLPACKS[] = batteries camlp4.macro cryptokit lwt lwt.unix lwt.syntax lwt.syntax.log lwt.preemptive
+OCAMLPACKS[] =
+    batteries
+    camlp4.macro
+    cryptokit
+    lwt
+    lwt.unix
+    lwt.syntax
+    lwt.syntax.log
+    lwt.preemptive
+
+if $(not $(defined LEVELDB_DIR))
+    OCAMLPACKS[] += leveldb
+    export OCAMLPACKS
+else
+    OCAMLINCLUDES += $(file $(LEVELDB_DIR)/src)
+    export OCAMLINCLUDES
+
+if $(not $(defined EXTPROT_DIR))
+    OCAMLPACKS[] += extprot
+    export OCAMLPACKS
+else
+    OCAMLINCLUDES += $(file $(EXTPROT_DIR)/runtime)
+    export OCAMLINCLUDES
 
 LD_PATHS[] =
-	$(file src/libs/ocaml-leveldb/leveldb)
-	$(file src/libs/ocaml-leveldb/src)
 	$(file src)
 	$(file src/core)
+
+if $(defined LEVELDB_DIR)
+    LD_PATHS[] +=
+        $(file $(LEVELDB_DIR)/leveldb)
+        $(file $(LEVELDB_DIR)/src)
+    export LD_PATHS
+
+OCAMLFLAGS += $(mapprefix -cclib, $(addprefix -L, $(LD_PATHS)))
 
 setenv(CAML_LD_LIBRARY_PATH, $(concat :, $(absname $(LD_PATHS))))
 
@@ -89,3 +108,5 @@ uninstall:
 
 clean:
 	rm -f $(filter-proper-targets $(ls R, .))
+
+# vim: set expandtab:

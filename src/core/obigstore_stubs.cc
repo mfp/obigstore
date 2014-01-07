@@ -19,7 +19,7 @@
 
 #include <leveldb/db.h>
 #include <leveldb/comparator.h>
-#include "../libs/ocaml-leveldb/leveldb/util/crc32c.h"
+#include "crc32c.h"
 
 #if defined(OS_MACOSX)
   #include <machine/endian.h>

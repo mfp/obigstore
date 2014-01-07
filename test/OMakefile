@@ -1,16 +1,9 @@
 
-OCAMLPACKS[] += unix extlib threads oUnit
+OCAMLPACKS[] += oUnit
 
-OCAMLFLAGS += $(mapprefix -cclib, $(addprefix -L, $(LD_PATHS)))
-OCAML_BYTE_LINK_FLAGS =
-
-OCAMLINCLUDES += \
-    ../src ../src/core ../src/client ../src/server ../src/util \
-    ../src/libs/ocaml-leveldb/src
+OCAMLINCLUDES += ../src ../src/core ../src/client ../src/server ../src/util
 
 OCAML_LIBS[] +=
-    ../src/libs/ocaml-leveldb/src/leveldb
-    $(EXTPROT_BASE)/runtime/extprot
     ../src/core/obigstore_core
     ../src/client/obigstore_client
     ../src/server/obigstore_server
@@ -21,11 +14,6 @@ OCamlProgram(benchmark, test_00util benchmark)
 OCamlProgram(bm_makedata, bm_util bm_makedata)
 OCamlProgram(bm_write, bm_util bm_write)
 OCamlProgram(bm_read, bm_util bm_read)
-
-toplevel: $(addsuffix .cma, $(OCAML_LIBS))
-    ocamlfind ocamlmktop $(mapprefix -package, $(OCAMLPACKS)) \
-	-cc g++ -ccopt -Wno-write-strings -thread -linkpkg \
-	-verbose -o toplevel -cclib -L. $+
 
 .PHONY: test
 test: test.opt
@@ -38,3 +26,5 @@ PROGRAMS[] =
 	bm_write
 
 .DEFAULT: $(addsuffix $(EXE), $(PROGRAMS)) test.opt
+
+# vim: set expandtab:

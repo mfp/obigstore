@@ -16,8 +16,12 @@ OBJECTS[] =
   obs_weak_ref
   obs_load_stats
 
-obs_request.ml: obs_request.proto $(EXTPROT_BASE)/extprotc
-	$(EXTPROT_BASE)/extprotc $<
+if $(defined EXTPROT_DIR)
+    obs_request.ml: obs_request.proto $(EXTPROT_DIR)/extprotc
+        $(EXTPROT_DIR)/extprotc $<
+else
+    obs_request.ml: obs_request.proto
+        extprotc $<
 
 OCamlGeneratedFiles(obs_request.ml)
 
@@ -27,3 +31,4 @@ section
     LINK_FLAGS=-lstdc++
     CamlStubLibrary(obigstore_core, $(OBJECTS), obigstore_stubs)
 
+# vim: set expandtab:
