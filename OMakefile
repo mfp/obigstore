@@ -95,7 +95,7 @@ CamlSources(mods) =
                 $(addsuffixes .cmo .cmi .cmx .sig $(EXT_OBJ), $(mod)):
 
 %.cmxs: %.cmxa
-        ocamlopt -shared -I . -o $@ $< -linkall
+        $(OCAMLOPT) -shared -I . -o $@ $< -linkall
 
 .SUBDIRS: doc src test
 
