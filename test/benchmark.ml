@@ -310,15 +310,16 @@ struct
           (iter_p_in_region ~size:50 do_read) keys
       else
         Lwt_list.iter_s (Lwt_list.iter_s do_read) keys in
+
     lwt overhead =
       time
         (fun () ->
            if C.is_remote then
              iter_p_in_region ~size:50
-               (iter_p_in_region ~size:50 (fun _ -> Lwt_unix.sleep 0.)) keys
+               (iter_p_in_region ~size:50 (fun _ -> return ())) keys
            else
              Lwt_list.iter_s
-               (Lwt_list.iter_s (fun _ -> Lwt_unix.sleep 0.)) keys) in
+               (Lwt_list.iter_s (fun _ -> return ())) keys) in
 
     let dt transaction =
       lwt dt = time (fun () -> transaction ks (fun _ -> read keys)) in
