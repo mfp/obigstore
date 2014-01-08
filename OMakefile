@@ -90,11 +90,27 @@ CamlSources(mods) =
 
 .SUBDIRS: doc src test
 
-EXECS[] =
+SRC_EXECS[] =
     obigstore
     ob_dump
     ob_load
     ob_repl
+
+TEST_EXECS[] =
+    ob_benchmark
+    ob_bm_write
+    ob_bm_read
+    ob_bm_makedata
+
+EXECS[] = $(SRC_EXECS) $(TEST_EXECS)
+
+foreach(exec, $(SRC_EXECS))
+    $(exec): src/$(exec)$(EXE)
+        ln-or-cp $< $@
+
+foreach(exec, $(TEST_EXECS))
+    $(exec): test/$(exec)$(EXE)
+        ln-or-cp $< $@
 
 LIBS[] =
     src/core/obigstore_core
@@ -103,10 +119,6 @@ LIBS[] =
     src/util/obigstore_util
 
 LIBS = $(addsuffixes .cma .cmxa, $(LIBS))
-
-foreach(exec, $(EXECS))
-    $(exec): src/$(exec)$(EXE)
-        ln-or-cp $< $@
 
 .DEFAULT: $(EXECS) $(LIBS)
 

@@ -10,20 +10,20 @@ OCAML_LIBS[] +=
     ../src/util/obigstore_util
 
 OCamlProgram(test, $(removesuffix $(ls test_*.ml)) test)
-OCamlProgram(benchmark, test_00util benchmark)
-OCamlProgram(bm_makedata, bm_util bm_makedata)
-OCamlProgram(bm_write, bm_util bm_write)
-OCamlProgram(bm_read, bm_util bm_read)
+OCamlProgram(ob_benchmark, test_00util ob_benchmark)
+OCamlProgram(ob_bm_makedata, bm_util ob_bm_makedata)
+OCamlProgram(ob_bm_write, bm_util ob_bm_write)
+OCamlProgram(ob_bm_read, bm_util ob_bm_read)
 
 .PHONY: test
 test: test.opt
 	./test.opt -verbose
 
 PROGRAMS[] =
-	benchmark
-	bm_makedata
-	bm_read
-	bm_write
+    ob_benchmark
+    ob_bm_makedata
+    ob_bm_read
+    ob_bm_write
 
 .DEFAULT: $(addsuffix $(EXE), $(PROGRAMS)) test.opt
 
