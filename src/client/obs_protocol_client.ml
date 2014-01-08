@@ -560,6 +560,7 @@ struct
 
     let open_file d ?(offset=0L) fname =
       lwt ich, och = Lwt_io.open_connection d.db.data_address in
+      lwt ()       = authenticate ich och ~role:d.db.role ~password:d.db.password in
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
       let req = Obs_bytea.create 32 in
         Obs_bytea.add_int32_le req (data_request_code `Get_file);
