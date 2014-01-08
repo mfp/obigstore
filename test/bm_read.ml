@@ -28,7 +28,7 @@ module Option = BatOption
 
 module C = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
-let server = ref "127.0.0.1"
+let server = ref ""
 let port = ref 12050
 let keyspace = ref "obs-benchmark"
 let table = ref (Obs_data_model.table_of_string "bm_write")
@@ -59,7 +59,7 @@ let params = Arg.align
    "-time", Arg.Set_float time, "N Run for N seconds (default: 60).";
   ]
 
-let usage_message = "Usage: bm_read N [options]"
+let usage_message = "Usage: bm_read N -server IP_ADDRESS [options]"
 
 let make_client ~address ~data_address ~role ~password =
   lwt fd, ich, och = Obs_conn.open_connection address in
@@ -230,7 +230,7 @@ let () =
            end
        | Some _ -> raise (Arg.Bad s))
     usage_message;
-  if Option.is_none !max_key then begin
+  if Option.is_none !max_key || !server = "" then begin
     Arg.usage params usage_message;
     exit 1
   end;

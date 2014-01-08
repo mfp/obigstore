@@ -33,7 +33,7 @@ type mode =
   | Hotspot of int * float (* log2(hotspots) * Pseq *)
   | Rand_update of int * float
 
-let server = ref "127.0.0.1"
+let server = ref ""
 let port = ref 12050
 let keyspace = ref "obs-benchmark"
 let table = ref (DM.table_of_string "bm_write")
@@ -99,7 +99,7 @@ let params = Arg.align
    "-latency", Arg.Set report_latencies, " Report latencies.";
   ]
 
-let usage_message = "Usage: bm_write [options]"
+let usage_message = "Usage: bm_write -server IP_ADDRESS [options]"
 
 let make_client ~address ~data_address ~role ~password =
   lwt fd, ich, och = Obs_conn.open_connection address in
@@ -360,6 +360,10 @@ let () =
   Random.self_init ();
   show_usage_and_exit := (fun () -> Arg.usage params usage_message; exit 1);
   Arg.parse params ignore usage_message;
+  if !server = "" then begin
+    Arg.usage params usage_message;
+    exit 1
+  end;
   Lwt_unix.run begin
     let address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
