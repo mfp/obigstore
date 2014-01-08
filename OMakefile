@@ -3,6 +3,12 @@ prefix = /usr/local
 INSTALL = install
 RM = rm -f
 
+HAS_NATDYNLINK = false
+
+if $(file-exists $(shell $(OCAMLC) -where)/dynlink.cmxa)
+    HAS_NATDYNLINK = true
+    export HAS_NATDYNLINK
+
 # allow to override the above variables from command line
 DefineCommandVars()
 
@@ -88,6 +94,9 @@ CamlSources(mods) =
         foreach(mod, $(mods))
                 $(addsuffixes .cmo .cmi .cmx .sig $(EXT_OBJ), $(mod)):
 
+%.cmxs: %.cmxa
+        ocamlopt -shared -I . -o $@ $< -linkall
+
 .SUBDIRS: doc src test
 
 SRC_EXECS[] =
@@ -112,13 +121,17 @@ foreach(exec, $(TEST_EXECS))
     $(exec): test/$(exec)$(EXE)
         ln-or-cp $< $@
 
-LIBS[] =
+LIBNAMES[] =
     src/core/obigstore_core
     src/client/obigstore_client
     src/server/obigstore_server
     src/util/obigstore_util
 
-LIBS = $(addsuffixes .cma .cmxa, $(LIBS))
+LIBS = $(addsuffixes .cma .cmxa, $(LIBNAMES))
+
+if HAS_NATDYNLINK
+    LIBS += $(addsuffix .cmxs, $(LIBNAMES))
+    export LIBS
 
 .DEFAULT: $(EXECS) $(LIBS)
 
@@ -128,10 +141,10 @@ META: META.in
 install: $(EXECS) $(LIBS) META
     $(INSTALL) $(EXECS) $(prefix)/bin
     ocamlfind install obigstore META \
-        $(cd src/core, $(ls *.cmi *.so *.cmxa *.cma *.cmx *.a *.mli)) \
-        $(cd src/client, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli)) \
-        $(cd src/server, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli)) \
-        $(cd src/util, $(ls *.cmi *.cmxa *.cma *.cmx *.a *.mli))
+        $(cd src/core, $(ls *.cmi *.so *.cmxa *.cmxs *.cma *.cmx *.a *.mli)) \
+        $(cd src/client, $(ls *.cmi *.cmxa *.cmxs *.cma *.cmx *.a *.mli)) \
+        $(cd src/server, $(ls *.cmi *.cmxa *.cmxs *.cma *.cmx *.a *.mli)) \
+        $(cd src/util, $(ls *.cmi *.cmxa *.cmxs *.cma *.cmx *.a *.mli))
 
 uninstall:
 	$(RM) $(addprefix $(prefix)/, $(EXECS))
