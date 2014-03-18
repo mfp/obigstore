@@ -1448,6 +1448,95 @@ struct
         aeq_slice (Some "b", [ "a", "y", ["x", ""; "y", ""];
                                "b", "x", ["x", ""] ])
 
+  let test_nested_tx_serialization_2 dbs =
+    lwt ks = register_keyspace dbs "test_nested_tx_serialization_2" in
+    let t1, u1 = Lwt.wait () in
+    let t2, u2 = Lwt.wait () in
+    let t3, u3 = Lwt.wait () in
+    let t4, u4 = Lwt.wait () in
+      D.read_committed_transaction ks
+        (fun ks ->
+           let f1 () =
+             t1 >>
+             put ks T.tbl "a" ["x", "" ] >>
+             t2 >>
+             put ks T.tbl "a" ["y", ""] >>
+             t3 >>
+             put ks T.tbl "a" ["z", ""]
+           in
+
+           let f2 k u1 u2 =
+             D.read_committed_transaction ks
+               (fun ks ->
+                  Lwt.wakeup u1 ();
+                  put ks T.tbl k ["x", ""]) >>
+             return (Lwt.wakeup u2 ())
+           in
+             Lwt.join [ f1 (); f2 "b" u1 u2 <&> f2 "c" u3 u4 ]) >>
+      get_all ks T.tbl >|=
+        aeq_slice (Some "c", [ "a", "z", ["x", ""; "y", ""; "z", ""];
+                               "b", "x", ["x", ""];
+                               "c", "x", ["x", ""]; ])
+
+  module SYNCPOINT : sig
+    type t
+    val make : unit -> t
+    val wait : t -> int -> unit Lwt.t
+    val wakeup : t -> int -> unit Lwt.t
+  end =
+  struct
+    type t = int -> (unit Lwt.t * unit Lwt.u)
+
+    let make () =
+      let h = Hashtbl.create 13 in
+        (fun n ->
+           try Hashtbl.find h n
+           with Not_found ->
+             let x = Lwt.task () in
+               Hashtbl.add h n x;
+               x)
+
+    let wait f n   = fst (f n)
+    let wakeup f n = Lwt.wakeup (snd (f n)) (); return ()
+  end
+
+  let test_nested_tx_serialization_3 dbs =
+    lwt ks = register_keyspace dbs "test_nested_tx_serialization_3" in
+    let sp = SYNCPOINT.make () in
+
+      D.read_committed_transaction ks
+        (fun ks ->
+           let f1 () =
+             put ks T.tbl "a" ["x", "" ] >>
+             SYNCPOINT.wakeup sp 1 >>
+             SYNCPOINT.wait sp 3 >>
+             put ks T.tbl "a" ["y", ""] >>
+             SYNCPOINT.wakeup sp 4 >>
+             SYNCPOINT.wait sp 5 >>
+             put ks T.tbl "a" ["z", ""]
+           in
+
+           let f2 () =
+             SYNCPOINT.wait sp 1 >>
+             D.read_committed_transaction ks
+               (fun ks ->
+                  SYNCPOINT.wakeup sp 2 >>
+                  put ks T.tbl "b" ["x", ""]) in
+
+           let f3 () =
+             SYNCPOINT.wait sp 2 >>
+             D.read_committed_transaction ks
+               (fun ks ->
+                  SYNCPOINT.wakeup sp 3 >>
+                  put ks T.tbl "c" ["x", ""]) >>
+             SYNCPOINT.wakeup sp 5
+           in
+             Lwt.join [ f1 (); f2 () <&> f3 () ]) >>
+      get_all ks T.tbl >|=
+        aeq_slice (Some "c", [ "a", "z", ["x", ""; "y", ""; "z", ""];
+                               "b", "x", ["x", ""];
+                               "c", "x", ["x", ""]; ])
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1716,6 +1805,8 @@ struct
         test_notifications_concurrent_with_long_running_tx;
       "concurrent nested TXs", test_concurrent_nested_txs;
       "nested TX and single-write TX serialization", test_nested_tx_serialization;
+      "nested TX and single-write TX serialization (2)", test_nested_tx_serialization_2;
+      "nested TX and single-write TX serialization (3)", test_nested_tx_serialization_3;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [

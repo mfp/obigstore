@@ -672,10 +672,6 @@ module rec TYPES : sig
 
         (* we serialize execution of nested TXs using the following mutex *)
         nested_tx_mutex : Lwt_mutex.t;
-        (* used to ensure "single-stmt" writes within a TX are serialized with
-         * concurrent nested TXs, without slowing down writes when there are
-         * no concurrent nested TXs *)
-        mutable nested_tx_running : bool;
       }
 end = TYPES
 
@@ -1133,7 +1129,6 @@ let rec transaction_aux with_iter_pool ks f =
               dump_buffer = Obs_bytea.create 16;
               tx_notifications = Notif_queue.empty;
               tainted = None; nested_tx_mutex = Lwt_mutex.create ();
-              nested_tx_running = false;
             } in
           try_lwt
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
@@ -1153,26 +1148,21 @@ let rec transaction_aux with_iter_pool ks f =
                 locks
         end
     | Some parent_tx ->
-        parent_tx.nested_tx_running <- true;
         Lwt_mutex.with_lock parent_tx.nested_tx_mutex begin fun () ->
           with_iter_pool
             ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
               let tx = { parent_tx with tx_id = new_tx_id (); iter_pool; repeatable_read;
                                         nested_tx_mutex = Lwt_mutex.create (); }
               in
-                try_lwt
-                  lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
-                    (* because we serialize sub-transactions, it's safe to update
-                     * this way *)
-                    parent_tx.deleted_keys <- tx.deleted_keys;
-                    parent_tx.added <- tx.added;
-                    parent_tx.deleted <- tx.deleted;
-                    parent_tx.added_keys <- tx.added_keys;
-                    parent_tx.tx_notifications <- tx.tx_notifications;
-                    return y
-                finally
-                  parent_tx.nested_tx_running <- false;
-                  return_unit
+                lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
+                  (* because we serialize sub-transactions, it's safe to update
+                   * this way *)
+                  parent_tx.deleted_keys <- tx.deleted_keys;
+                  parent_tx.added <- tx.added;
+                  parent_tx.deleted <- tx.deleted;
+                  parent_tx.added_keys <- tx.added_keys;
+                  parent_tx.tx_notifications <- tx.tx_notifications;
+                  return y
             end
         end
 
@@ -3003,15 +2993,10 @@ let notify ks topic =
   match Lwt.get ks.ks_tx_key with
     | None -> notify ks topic; return_unit
     | Some tx ->
-        if not tx.nested_tx_running then begin
-          tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
-          return_unit
-        end else begin
-          Lwt_mutex.with_lock tx.nested_tx_mutex
-            (fun () ->
-               tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
-               return_unit)
-        end
+        Lwt_mutex.with_lock tx.nested_tx_mutex
+          (fun () ->
+             tx.tx_notifications <- Notif_queue.push topic tx.tx_notifications;
+             return_unit)
 
 let await_notifications ks =
   let stream = fst ks.ks_subs_stream in
@@ -3356,10 +3341,7 @@ let with_transaction ks ~ensure_exclusion f =
   match Lwt.get ks.ks_tx_key with
       None -> read_committed_transaction ks f
     | Some tx when ensure_exclusion ->
-        if tx.nested_tx_running then
-          Lwt_mutex.with_lock tx.nested_tx_mutex (fun () -> f tx)
-        else
-          f tx
+        Lwt_mutex.with_lock tx.nested_tx_mutex (fun () -> f tx)
     | Some tx -> f tx
 
 let with_read_transaction ks f = with_transaction ks ~ensure_exclusion:false f
