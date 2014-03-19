@@ -1287,7 +1287,8 @@ and notify ks topic =
                (fun id (_, pushf) ->
                   if not (H.mem already_notified id) then begin
                     H.add already_notified id ();
-                    pushf (Some topic)
+                    (* raises if stream closed; we catch for good measure *)
+                    (try pushf (Some topic) with _ -> ())
                   end)
                h)
           tbls
@@ -1297,7 +1298,9 @@ and notify ks topic =
       let subs = Hashtbl.find ks.ks_db.subscriptions k in
         H.iter
           (fun id (_, pushf) ->
-             if not (H.mem already_notified id) then pushf (Some topic))
+             if not (H.mem already_notified id) then
+               (* raises if stream closed; we catch for good measure *)
+               (try pushf (Some topic) with _ -> ()))
           subs
     with _ -> () end
 
