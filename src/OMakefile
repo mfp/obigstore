@@ -10,11 +10,13 @@ section
     OCAML_LIBS[] += core/obigstore_core
 
     if $(defined EXTPROT_DIR)
-        OCAML_LIBS[] += $(file $(EXTPROT_DIR))/runtime/extprot
+        OCAML_LIBS[] = $(file $(EXTPROT_DIR))/runtime/extprot $(OCAML_LIBS)
         export OCAML_LIBS
+        OCAMLPACKS[] += extlib
+        export OCAMLPACKS
 
     if $(defined LEVELDB_DIR)
-        OCAML_LIBS[] += $(file $(LEVELDB_DIR))/src/leveldb
+        OCAML_LIBS[] = $(file $(LEVELDB_DIR))/src/leveldb $(OCAML_LIBS)
         export OCAML_LIBS
 
     section
