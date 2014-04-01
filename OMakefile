@@ -55,6 +55,8 @@ if $(not $(defined LEVELDB_DIR))
 else
     OCAMLINCLUDES += $(file $(LEVELDB_DIR)/src)
     export OCAMLINCLUDES
+    OCAML_LIBS[] += $(LEVELDB_DIR)/src/leveldb
+    export OCAML_LIBS
 
 if $(not $(defined EXTPROT_DIR))
     OCAMLPACKS[] += extprot
@@ -62,6 +64,10 @@ if $(not $(defined EXTPROT_DIR))
 else
     OCAMLINCLUDES += $(file $(EXTPROT_DIR)/runtime)
     export OCAMLINCLUDES
+    OCAML_LIBS[] += $(EXTPROT_DIR)/runtime/extprot
+    export OCAML_LIBS
+    OCAMLPACKS[] += extlib
+    export OCAMLPACKS
 
 LD_PATHS[] =
 	$(file src)
