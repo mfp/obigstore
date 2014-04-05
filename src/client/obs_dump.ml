@@ -20,7 +20,14 @@
 open Printf
 open Lwt
 
-let puts fmt = printf (fmt ^^ "\n%!")
+type dump_result =
+   {
+     dstdir      : string;
+     all_files   : string list;
+     added_files : string list;
+   }
+
+let puts fmt = eprintf (fmt ^^ "\n%!")
 
 let copy_stream ic oc =
   let buf = String.create 16384 in
@@ -45,6 +52,7 @@ struct
   let dump_local ~verbose dump dst =
     lwt files = D.list_files dump >|=
                 List.sort (fun (n1, _) (n2, _) -> String.compare n1 n2) in
+    let all   = List.map fst files in
     lwt timestamp = D.timestamp dump in
     let nfiles, size =
       List.fold_left (fun (n, s) (_, fsiz) -> n + 1, Int64.add s fsiz) (0, 0L) files in
@@ -56,33 +64,35 @@ struct
        with Unix.Unix_error(Unix.EEXIST, _, _) -> ());
       puts "Dumping %s (%d files) to directory %s"
         (Obs_util.format_size 1.0 size) nfiles dstdir;
-      Lwt_list.iter_s
-        (fun (file, size) ->
-           let dst = Filename.concat dstdir file in
-             (* kludge: we always want to update CURRENT, which stays the same
-              * size, so we add a predicate on the size *)
-             if file_exists_with_size dst size && size > 100_000L then begin
-               if verbose then
-                 puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
-               return_unit
-             end else begin
-               match_lwt D.open_file dump file with
-                   None -> return_unit
-                 | Some ic ->
-                     try_lwt
-                       if verbose then
-                         puts "Retrieving %s (%s)." file (Obs_util.format_size 1.0 size);
-                       Lwt_io.with_file
-                         ~mode:Lwt_io.output
-                         ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
-                         dst (copy_stream ic)
-                     finally
-                       Lwt_io.abort ic
-             end)
-        files >>
+      lwt added_files =
+        Lwt_list.fold_left_s
+          (fun l (file, size) ->
+             let dst = Filename.concat dstdir file in
+               (* kludge: we always want to update CURRENT, which stays the same
+                * size, so we add a predicate on the size *)
+               if file_exists_with_size dst size && size > 100_000L then begin
+                 if verbose then
+                   puts "Skipping %s (%s)." file (Obs_util.format_size 1.0 size);
+                 return l
+               end else begin
+                 match_lwt D.open_file dump file with
+                     None -> return l
+                   | Some ic ->
+                       try_lwt
+                         if verbose then
+                           puts "Retrieving %s (%s)." file (Obs_util.format_size 1.0 size);
+                         Lwt_io.with_file
+                           ~mode:Lwt_io.output
+                           ~flags:Unix.([O_NONBLOCK; O_CREAT; O_TRUNC; O_WRONLY])
+                           dst (copy_stream ic) >>
+                         return (file :: l)
+                       finally
+                         Lwt_io.abort ic
+               end)
+          [] files in
       let dt = Unix.gettimeofday () -. t0 in
         puts "Retrieved in %.2fs (%s/s)" dt (Obs_util.format_size (1.0 /. dt) size);
-        return dstdir
+        return { dstdir; added_files; all_files = all; }
 
   let dump_local ?(verbose=false) ?destdir dump = dump_local ~verbose dump destdir
 end

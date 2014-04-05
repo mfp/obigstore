@@ -19,8 +19,16 @@
 
 (** Utility functions for efficient database dumping. *)
 
+(** Information returned by dump operation. *)
+type dump_result =
+   {
+     dstdir      : string;
+     all_files   : string list;
+     added_files : string list;
+   }
+
 module Make : functor(D : Obs_data_model.RAW_DUMP) ->
 sig
   (** @return directory the database was dumped to *)
-  val dump_local : ?verbose:bool -> ?destdir:string -> D.raw_dump -> string Lwt.t
+  val dump_local : ?verbose:bool -> ?destdir:string -> D.raw_dump -> dump_result Lwt.t
 end

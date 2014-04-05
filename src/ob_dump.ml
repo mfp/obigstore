@@ -21,8 +21,12 @@ open Lwt
 open Printf
 open Obs_util
 
-module D = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
+module D      = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 module Option = BatOption
+module Set    = BatSet
+module List   = BatList
+
+module S = Set.Make(String)
 
 let keyspace = ref ""
 let tables = ref []
@@ -109,6 +113,20 @@ let () =
             let module DUMP =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
             lwt raw_dump = D.Raw_dump.dump db in
-            lwt _ = DUMP.dump_local ~verbose:!verbose ~destdir raw_dump in
+            lwt st       = DUMP.dump_local ~verbose:!verbose ~destdir raw_dump in
+            let added    = List.enum st.Obs_dump.added_files |> S.of_enum in
+            let all      = List.filter
+                             (function
+                                | "CURRENT" | "LOCK" | "LOG" | "LOG.old" -> false
+                                | _ -> true)
+                             st.Obs_dump.all_files |>
+                           List.sort String.compare
+            in
+              List.iter
+                (fun fname ->
+                   if S.mem fname added then printf "+%s\n" fname
+                   else printf "%s\n" fname)
+                all;
+              flush stdout;
               return_unit
   end
