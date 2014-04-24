@@ -151,6 +151,59 @@ struct
       v
 end
 
+module S =
+struct
+  include Set.Make(String)
+
+  let of_list l = List.fold_left (fun s x -> add x s) empty l
+  let to_list s = List.rev (fold (fun x l -> x :: l) s [])
+
+  let subset ?first ?up_to s =
+    (* trim entries before the first, if proceeds *)
+    let s = match first with
+        None -> s
+      | Some first ->
+          let _, found, after = split first s in
+            if found then add first after else after in
+    (* trim entries starting from up_to if proceeds *)
+    let s = match up_to with
+        None -> s
+      | Some last ->
+          let before, _, _ = split last s in
+            before
+    in s
+end
+
+module EXTMAP(ORD : Map.OrderedType) =
+struct
+  include Map.Make(ORD)
+
+  let find_default x k m = try find k m with Not_found -> x
+
+  let submap ?first ?up_to m =
+    (* trim entries before the first, if proceeds *)
+    let m = match first with
+        None -> m
+      | Some first ->
+          let _, found, after = split first m in
+            match found with
+                Some v -> add first v after
+              | None -> after in
+    (* trim entries starting with up_to, if proceeds *)
+    let m = match up_to with
+        None -> m
+      | Some last ->
+          let before, _, _ = split last m in
+            before
+    in m
+
+  let modify f default k m = add k (f (find_default default k m)) m
+
+  let modify_if_found f k m = try add k (f (find k m)) m with Not_found -> m
+end
+
+module M = EXTMAP(String)
+
 let make_iter_pool db =
   Lwt_pool.create 100 (* FIXME: which limit? *)
     (fun () -> return (L.iterator db))
@@ -442,59 +495,6 @@ struct
            t.v <- new_v;
            return_unit)
 end
-
-module S =
-struct
-  include Set.Make(String)
-
-  let of_list l = List.fold_left (fun s x -> add x s) empty l
-  let to_list s = List.rev (fold (fun x l -> x :: l) s [])
-
-  let subset ?first ?up_to s =
-    (* trim entries before the first, if proceeds *)
-    let s = match first with
-        None -> s
-      | Some first ->
-          let _, found, after = split first s in
-            if found then add first after else after in
-    (* trim entries starting from up_to if proceeds *)
-    let s = match up_to with
-        None -> s
-      | Some last ->
-          let before, _, _ = split last s in
-            before
-    in s
-end
-
-module EXTMAP(ORD : Map.OrderedType) =
-struct
-  include Map.Make(ORD)
-
-  let find_default x k m = try find k m with Not_found -> x
-
-  let submap ?first ?up_to m =
-    (* trim entries before the first, if proceeds *)
-    let m = match first with
-        None -> m
-      | Some first ->
-          let _, found, after = split first m in
-            match found with
-                Some v -> add first v after
-              | None -> after in
-    (* trim entries starting with up_to, if proceeds *)
-    let m = match up_to with
-        None -> m
-      | Some last ->
-          let before, _, _ = split last m in
-            before
-    in m
-
-  let modify f default k m = add k (f (find_default default k m)) m
-
-  let modify_if_found f k m = try add k (f (find k m)) m with Not_found -> m
-end
-
-module M = EXTMAP(String)
 
 let cmp_table t1 t2 =
   String.compare (string_of_table t1) (string_of_table t2)
