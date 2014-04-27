@@ -21,8 +21,11 @@ open Printf
 open Lwt
 open Obs_data_model
 
-module List = BatList
-module Option = BatOption
+module List    = BatList
+module Option  = BatOption
+module Hashtbl = BatHashtbl
+module Map     = BatMap
+
 module L = LevelDB
 module RA = L.Read_access
 module IT = L.Iterator
@@ -603,6 +606,57 @@ struct
   let is_empty t = t.nelms = 0
 end
 
+module CURRENT_TXS = EXTMAP(struct
+                              type t = int (* transaction id *)
+                              let compare = compare
+                            end)
+
+module MUTEX : sig
+  type t
+
+  val create : unit -> t
+  val lock : ?shared:bool -> tx_id:int -> t -> unit Lwt.t
+  val unlock : t -> unit
+
+  (** Make waiter with supplied [tx_id] raise a Deadlock exn.
+    * The exn will have been raised in the thread when [kill_waiter] returns. *)
+  val kill_waiter : tx_id:int -> t -> unit
+end =
+struct
+  module M = Map.Make(struct type t = int (* td id *) let compare = compare end)
+
+  type 'a task = 'a Lwt.t * 'a Lwt.u
+
+  type t = { m : Obs_shared_mutex.t; mutable waiters : unit task M.t; }
+
+  let create () = { m = Obs_shared_mutex.create (); waiters = M.empty }
+
+  let lock ?(shared = true) ~tx_id t =
+    if not (Obs_shared_mutex.is_locked t.m) ||
+       (shared && not (Obs_shared_mutex.is_locked_exclusive t.m))
+    then
+      (* will not block *)
+      Obs_shared_mutex.lock ~shared t.m
+    else
+      (* will block *)
+      let task = Lwt.task () in
+        t.waiters <- M.add tx_id task t.waiters;
+        try_lwt
+          Lwt.pick [ Obs_shared_mutex.lock ~shared t.m; fst task ]
+        finally
+          t.waiters <- M.remove tx_id t.waiters;
+          return_unit
+
+  let unlock t = Obs_shared_mutex.unlock t.m
+
+  let kill_waiter ~tx_id t =
+    try
+      let task, waiters = M.extract tx_id t.waiters in
+        t.waiters <- waiters;
+        Lwt.wakeup_exn (snd task) Deadlock
+    with exn -> ()
+end
+
 module rec TYPES : sig
   type table_idx = int
 
@@ -627,12 +681,14 @@ module rec TYPES : sig
         assume_page_fault : bool;
         fsync : bool;
 
-        mutable locks : (string, Obs_shared_mutex.t) WeakTbl.t M.t;
+        mutable locks : (string, MUTEX.t) WeakTbl.t M.t;
         (* keyspace name -> lock name -> weak ref to lock *)
 
         subscriptions : (subscription_descriptor, subs_stream H.t) Hashtbl.t;
         mutable prefix_subscriptions :
           (keyspace_name, (string * subs_stream H.t) Obs_ternary.t ref) Hashtbl.t;
+
+        mutable current_transactions : transaction CURRENT_TXS.t;
       }
 
   and keyspace =
@@ -665,13 +721,16 @@ module rec TYPES : sig
         (* approximate size of data written in current backup_writebatch *)
         mutable backup_writebatch_size : int;
         outermost_tx : transaction;
-        mutable tx_locks : Obs_shared_mutex.t M.t;
+        mutable tx_locks : ([`SHARED | `EXCLUSIVE] * MUTEX.t) M.t;
+        mutable tx_wanted_locks : MUTEX.t M.t;
         dump_buffer : Obs_bytea.t;
         mutable tx_notifications : Notif_queue.t;
         mutable tainted : DIRTY_FLAG.t option;
 
         (* we serialize execution of nested TXs using the following mutex *)
         nested_tx_mutex : Lwt_mutex.t;
+
+        started_at : float;
       }
 end = TYPES
 
@@ -778,12 +837,94 @@ let close_db t =
 
 let throttling t = WRITEBATCH.throttling t.writebatch
 
+module Deadlock_detection =
+struct
+  open Graph
+
+  module V =
+  struct
+    type t = transaction
+
+    let hash t        = t.tx_id
+    let compare t1 t2 = compare t1.tx_id t2.tx_id
+    let equal t1 t2   = t1.tx_id = t2.tx_id
+  end
+
+  module E =
+  struct
+    type t = string list
+    let compare t1 t2 =
+      compare (List.sort String.compare t1) (List.sort String.compare t2)
+
+    let default = []
+  end
+
+  module G = Imperative.Digraph.ConcreteLabeled(V)(E)
+
+  module MV = Map.Make(V)
+
+  module COMP = Components.Make(G)
+
+  let find_deadlocks db =
+
+    let size   = CURRENT_TXS.cardinal db.current_transactions in
+    let locked = Hashtbl.create size in
+    let g      = G.create ~size () in
+
+      (* (1) add all   lock -> tx holding it associations to [locked] *)
+      CURRENT_TXS.iter
+        (fun _ tx ->
+           M.iter
+             (fun name x -> match x with
+                | (`SHARED, _) -> ()
+                | (`EXCLUSIVE, _) -> Hashtbl.add locked name tx)
+             tx.tx_locks)
+        db.current_transactions;
+
+      (* (2) for each tx that is waiting for some lock, add an edge to
+       * the tx holding it *)
+      CURRENT_TXS.iter
+        (fun _ tx ->
+           let es = M.bindings tx.tx_wanted_locks |> List.map fst |>
+                    List.filter_map
+                      (fun lock -> Hashtbl.find_option locked lock |>
+                                   Option.map (fun x -> (x, lock))) |>
+                    List.fold_left
+                      (fun m (x, lock) ->
+                         let prev = try MV.find x m with Not_found -> [] in
+                           MV.add x (lock :: prev) m)
+                      MV.empty |>
+                    MV.bindings |>
+                    List.map (fun (dst, label) -> G.E.create tx label dst)
+           in
+             List.iter (G.add_edge_e g) es)
+        db.current_transactions;
+
+      COMP.scc_list g |> List.filter (fun l -> List.length l > 1)
+
+  let rec break_deadlocks db =
+    let break_one txs =
+      match List.sort (fun tx1 tx2 -> compare tx1.started_at tx2.started_at) txs with
+        | [] -> ()
+        | l ->
+            let to_kill = List.last l in
+            let tx_id   = to_kill.outermost_tx.tx_id in
+              M.iter (fun _ m -> MUTEX.kill_waiter ~tx_id m) to_kill.tx_wanted_locks
+    in
+      match find_deadlocks db with
+        | [] -> ()
+        | deadlocks ->
+            List.iter break_one deadlocks;
+            break_deadlocks db
+end
+
 let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)
       ?(block_size = 4096)
       ?(max_open_files = 1000)
       ?(assume_page_fault = false)
       ?(unsafe_mode = false)
+      ?(deadlock_check_period = 1.)
       basedir =
   let lldb = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
@@ -806,6 +947,7 @@ let open_db
         locks = M.empty;
         subscriptions = Hashtbl.create 13;
         prefix_subscriptions = Hashtbl.create 13;
+        current_transactions = CURRENT_TXS.empty;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -824,11 +966,27 @@ let open_db
         IM.iter
           (fun id slave -> WRITEBATCH.add_slave ~unregister db.writebatch slave)
           db.slaves;
-        lldb
+        lldb in
+
+    let weak_db = Obs_weak_ref.make db in
+
+    let rec break_deadlocks () =
+      match Obs_weak_ref.get weak_db with
+        | None ->
+            return_unit
+        | Some db ->
+            Deadlock_detection.break_deadlocks db;
+            Lwt_unix.sleep deadlock_check_period >>
+            break_deadlocks ()
     in
       (* must ensure this is run in the main thread *)
       Lwt_gc.finalise close_db db;
       reload_keyspaces db lldb;
+      ignore begin
+        try_lwt break_deadlocks ()
+        with exn -> Lwt_log.error_f ~section ~exn
+                      "Error in deadlock check for DB %S." basedir
+      end;
       db
 
 let reset_iter_pool t =
@@ -1125,25 +1283,34 @@ let rec transaction_aux with_iter_pool ks f =
               repeatable_read; iter_pool; ks;
               backup_writebatch = lazy (L.Batch.make ());
               backup_writebatch_size = 0;
-              outermost_tx = tx; tx_locks = M.empty;
+              outermost_tx = tx;
+              tx_locks = M.empty;
+              tx_wanted_locks = M.empty;
               dump_buffer = Obs_bytea.create 16;
               tx_notifications = Notif_queue.empty;
               tainted = None; nested_tx_mutex = Lwt_mutex.create ();
+              started_at = Unix.gettimeofday ();
             } in
           try_lwt
+            ks.ks_db.current_transactions <- CURRENT_TXS.add
+                                               tx.tx_id tx
+                                               ks.ks_db.current_transactions;
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
               commit_outermost_transaction ks tx >>
               return y
           finally
+            ks.ks_db.current_transactions <- CURRENT_TXS.remove
+                                               tx.tx_id
+                                               ks.ks_db.current_transactions;
             (* release tx_locks *)
             let locks = M.bindings tx.tx_locks in
               Lwt_list.iter_s
-                (fun (name, m) ->
+                (fun (name, (kind, m)) ->
                    lwt () =
                      Lwt_log.debug_f ~section:locks_section
-                       "UNLOCK mutex %s (tx_id cur:%d outer:%d)" name
-                       tx.tx_id tx.outermost_tx.tx_id
-                   in Obs_shared_mutex.unlock m;
+                       "UNLOCK mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
+                       name (kind = `EXCLUSIVE) tx.tx_id tx.outermost_tx.tx_id
+                   in MUTEX.unlock m;
                       return_unit)
                 locks
         end
@@ -1344,15 +1511,24 @@ let lock_one ks ~shared name =
               | None ->
                   (* not found (maybe GCed because no refs left to it), create
                    * a new one *)
-                  let mutex = Obs_shared_mutex.create () in
+                  let mutex = MUTEX.create () in
                     WeakTbl.add tbl name mutex;
-                    mutex
-        in
-          tx.outermost_tx.tx_locks <- M.add name mutex tx.outermost_tx.tx_locks;
+                    mutex in
+
+        let kind = if shared then `SHARED else `EXCLUSIVE in
+
+          tx.outermost_tx.tx_wanted_locks <- M.add name mutex tx.outermost_tx.tx_wanted_locks;
           Lwt_log.debug_f ~section:locks_section
             "LOCK mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
             name (not shared) tx.tx_id tx.outermost_tx.tx_id >>
-          Obs_shared_mutex.lock ~shared mutex >>
+          begin
+            try_lwt
+              MUTEX.lock ~shared ~tx_id:tx.outermost_tx.tx_id mutex
+            finally
+              tx.outermost_tx.tx_wanted_locks <- M.remove name tx.tx_wanted_locks;
+              return_unit
+          end >>
+          return (tx.outermost_tx.tx_locks <- M.add name (kind, mutex) tx.outermost_tx.tx_locks) >>
           Lwt_log.debug_f ~section:locks_section
             "LOCKED mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
             name (not shared) tx.tx_id tx.outermost_tx.tx_id

@@ -58,6 +58,10 @@ end
   * "Number of open files that can be used by the DB.  You may need to
   * increase this if your database has a large working set (budget
   * one open file per 2MB of working set). (default: 1000)"
+  *
+  * @param deadlock_check_period
+  * Period of the deadlock detection and automatic recovery procedure.
+  *
   *)
 val open_db :
   ?write_buffer_size:int ->
@@ -65,6 +69,7 @@ val open_db :
   ?max_open_files:int ->
   ?assume_page_fault:bool ->
   ?unsafe_mode:bool ->
+  ?deadlock_check_period:float ->
   string -> db
 
 (** Flush transactions waiting for group commit and close the DB.  All further

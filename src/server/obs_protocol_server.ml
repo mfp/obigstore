@@ -395,7 +395,7 @@ struct
              try_lwt
                D.lock ks.ks_ks ~shared names >>
                P.return_ok ?buf c.och ~request_id ()
-             with Error Deadlock ->
+             with Deadlock ->
                P.deadlock ?buf c.och ~request_id () >>
                raise_lwt (Abort_exn request_id))
     | Watch_keys { Watch_keys.keyspace; table; keys } ->

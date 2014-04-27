@@ -341,7 +341,7 @@ struct
           async_request_ks ks (Commit { Commit.keyspace = ks.ks_id }) P.read_ok >>
           return y
       with
-          Dirty_data as e ->
+        | Dirty_data | Deadlock as e ->
             (* tx already aborted implicitly, need not send Abort (which would
              * hang because the virtual keyspace has already been disposed of) *)
             raise_lwt e

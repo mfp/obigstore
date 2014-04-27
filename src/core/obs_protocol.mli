@@ -28,7 +28,6 @@ type error =
   | Bad_request
   | Unknown_serialization
   | Unknown_keyspace
-  | Deadlock
   | Inconsistent_length of int * int
   | Other of int
   | Exception of exn
