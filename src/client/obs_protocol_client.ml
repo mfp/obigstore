@@ -141,7 +141,8 @@ struct
       match receiver with
           None ->
             (* skip response *)
-            Obs_protocol.skip t.ich (len + 4)
+            Obs_protocol.skip t.ich (len + 4) >>
+            get_response_loop t
         | Some r ->
             let module R = (val r : PENDING_RESPONSE) in
             (* must read the trailing CRC even if there's an exn in f, lest we
