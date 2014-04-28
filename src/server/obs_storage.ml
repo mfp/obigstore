@@ -688,7 +688,7 @@ module rec TYPES : sig
         mutable prefix_subscriptions :
           (keyspace_name, (string * subs_stream H.t) Obs_ternary.t ref) Hashtbl.t;
 
-        mutable current_transactions : transaction CURRENT_TXS.t;
+        deadlock_check_period : float;
       }
 
   and keyspace =
@@ -703,6 +703,10 @@ module rec TYPES : sig
       ks_prefix_subscriptions : mutable_string_set;
       ks_watches : (table_idx * key, DIRTY_FLAGS.t * (column_name, DIRTY_FLAGS.t) Hashtbl.t) Hashtbl.t;
       ks_prefix_watches : (table_idx, DIRTY_FLAGS.t Obs_ternary.t) Hashtbl.t;
+
+      (* we use a ref here so that the set is shared amongst all the
+       * keyspace values with the same ks_name *)
+      ks_curr_txs : transaction CURRENT_TXS.t ref;
     }
 
   and keyspace_proto = Proto of keyspace
@@ -749,6 +753,106 @@ let (|>) x f = f x
 
 let find_maybe h k = try Some (Hashtbl.find h k) with Not_found -> None
 
+module Deadlock_detection =
+struct
+  open Graph
+
+  module V =
+  struct
+    type t = transaction
+
+    let hash t        = t.tx_id
+    let compare t1 t2 = compare t1.tx_id t2.tx_id
+    let equal t1 t2   = t1.tx_id = t2.tx_id
+  end
+
+  module E =
+  struct
+    type t = string list
+    let compare t1 t2 =
+      compare (List.sort String.compare t1) (List.sort String.compare t2)
+
+    let default = []
+  end
+
+  module G = Imperative.Digraph.ConcreteLabeled(V)(E)
+
+  module MV = Map.Make(V)
+
+  module COMP = Components.Make(G)
+
+  let find_deadlocks ks =
+
+    let size   = CURRENT_TXS.cardinal !(ks.ks_curr_txs) in
+    let locked = Hashtbl.create size in
+    let g      = G.create ~size () in
+
+      (* (1) add all   lock -> tx holding it associations to [locked] *)
+      CURRENT_TXS.iter
+        (fun _ tx ->
+           M.iter
+             (fun name x -> match x with
+                | (`SHARED, _) -> ()
+                | (`EXCLUSIVE, _) -> Hashtbl.add locked name tx)
+             tx.tx_locks)
+        !(ks.ks_curr_txs);
+
+      (* (2) for each tx that is waiting for some lock, add an edge to
+       * the tx holding it *)
+      CURRENT_TXS.iter
+        (fun _ tx ->
+           let es = M.bindings tx.tx_wanted_locks |> List.map fst |>
+                    List.filter_map
+                      (fun lock -> Hashtbl.find_option locked lock |>
+                                   Option.map (fun x -> (x, lock))) |>
+                    List.fold_left
+                      (fun m (x, lock) ->
+                         let prev = try MV.find x m with Not_found -> [] in
+                           MV.add x (lock :: prev) m)
+                      MV.empty |>
+                    MV.bindings |>
+                    List.map (fun (dst, label) -> G.E.create tx label dst)
+           in
+             List.iter (G.add_edge_e g) es)
+        !(ks.ks_curr_txs);
+
+      COMP.scc_list g |> List.filter (fun l -> List.length l > 1)
+
+  let rec break_deadlocks ks =
+    let break_one txs =
+      match List.sort (fun tx1 tx2 -> compare tx1.started_at tx2.started_at) txs with
+        | [] -> ()
+        | l ->
+            let to_kill = List.last l in
+            let tx_id   = to_kill.outermost_tx.tx_id in
+              M.iter (fun _ m -> MUTEX.kill_waiter ~tx_id m) to_kill.tx_wanted_locks
+    in
+      match find_deadlocks ks with
+        | [] -> ()
+        | deadlocks ->
+            List.iter break_one deadlocks;
+            break_deadlocks ks
+end
+
+let schedule_background_deadlock_detection ks =
+  let weak_ks = Obs_weak_ref.make ks in
+
+  let rec break_deadlocks () =
+    match Obs_weak_ref.get weak_ks with
+      | None ->
+          return_unit
+      | Some ks ->
+          Deadlock_detection.break_deadlocks ks;
+          Lwt_unix.sleep ks.ks_db.deadlock_check_period >>
+          break_deadlocks ()
+  in
+    ignore begin
+      try_lwt break_deadlocks ()
+      with exn -> Lwt_log.error_f ~section ~exn
+                    "Error in deadlock check for keyspace %S (DB: %S)."
+                    ks.ks_name ks.ks_db.basedir
+    end
+
 let read_keyspace_tables lldb keyspace =
   let module T = Obs_datum_encoding.Keyspace_tables in
   let h = Hashtbl.create 13 in
@@ -789,6 +893,7 @@ let read_keyspaces db lldb =
                      ks_prefix_subscriptions;
                      ks_watches = Hashtbl.create 13;
                      ks_prefix_watches = Hashtbl.create 13;
+                     ks_curr_txs = ref CURRENT_TXS.empty;
                    };
                  true)
       lldb
@@ -811,6 +916,7 @@ let reload_keyspaces t lldb =
            in
            (* replace the proto *)
              Hashtbl.replace t.keyspaces name (Proto ks, set);
+             schedule_background_deadlock_detection ks;
              (* and then update ks_tables and ks_rev_tables in actual
               * keyspaces in use *)
              let old_kss = WKS.fold (fun ks l -> ks :: l) set [] in
@@ -824,6 +930,7 @@ let reload_keyspaces t lldb =
          with Not_found ->
            (* new keyspace: register proto and new WKS set *)
            Hashtbl.add t.keyspaces name (Proto ks, WKS.create 13);
+           schedule_background_deadlock_detection ks;
            (* also initialize the entry in the lock table *)
            t.locks <- M.add name (WeakTbl.create ()) t.locks)
       new_keyspaces
@@ -836,87 +943,6 @@ let close_db t =
          return_unit)
 
 let throttling t = WRITEBATCH.throttling t.writebatch
-
-module Deadlock_detection =
-struct
-  open Graph
-
-  module V =
-  struct
-    type t = transaction
-
-    let hash t        = t.tx_id
-    let compare t1 t2 = compare t1.tx_id t2.tx_id
-    let equal t1 t2   = t1.tx_id = t2.tx_id
-  end
-
-  module E =
-  struct
-    type t = string list
-    let compare t1 t2 =
-      compare (List.sort String.compare t1) (List.sort String.compare t2)
-
-    let default = []
-  end
-
-  module G = Imperative.Digraph.ConcreteLabeled(V)(E)
-
-  module MV = Map.Make(V)
-
-  module COMP = Components.Make(G)
-
-  let find_deadlocks db =
-
-    let size   = CURRENT_TXS.cardinal db.current_transactions in
-    let locked = Hashtbl.create size in
-    let g      = G.create ~size () in
-
-      (* (1) add all   lock -> tx holding it associations to [locked] *)
-      CURRENT_TXS.iter
-        (fun _ tx ->
-           M.iter
-             (fun name x -> match x with
-                | (`SHARED, _) -> ()
-                | (`EXCLUSIVE, _) -> Hashtbl.add locked name tx)
-             tx.tx_locks)
-        db.current_transactions;
-
-      (* (2) for each tx that is waiting for some lock, add an edge to
-       * the tx holding it *)
-      CURRENT_TXS.iter
-        (fun _ tx ->
-           let es = M.bindings tx.tx_wanted_locks |> List.map fst |>
-                    List.filter_map
-                      (fun lock -> Hashtbl.find_option locked lock |>
-                                   Option.map (fun x -> (x, lock))) |>
-                    List.fold_left
-                      (fun m (x, lock) ->
-                         let prev = try MV.find x m with Not_found -> [] in
-                           MV.add x (lock :: prev) m)
-                      MV.empty |>
-                    MV.bindings |>
-                    List.map (fun (dst, label) -> G.E.create tx label dst)
-           in
-             List.iter (G.add_edge_e g) es)
-        db.current_transactions;
-
-      COMP.scc_list g |> List.filter (fun l -> List.length l > 1)
-
-  let rec break_deadlocks db =
-    let break_one txs =
-      match List.sort (fun tx1 tx2 -> compare tx1.started_at tx2.started_at) txs with
-        | [] -> ()
-        | l ->
-            let to_kill = List.last l in
-            let tx_id   = to_kill.outermost_tx.tx_id in
-              M.iter (fun _ m -> MUTEX.kill_waiter ~tx_id m) to_kill.tx_wanted_locks
-    in
-      match find_deadlocks db with
-        | [] -> ()
-        | deadlocks ->
-            List.iter break_one deadlocks;
-            break_deadlocks db
-end
 
 let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)
@@ -947,7 +973,7 @@ let open_db
         locks = M.empty;
         subscriptions = Hashtbl.create 13;
         prefix_subscriptions = Hashtbl.create 13;
-        current_transactions = CURRENT_TXS.empty;
+        deadlock_check_period;
       }
     and reopen ?new_slave () =
       let lldb = L.open_db
@@ -966,27 +992,11 @@ let open_db
         IM.iter
           (fun id slave -> WRITEBATCH.add_slave ~unregister db.writebatch slave)
           db.slaves;
-        lldb in
-
-    let weak_db = Obs_weak_ref.make db in
-
-    let rec break_deadlocks () =
-      match Obs_weak_ref.get weak_db with
-        | None ->
-            return_unit
-        | Some db ->
-            Deadlock_detection.break_deadlocks db;
-            Lwt_unix.sleep deadlock_check_period >>
-            break_deadlocks ()
+        lldb
     in
       (* must ensure this is run in the main thread *)
       Lwt_gc.finalise close_db db;
       reload_keyspaces db lldb;
-      ignore begin
-        try_lwt break_deadlocks ()
-        with exn -> Lwt_log.error_f ~section ~exn
-                      "Error in deadlock check for DB %S." basedir
-      end;
       db
 
 let reset_iter_pool t =
@@ -1060,6 +1070,7 @@ let clone_keyspace (Proto proto) =
       ks_prefix_subscriptions = Hashtbl.create 13;
       ks_watches = proto.ks_watches;
       ks_prefix_watches = proto.ks_prefix_watches;
+      ks_curr_txs = proto.ks_curr_txs;
     }
   in
     (* must ensure it's run in the main thread *)
@@ -1085,8 +1096,7 @@ let register_keyspace t ks_name =
         WRITEBATCH.need_keyspace_reload b;
       end in
     lwt () = wait_sync in
-    let proto =
-      Proto
+    let ks_proto =
         { ks_db = t; ks_id; ks_name;
           ks_unique_id = new_keyspace_id ();
           ks_tables = Hashtbl.create 13;
@@ -1097,12 +1107,15 @@ let register_keyspace t ks_name =
           ks_prefix_subscriptions = Hashtbl.create 13;
           ks_watches = Hashtbl.create 13;
           ks_prefix_watches = Hashtbl.create 13;
+          ks_curr_txs = ref CURRENT_TXS.empty;
         } in
+    let proto = Proto ks_proto in
     let new_ks = clone_keyspace proto in
       WKS.add (get_keyspace_set t ks_name proto) new_ks;
       (* be careful not to overwrite t.locks entry if already present *)
       if not (M.mem ks_name t.locks) then
         t.locks <- M.add ks_name (WeakTbl.create ()) t.locks;
+      schedule_background_deadlock_detection ks_proto;
       return new_ks
 
 let register_keyspace =
@@ -1292,16 +1305,12 @@ let rec transaction_aux with_iter_pool ks f =
               started_at = Unix.gettimeofday ();
             } in
           try_lwt
-            ks.ks_db.current_transactions <- CURRENT_TXS.add
-                                               tx.tx_id tx
-                                               ks.ks_db.current_transactions;
+            ks.ks_curr_txs := CURRENT_TXS.add tx.tx_id tx !(ks.ks_curr_txs);
             lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
               commit_outermost_transaction ks tx >>
               return y
           finally
-            ks.ks_db.current_transactions <- CURRENT_TXS.remove
-                                               tx.tx_id
-                                               ks.ks_db.current_transactions;
+            ks.ks_curr_txs := CURRENT_TXS.remove tx.tx_id !(ks.ks_curr_txs);
             (* release tx_locks *)
             let locks = M.bindings tx.tx_locks in
               Lwt_list.iter_s
