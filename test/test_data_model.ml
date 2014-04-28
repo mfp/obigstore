@@ -1564,6 +1564,42 @@ struct
     in
       Lwt.join [tx1 (); tx2 ()]
 
+  let test_deadlock_detection_ks_indep dbs =
+    lwt ks1 = register_keyspace dbs "test_deadlock_detection_ks_indep1" in
+    lwt ks2 = register_keyspace dbs "test_deadlock_detection_ks_indep2" in
+    let sp  = SYNCPOINT.make () in
+
+    let tx1 () =
+      D.read_committed_transaction ks1
+        (fun ks ->
+           D.lock ks ~shared:false ["foo"] >>
+           SYNCPOINT.wait sp 1 >>
+           D.lock ks ~shared:false ["bar"] >>
+           Lwt_unix.sleep 0.15) in
+
+    let tx2 () =
+      D.read_committed_transaction ks1
+        (fun ks ->
+           D.lock ks ~shared:false ["bar"] >>
+           SYNCPOINT.wakeup sp 1 >>
+           Lwt_unix.sleep 0.15) in
+
+    let tx3 () =
+      D.read_committed_transaction ks2
+        (fun ks ->
+           D.lock ks ~shared:false ["bar"] >>
+           SYNCPOINT.wait sp 2 >>
+           D.lock ks ~shared:false ["foo"]) in
+
+    let tx4 () =
+      D.read_committed_transaction ks2
+        (fun ks ->
+           D.lock ks ~shared:false ["foo"] >>
+           SYNCPOINT.wakeup sp 2 >>
+           Lwt_unix.sleep 0.15)
+    in
+      Lwt.join [tx1 (); tx2 (); tx3 (); tx4 ()]
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1835,6 +1871,7 @@ struct
       "nested TX and single-write TX serialization (2)", test_nested_tx_serialization_2;
       "nested TX and single-write TX serialization (3)", test_nested_tx_serialization_3;
       "deadlock detection", test_deadlock_detection;
+      "deadlock detection (keyspace independence)", test_deadlock_detection_ks_indep;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [
