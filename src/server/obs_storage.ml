@@ -828,30 +828,14 @@ struct
               M.iter (fun _ m -> MUTEX.kill_waiter ~tx_id m) to_kill.tx_wanted_locks
     in
       match find_deadlocks ks with
-        | [] -> ()
+        | [] -> return ()
         | deadlocks ->
             List.iter break_one deadlocks;
+            (* we yield so that killed waiters can be removed from the
+             * Wait-For-Graph (WFG) *)
+            Lwt_unix.yield () >>
             break_deadlocks ks
 end
-
-let schedule_background_deadlock_detection ks =
-  let weak_ks = Obs_weak_ref.make ks in
-
-  let rec break_deadlocks () =
-    match Obs_weak_ref.get weak_ks with
-      | None ->
-          return_unit
-      | Some ks ->
-          Deadlock_detection.break_deadlocks ks;
-          Lwt_unix.sleep ks.ks_db.deadlock_check_period >>
-          break_deadlocks ()
-  in
-    ignore begin
-      try_lwt break_deadlocks ()
-      with exn -> Lwt_log.error_f ~section ~exn
-                    "Error in deadlock check for keyspace %S (DB: %S)."
-                    ks.ks_name ks.ks_db.basedir
-    end
 
 let read_keyspace_tables lldb keyspace =
   let module T = Obs_datum_encoding.Keyspace_tables in
@@ -916,7 +900,6 @@ let reload_keyspaces t lldb =
            in
            (* replace the proto *)
              Hashtbl.replace t.keyspaces name (Proto ks, set);
-             schedule_background_deadlock_detection ks;
              (* and then update ks_tables and ks_rev_tables in actual
               * keyspaces in use *)
              let old_kss = WKS.fold (fun ks l -> ks :: l) set [] in
@@ -930,7 +913,6 @@ let reload_keyspaces t lldb =
          with Not_found ->
            (* new keyspace: register proto and new WKS set *)
            Hashtbl.add t.keyspaces name (Proto ks, WKS.create 13);
-           schedule_background_deadlock_detection ks;
            (* also initialize the entry in the lock table *)
            t.locks <- M.add name (WeakTbl.create ()) t.locks)
       new_keyspaces
@@ -1115,7 +1097,6 @@ let register_keyspace t ks_name =
       (* be careful not to overwrite t.locks entry if already present *)
       if not (M.mem ks_name t.locks) then
         t.locks <- M.add ks_name (WeakTbl.create ()) t.locks;
-      schedule_background_deadlock_detection ks_proto;
       return new_ks
 
 let register_keyspace =
@@ -1524,17 +1505,34 @@ let lock_one ks ~shared name =
                     WeakTbl.add tbl name mutex;
                     mutex in
 
-        let kind = if shared then `SHARED else `EXCLUSIVE in
+        let kind     = if shared then `SHARED else `EXCLUSIVE in
 
+        let waiting  = ref true in
+
+        let rec break_deadlocks () =
+          Lwt_unix.sleep ks.ks_db.deadlock_check_period >>
+          if not !waiting then return_unit
+          else begin
+            Deadlock_detection.break_deadlocks ks >>
+            break_deadlocks ()
+          end
+        in
           tx.outermost_tx.tx_wanted_locks <- M.add name mutex tx.outermost_tx.tx_wanted_locks;
           Lwt_log.debug_f ~section:locks_section
             "LOCK mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
             name (not shared) tx.tx_id tx.outermost_tx.tx_id >>
           begin
+            ignore begin
+              try_lwt break_deadlocks ()
+              with exn -> Lwt_log.error_f ~section ~exn
+                            "Error in deadlock check for keyspace %S (DB: %S)."
+                            ks.ks_name ks.ks_db.basedir
+            end;
             try_lwt
               MUTEX.lock ~shared ~tx_id:tx.outermost_tx.tx_id mutex
             finally
-              tx.outermost_tx.tx_wanted_locks <- M.remove name tx.tx_wanted_locks;
+              tx.outermost_tx.tx_wanted_locks <- M.remove name tx.outermost_tx.tx_wanted_locks;
+              waiting := false;
               return_unit
           end >>
           return (tx.outermost_tx.tx_locks <- M.add name (kind, mutex) tx.outermost_tx.tx_locks) >>
