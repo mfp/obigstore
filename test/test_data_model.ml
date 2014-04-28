@@ -1600,6 +1600,33 @@ struct
     in
       Lwt.join [tx1 (); tx2 (); tx3 (); tx4 ()]
 
+  let test_deadlock_detection_shared dbs =
+    lwt ks1 = register_keyspace dbs "test_deadlock_detection_shared" in
+    lwt ks2 = register_keyspace dbs "test_deadlock_detection_shared" in
+    let sp  = SYNCPOINT.make () in
+
+    let tx1 () =
+      D.read_committed_transaction ks1
+        (fun ks ->
+           D.lock ks ~shared:true ["foo"] >>
+           SYNCPOINT.wakeup sp 1 >>
+           SYNCPOINT.wait sp 2 >>
+           D.lock ks ~shared:true ["bar"]) in
+
+    let tx2 () =
+      (* ensure this transaction is started last *)
+      SYNCPOINT.wait sp 1 >>
+      try_lwt
+        D.read_committed_transaction ks2
+          (fun ks ->
+             D.lock ks ~shared:false ["bar"] >>
+             SYNCPOINT.wakeup sp 2 >>
+             D.lock ks ~shared:false ["foo"]) >>
+        assert_failure "should have raised Deadlock"
+      with DM.Deadlock -> return ()
+    in
+      Lwt.join [tx1 (); tx2 ()]
+
   let test_commit_before_return p =
     Lwt_pool.use p
       (fun db1 ->
@@ -1872,6 +1899,7 @@ struct
       "nested TX and single-write TX serialization (3)", test_nested_tx_serialization_3;
       "deadlock detection", test_deadlock_detection;
       "deadlock detection (keyspace independence)", test_deadlock_detection_ks_indep;
+      "deadlock detection (shared locks)", test_deadlock_detection_shared;
     ] @
     List.map (fun (n, f) -> n >:: test_with_pool f)
     [

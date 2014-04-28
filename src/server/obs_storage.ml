@@ -729,7 +729,7 @@ module rec TYPES : sig
         mutable backup_writebatch_size : int;
         outermost_tx : transaction;
         mutable tx_locks : ([`SHARED | `EXCLUSIVE] * MUTEX.t) M.t;
-        mutable tx_wanted_locks : MUTEX.t M.t;
+        mutable tx_wanted_locks : ([`SHARED | `EXCLUSIVE] * MUTEX.t) M.t;
         dump_buffer : Obs_bytea.t;
         mutable tx_notifications : Notif_queue.t;
         mutable tainted : DIRTY_FLAG.t option;
@@ -790,24 +790,37 @@ struct
     let locked = Hashtbl.create size in
     let g      = G.create ~size () in
 
-      (* (1) add all   lock -> tx holding it associations to [locked] *)
+      (* (1) add all   lock -> (tx, kind) holding it associations to [locked] *)
       CURRENT_TXS.iter
         (fun _ tx ->
-           M.iter
-             (fun name x -> match x with
-                | (`SHARED, _) -> ()
-                | (`EXCLUSIVE, _) -> Hashtbl.add locked name tx)
-             tx.tx_locks)
+           M.iter (fun name (kind, _) -> Hashtbl.add locked name (tx, kind)) tx.tx_locks)
         !(ks.ks_curr_txs);
 
       (* (2) for each tx that is waiting for some lock, add an edge to
        * the tx holding it *)
       CURRENT_TXS.iter
         (fun _ tx ->
-           let es = M.bindings tx.tx_wanted_locks |> List.map fst |>
-                    List.filter_map
-                      (fun lock -> Hashtbl.find_option locked lock |>
-                                   Option.map (fun x -> (x, lock))) |>
+           let es = M.bindings tx.tx_wanted_locks |>
+                    List.map
+                      (fun (mutex_name, (kind, _)) ->
+                         (* we keep only the ones for which one of the
+                          * following holds:
+                          * (1) tx wants an exclusive lock (kind = `EXCLUSIVE)
+                          * or (2) the lock is already acquired in exclusive mode
+                          *
+                          * or equivalently, where the following DOES NOT
+                          * hold:
+                          *
+                          * (A) tx wants a shared lock and the lock is
+                          *     acquired in shared mode
+                          * *)
+                         Hashtbl.find_all locked mutex_name |>
+                         List.filter_map
+                           (fun (tx', kind') -> match kind, kind' with
+                              | `SHARED, `SHARED -> None
+                              | `EXCLUSIVE, _ | _, `EXCLUSIVE ->
+                                  Some (tx', mutex_name))) |>
+                    List.concat |>
                     List.fold_left
                       (fun m (x, lock) ->
                          let prev = try MV.find x m with Not_found -> [] in
@@ -828,7 +841,7 @@ struct
         | l ->
             let to_kill = List.last l in
             let tx_id   = to_kill.outermost_tx.tx_id in
-              M.iter (fun _ m -> MUTEX.kill_waiter ~tx_id m) to_kill.tx_wanted_locks
+              M.iter (fun _ (_, m) -> MUTEX.kill_waiter ~tx_id m) to_kill.tx_wanted_locks
     in
       match find_deadlocks ks with
         | [] -> return ()
@@ -1521,7 +1534,7 @@ let lock_one ks ~shared name =
             break_deadlocks ()
           end
         in
-          tx.outermost_tx.tx_wanted_locks <- M.add name mutex tx.outermost_tx.tx_wanted_locks;
+          tx.outermost_tx.tx_wanted_locks <- M.add name (kind, mutex) tx.outermost_tx.tx_wanted_locks;
           Lwt_log.debug_f ~section:locks_section
             "LOCK mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
             name (not shared) tx.tx_id tx.outermost_tx.tx_id >>
