@@ -707,6 +707,9 @@ module rec TYPES : sig
       (* we use a ref here so that the set is shared amongst all the
        * keyspace values with the same ks_name *)
       ks_curr_txs : transaction CURRENT_TXS.t ref;
+
+      (* how many TXs are waiting for a lock *)
+      ks_num_lock_waiters : int ref;
     }
 
   and keyspace_proto = Proto of keyspace
@@ -878,6 +881,7 @@ let read_keyspaces db lldb =
                      ks_watches = Hashtbl.create 13;
                      ks_prefix_watches = Hashtbl.create 13;
                      ks_curr_txs = ref CURRENT_TXS.empty;
+                     ks_num_lock_waiters = ref 0;
                    };
                  true)
       lldb
@@ -1053,6 +1057,7 @@ let clone_keyspace (Proto proto) =
       ks_watches = proto.ks_watches;
       ks_prefix_watches = proto.ks_prefix_watches;
       ks_curr_txs = proto.ks_curr_txs;
+      ks_num_lock_waiters = proto.ks_num_lock_waiters;
     }
   in
     (* must ensure it's run in the main thread *)
@@ -1090,6 +1095,7 @@ let register_keyspace t ks_name =
           ks_watches = Hashtbl.create 13;
           ks_prefix_watches = Hashtbl.create 13;
           ks_curr_txs = ref CURRENT_TXS.empty;
+          ks_num_lock_waiters = ref 0;
         } in
     let proto = Proto ks_proto in
     let new_ks = clone_keyspace proto in
@@ -1505,13 +1511,11 @@ let lock_one ks ~shared name =
                     WeakTbl.add tbl name mutex;
                     mutex in
 
-        let kind     = if shared then `SHARED else `EXCLUSIVE in
-
-        let waiting  = ref true in
+        let kind = if shared then `SHARED else `EXCLUSIVE in
 
         let rec break_deadlocks () =
           Lwt_unix.sleep ks.ks_db.deadlock_check_period >>
-          if not !waiting then return_unit
+          if !(ks.ks_num_lock_waiters) <= 0 then return_unit
           else begin
             Deadlock_detection.break_deadlocks ks >>
             break_deadlocks ()
@@ -1522,17 +1526,22 @@ let lock_one ks ~shared name =
             "LOCK mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
             name (not shared) tx.tx_id tx.outermost_tx.tx_id >>
           begin
-            ignore begin
-              try_lwt break_deadlocks ()
-              with exn -> Lwt_log.error_f ~section ~exn
-                            "Error in deadlock check for keyspace %S (DB: %S)."
-                            ks.ks_name ks.ks_db.basedir
+            incr ks.ks_num_lock_waiters;
+            (* only launch deadlock check thread once --- the 1st one to
+             * launch will keep running as long as there are waiters *)
+            if !(ks.ks_num_lock_waiters) = 1 then begin
+              ignore begin
+                try_lwt break_deadlocks ()
+                with exn -> Lwt_log.error_f ~section ~exn
+                              "Error in deadlock check for keyspace %S (DB: %S)."
+                              ks.ks_name ks.ks_db.basedir
+              end
             end;
             try_lwt
               MUTEX.lock ~shared ~tx_id:tx.outermost_tx.tx_id mutex
             finally
               tx.outermost_tx.tx_wanted_locks <- M.remove name tx.outermost_tx.tx_wanted_locks;
-              waiting := false;
+              decr ks.ks_num_lock_waiters;
               return_unit
           end >>
           return (tx.outermost_tx.tx_locks <- M.add name (kind, mutex) tx.outermost_tx.tx_locks) >>
