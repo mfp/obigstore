@@ -307,7 +307,8 @@ struct
         end
     | Register_keyspace _ | Get_keyspace _ | List_keyspaces _
     | Trigger_raw_dump _ | Raw_dump_release _ | Raw_dump_list_files _
-    | Raw_dump_file_digest _ | Get_property _ as r ->
+    | Raw_dump_file_digest _ | Get_property _
+    | Compact_keyspace _ | Compact_table _ as r ->
         respond c ~request_id r
 
   and respond ?txid ?buf c ~request_id r =
@@ -568,6 +569,16 @@ struct
           (fun (ks, _, _) ->
              D.transaction_id ks.ks_ks >>=
              P.return_tx_id ?buf c.och ~request_id)
+    | Compact_keyspace { Compact_keyspace.keyspace } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _, _) ->
+             D.compact ks.ks_ks >>=
+             P.return_ok ?buf c.och ~request_id)
+    | Compact_table { Compact_table.keyspace; table; from_key; to_key } ->
+        with_keyspace c keyspace ~request_id
+          (fun (ks, _, _) ->
+             D.compact_table ks.ks_ks table ?from_key ?to_key ()>>=
+             P.return_ok ?buf c.och ~request_id)
 
   and respond_to_begin ?buf c (ks, _, children) ~request_id tx_type =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in

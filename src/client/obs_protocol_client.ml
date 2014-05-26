@@ -330,6 +330,17 @@ struct
            range = { first; up_to; reverse = false; } }; )
       P.read_key_range_size_on_disk
 
+  let compact ks =
+    async_request_ks ks
+      (Compact_keyspace { Compact_keyspace.keyspace = ks.ks_id; })
+      P.read_ok
+
+  let compact_table ks table ?from_key ?to_key () =
+    async_request_ks ks
+      (Compact_table { Compact_table.keyspace = ks.ks_id; table;
+                       from_key; to_key; })
+      P.read_ok
+
   let transaction_aux tx_type ks f =
     lwt ks_id =
       async_request_ks ks

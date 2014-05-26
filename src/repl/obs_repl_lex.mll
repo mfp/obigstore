@@ -49,6 +49,7 @@
       "local", LOCAL;
       "to", TO;
       "watch", WATCH;
+      "compact", COMPACT;
     ]
 
  let () =

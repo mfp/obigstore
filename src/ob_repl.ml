@@ -168,6 +168,9 @@ struct
      SIZE                       List all tables and their approx sizes\n\
      SIZE table                 Show approx size of table\n\
      SIZE table[x:y]            Show approx size of table between keys x and y\n\
+     COMPACT                    Compact whole keyspace\n\
+     COMPACT table              Compact whole table\n\
+     COMPACT table[x:y]         Compact table range\n\
      \n\
      BEGIN                      Start a transaction block\n\
      COMMIT                     Commit current transaction\n\
@@ -485,6 +488,12 @@ let execute ?(fmt=Format.std_formatter) ks db loop r =
             None -> print_endline "Unknown property"; ret_nothing ()
           | Some x -> print_endline x; ret_nothing ()
         end
+    | Compact_keyspace _ ->
+        D.compact (get ks) >>
+        ret print_endline "OK"
+    | Compact_table { Compact_table.table; from_key; to_key; _ } ->
+        D.compact_table (get ks) table ?from_key ?to_key () >>
+        ret print_endline "OK"
 
 let execute ?(fmt = Format.std_formatter) ks db loop req =
   let keys = !Timing.cnt_keys in

@@ -1041,6 +1041,35 @@ let table_size_on_disk ks table =
             (fun lldb ->
                detach_ks_op ks (L.get_approximate_size lldb _from) _to)
 
+let compact ks =
+  let from_key = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
+                   ~table:0 ~key:"" ~column:"" ~timestamp:Int64.min_int in
+  let to_key   = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
+                   ~table:max_int ~key:"" ~column:"" ~timestamp:Int64.max_int
+  in
+    Miniregion.use ks.ks_db.db
+      (fun lldb -> Lwt_preemptive.detach
+                     (fun () -> L.compact_range lldb
+                                  ~from_key:(Some from_key)
+                                  ~to_key:(Some to_key)) ())
+
+let max_key = String.make 256 '\xFF'
+
+let compact_table ks table ?(from_key = "") ?(to_key=max_key) () =
+  match find_maybe ks.ks_tables table with
+    | None -> return ()
+    | Some table ->
+        let from_key = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
+                         ~table:0 ~key:from_key ~column:"" ~timestamp:Int64.min_int in
+        let to_key   = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
+                         ~table:max_int ~key:to_key ~column:max_key ~timestamp:Int64.max_int
+        in
+          Miniregion.use ks.ks_db.db
+            (fun lldb -> Lwt_preemptive.detach
+                           (fun () -> L.compact_range lldb
+                                        ~from_key:(Some from_key)
+                                        ~to_key:(Some to_key)) ())
+
 let key_range_size_on_disk ks ?first ?up_to table =
   match find_maybe ks.ks_tables table with
       None -> return 0L

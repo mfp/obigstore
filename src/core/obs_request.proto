@@ -161,5 +161,8 @@ message request =
   | Get_transaction_id { keyspace : keyspace }
   | Listen_prefix { keyspace : keyspace; topic : string; }
   | Unlisten_prefix { keyspace : keyspace; topic : string }
+  | Compact_keyspace { keyspace : keyspace }
+  | Compact_table { keyspace : keyspace; table : table;
+                    from_key : opt<key>; to_key : opt<key> }
 
 (* vim:set ft=omlet: *) 

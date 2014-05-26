@@ -388,6 +388,15 @@ sig
     * [property] is understood by the DB implementation.  *)
   val get_property : db -> string -> string option Lwt.t
 
+  (** Trigger whole keyspace compaction. *)
+  val compact : keyspace -> unit Lwt.t
+
+  (** [compact_table ks table ?from_key ?to_key ()] compacts the table between
+    * keys [from_key] and [to_key] (inclusive, defaulting to the beginning/end
+    * of the table if not suppplied). *)
+  val compact_table :
+    keyspace -> table -> ?from_key:string -> ?to_key:string -> unit -> unit Lwt.t
+
   (** {3} Database dump. *)
   module Raw_dump : RAW_DUMP with type db := db
 end

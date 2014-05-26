@@ -24,7 +24,9 @@ open Obs_repl_common
 open Obs_request
 module R = Request
 module DM = Obs_data_model
+
 module Option = BatOption
+module List   = BatList
 
 type generic_range =
   [ `Range of string Range.range
@@ -79,7 +81,7 @@ let encode_key_list table l =
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
 %token LOCK SHARED WATCH STATS LISTEN UNLISTEN LISTENP UNLISTENP NOTIFY AWAIT DUMP LOCAL TO TXID
 %token LBRACKET RBRACKET COLON REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
-%token LBRACE RBRACE
+%token LBRACE RBRACE COMPACT
 
 %start input printer
 %type <Obs_repl_common.req> input
@@ -143,6 +145,7 @@ phrase : /* empty */  { Nothing }
   | delete    { $1 }
   | directive { $1 }
   | printer_directive { $1 }
+  | compact   { $1 }
 
 size :
   | SIZE      { Directive ("size", []) }
@@ -183,6 +186,34 @@ count :
                        | Some (`Enc_list l, _) -> encode_key_list $2 l
                      in R.Count_keys { R.Count_keys.keyspace; table = $2;
                                           key_range; }) }
+
+compact :
+    COMPACT   { with_ks
+                  (fun keyspace -> R.Compact_keyspace { R.Compact_keyspace.keyspace }) }
+  | COMPACT table opt_key_range
+              { with_ks
+                  (fun keyspace ->
+                     let key_range = match $3 with
+                       | None -> all_keys
+                       | Some (`Range r, _) -> Key_range.Key_range r
+                       | Some (`List l, _) -> Key_range.Keys l
+                       | Some (`Enc_range r, _) -> encode_key_range $2 r
+                       | Some (`Enc_list l, _) -> encode_key_list $2 l in
+
+                     let from_key, to_key = match key_range with
+                       | Key_range.Key_range { Range.first; up_to; reverse = true } ->
+                           (up_to, first)
+                       | Key_range.Key_range { Range.first; up_to; reverse = false } ->
+                           (first, up_to)
+                       | Key_range.Keys l ->
+                           let l        = List.sort String.compare l in
+                           let from_key = try Some (List.hd l) with _ -> None in
+                           let to_key   = try Some (List.last l) with _ -> None in
+                             (from_key, to_key)
+                     in
+                       R.Compact_table { R.Compact_table.keyspace; table = $2;
+                                         from_key; to_key }) }
+
 
 get :
     GET table key_range opt_multi_range opt_row_predicate opt_redir
