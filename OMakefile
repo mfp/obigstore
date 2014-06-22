@@ -42,6 +42,7 @@ if $(ge $(OCAML_MAJOR), 4)
 OCAMLPACKS[] =
     batteries
     camlp4.macro
+    csv
     cryptokit
     lwt
     lwt.unix

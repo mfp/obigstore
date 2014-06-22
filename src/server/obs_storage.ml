@@ -524,6 +524,106 @@ module H = Hashtbl.Make(struct
                             let equal a b = (a == b)
                           end)
 
+module PROF =
+struct
+  type 'a ret = Ret of 'a | Exn of exn
+
+  let dummy_table = table_of_string ""
+
+  let profile_ch =
+    try
+      Some (open_out_gen [Open_append; Open_creat; Open_binary] 0o644
+              (Unix.getenv "OBIGSTORE_PROFILE"))
+    with Not_found -> None
+
+  let profile_uuid =
+    let uuid =
+      sprintf "%s %d %d %g %s %g"
+        (Unix.gethostname ())
+        (Unix.getpid ())
+        (Unix.getppid ())
+        (Unix.gettimeofday ())
+        Sys.executable_name
+        ((Unix.times ()).Unix.tms_utime)
+    in Digest.to_hex (Digest.string uuid)
+
+  let profile_op ?(uuid = profile_uuid) op detail f =
+    match profile_ch with
+      | None -> f ()
+      | Some ch ->
+          let t0      = Unix.gettimeofday () in
+          lwt ret     = try_lwt lwt x = f () in return (Ret x)
+                        with e -> return (Exn e) in
+          let dt      = Unix.gettimeofday () -. t0 in
+          let dt_us   = int_of_float (1e6 *. dt) in
+          let ret_txt = match ret with
+                          | Ret _ -> "ok"
+                          | Exn e -> Printexc.to_string e in
+          let row     = "1" :: uuid :: op :: string_of_int dt_us :: ret_txt ::
+                        detail
+          in
+            Csv.save_out ch [ row ];
+            flush ch;
+            match ret with
+              | Ret r -> return r
+              | Exn e -> raise_lwt e
+
+  let profile_prepare ~query ~query_id f =
+    match profile_ch with
+      | None -> f ()
+      | Some ch ->
+          let details = [ "query"; query; "name"; query_id ] in
+            profile_op "prepare" details f
+
+  let profile_execute ~query_id f =
+    match profile_ch with
+      | None -> f ()
+      | Some ch ->
+          let details = [ "name"; query_id; "portal"; " " ] in
+            profile_op "execute" details f
+
+  let query_table = Hashtbl.create 13
+
+  let get_query_id op table =
+    try
+      return (Hashtbl.find query_table (op, table))
+    with Not_found ->
+      let query     = op ^ " " ^ string_of_table table in
+      let query_id = Digest.(to_hex (string query)) in
+        Hashtbl.add query_table (op, table) query_id;
+        profile_prepare ~query ~query_id return >>
+        return query_id
+
+  let profile op table f =
+    match profile_ch with
+      | None -> f ()
+      | Some ch ->
+          lwt query_id = get_query_id op table in
+            profile_execute ~query_id f
+
+  (* pgocaml_prof wants to see a connect entry *)
+  let _ =
+    Option.map_default
+      (fun ch ->
+         let detail =
+           [
+             "user"; "";
+             "database"; "";
+             "host"; "";
+             "port"; "0";
+             "prog"; Sys.executable_name
+           ]
+         in profile_op "connect" detail return)
+      return_unit
+      profile_ch
+end
+
+(* TODO: could inline the def manually in this macro so as to avoid the
+ * allocation caused by the closure. Need to bm to see if it makes a diff (it
+ * will increase code size, though). *)
+DEFINE Profile(op, table, x) =
+  PROF.profile op table (fun () -> x)
+
 module Notif_queue : sig
   type t
   val empty : t
@@ -1386,7 +1486,10 @@ let lock_one ks ~shared name =
             "LOCKED mutex %s exclusive:%b (tx_id cur:%d outer:%d)"
             name (not shared) tx.tx_id tx.outermost_tx.tx_id
 
-let lock ks ~shared names = Lwt_list.iter_s (lock_one ks ~shared) names
+let lock ks ~shared names =
+  Profile("lock", PROF.dummy_table, begin
+    Lwt_list.iter_s (lock_one ks ~shared) names
+  end)
 
 let remove_watch_if_empty watches table key flag =
   try
@@ -1442,9 +1545,11 @@ let watch_key tx table key =
            setup_flag_key_cleanup tx.ks.ks_watches table key flag
 
 let watch_keys ks table keys =
-  match Lwt.get ks.ks_tx_key with
-      None -> return_unit
-    | Some tx -> List.iter (watch_key tx table) keys; return_unit
+  Profile("watch_keys", table, begin
+    match Lwt.get ks.ks_tx_key with
+        None -> return_unit
+      | Some tx -> List.iter (watch_key tx table) keys; return_unit
+  end)
 
 let remove_prefix_watch_if_empty watches table prefix flag =
   try
@@ -1484,9 +1589,11 @@ let watch_prefix tx table prefix =
           setup_prefix_flag_cleanup tx.ks.ks_prefix_watches table prefix flag
 
 let watch_prefixes ks table keys =
-  match Lwt.get ks.ks_tx_key with
-      None -> return_unit
-    | Some tx -> List.iter (watch_prefix tx table) keys; return_unit
+  Profile("watch_prefixes", table, begin
+    match Lwt.get ks.ks_tx_key with
+        None -> return_unit
+      | Some tx -> List.iter (watch_prefix tx table) keys; return_unit
+  end)
 
 let watch_column tx table key column =
   match find_maybe tx.ks.ks_tables table with
@@ -1512,11 +1619,13 @@ let watch_column tx table key column =
           setup_flag_column_cleanup tx.ks.ks_watches table key column flag
 
 let watch_columns ks table l =
-  match Lwt.get ks.ks_tx_key with
-      None -> return_unit
-    | Some tx ->
-        List.iter (fun (k, cols) -> List.iter (watch_column tx table k) cols) l;
-        return_unit
+  Profile("watch_columns", table, begin
+    match Lwt.get ks.ks_tx_key with
+        None -> return_unit
+      | Some tx ->
+          List.iter (fun (k, cols) -> List.iter (watch_column tx table k) cols) l;
+          return_unit
+  end)
 
 (* string -> string ref -> int -> bool *)
 let is_same_value v buf len =
@@ -3380,69 +3489,99 @@ let with_read_transaction ks f = with_transaction ks ~ensure_exclusion:false f
 let with_write_transaction ks f = with_transaction ks ~ensure_exclusion:true f
 
 let get_keys ks table ?max_keys key_range =
-  with_read_transaction ks (fun tx -> get_keys tx table ?max_keys key_range)
+  Profile("get_keys", table, begin
+    with_read_transaction ks (fun tx -> get_keys tx table ?max_keys key_range)
+  end)
 
 let count_keys ks table key_range =
-  with_read_transaction ks (fun tx -> count_keys tx table key_range)
+  Profile("count_keys", table, begin
+    with_read_transaction ks (fun tx -> count_keys tx table key_range)
+  end)
 
 let exists_key ks table key =
-  with_read_transaction ks (fun tx -> exists_key tx table key)
+  Profile("exist_key", table, begin
+    with_read_transaction ks (fun tx -> exists_key tx table key)
+  end)
 
 let exist_keys ks table keys =
-  with_read_transaction ks (fun tx -> exist_keys tx table keys)
+  Profile("exist_keys", table, begin
+    with_read_transaction ks (fun tx -> exist_keys tx table keys)
+  end)
 
 let get_slice ks table ?max_keys ?max_columns ?decode_timestamps
       key_range ?predicate column_range =
-  with_read_transaction ks
-    (fun tx ->
-       get_slice tx table ?max_keys ?max_columns ?decode_timestamps
-         key_range ?predicate column_range)
+  Profile("get_slice", table, begin
+    with_read_transaction ks
+      (fun tx ->
+         get_slice tx table ?max_keys ?max_columns ?decode_timestamps
+           key_range ?predicate column_range)
+  end)
 
 let get_slice_values ks table ?max_keys key_range columns =
-  with_read_transaction ks
-    (fun tx -> get_slice_values tx table ?max_keys key_range columns)
+  Profile("get_slice_values", table, begin
+    with_read_transaction ks
+      (fun tx -> get_slice_values tx table ?max_keys key_range columns)
+  end)
 
 let get_slice_values_with_timestamps ks table ?max_keys key_range columns =
-  with_read_transaction ks
-    (fun tx -> get_slice_values_with_timestamps tx table ?max_keys key_range columns)
+  Profile("get_slice_values_with_timestamps", table, begin
+    with_read_transaction ks
+      (fun tx -> get_slice_values_with_timestamps tx table ?max_keys key_range columns)
+  end)
 
 let get_columns ks table ?max_columns ?decode_timestamps key column_range =
-  with_read_transaction ks
-    (fun tx -> get_columns tx table ?max_columns ?decode_timestamps key column_range)
+  Profile("get_columns", table, begin
+    with_read_transaction ks
+      (fun tx -> get_columns tx table ?max_columns ?decode_timestamps key column_range)
+  end)
 
 let get_column_values ks table key columns =
-  with_read_transaction ks
-    (fun tx -> get_column_values tx table key columns)
+  Profile("get_column_values", table, begin
+    with_read_transaction ks
+      (fun tx -> get_column_values tx table key columns)
+  end)
 
 let get_column ks table key column =
-  with_read_transaction ks (fun tx -> get_column tx table key column)
+  Profile("get_column", table, begin
+    with_read_transaction ks (fun tx -> get_column tx table key column)
+  end)
 
 let put_multi_columns ks table data =
-  match Lwt.get ks.ks_tx_key with
-    | None -> put_multi_columns_no_tx ks table data
-    | Some tx ->
-        with_write_transaction ks
-          (fun tx -> put_multi_columns tx table data)
+  Profile("put_multi_columns", table, begin
+    match Lwt.get ks.ks_tx_key with
+      | None -> put_multi_columns_no_tx ks table data
+      | Some tx ->
+          with_write_transaction ks
+            (fun tx -> put_multi_columns tx table data)
+  end)
 
 let put_columns ks table key columns =
-  put_multi_columns ks table [key, columns]
+  Profile("put_columns", table, begin
+    put_multi_columns ks table [key, columns]
+  end)
 
 let delete_columns ks table key columns =
-  with_write_transaction ks (fun tx -> delete_columns tx table key columns)
+  Profile("delete_columns", table, begin
+    with_write_transaction ks (fun tx -> delete_columns tx table key columns)
+  end)
 
 let delete_key ks table key =
-  with_write_transaction ks (fun tx -> delete_key tx table key)
+  Profile("delete_key", table, begin
+    with_write_transaction ks (fun tx -> delete_key tx table key)
+  end)
 
 let delete_keys ks table key_range =
-  (* actual delete_keys wants non-reverse ranges, so adjust key_range if
-   * needed *)
-  let key_range = match key_range with
-      `All | `Discrete _ | `Continuous { reverse = false; _ } as x -> x
-    | `Continuous { reverse = true; first; up_to } ->
-        `Continuous { reverse = false; first = up_to; up_to = first }
-  in
-    with_write_transaction ks
-      (fun tx -> delete_keys tx table (expand_key_range key_range))
+  Profile("delete_keys", table, begin
+    (* actual delete_keys wants non-reverse ranges, so adjust key_range if
+     * needed *)
+    let key_range = match key_range with
+        `All | `Discrete _ | `Continuous { reverse = false; _ } as x -> x
+      | `Continuous { reverse = true; first; up_to } ->
+          `Continuous { reverse = false; first = up_to; up_to = first }
+    in
+      with_write_transaction ks
+        (fun tx -> delete_keys tx table (expand_key_range key_range))
+  end)
 
 let dump ks ?format ?only_tables ?offset () =
   with_read_transaction ks (fun tx -> dump tx ?format ?only_tables ?offset ())
@@ -3452,10 +3591,14 @@ let load ks data = with_transaction ks ~ensure_exclusion:false (fun tx -> load t
 let load_stats ks = with_read_transaction ks load_stats
 
 let read_committed_transaction ks f =
-  read_committed_transaction ks (fun _ -> f ks)
+  Profile("read_committed_transaction", PROF.dummy_table, begin
+    read_committed_transaction ks (fun _ -> f ks)
+  end)
 
 let repeatable_read_transaction ks f =
-  repeatable_read_transaction ks (fun _ -> f ks)
+  Profile("repeatable_read_transaction", PROF.dummy_table, begin
+    repeatable_read_transaction ks (fun _ -> f ks)
+  end)
 
 let get_property t property =
   Miniregion.use t.db (fun lldb -> return (L.get_property lldb property))
@@ -3464,6 +3607,9 @@ let transaction_id ks =
   match Lwt.get ks.ks_tx_key with
     | None -> return None
     | Some tx -> return (Some (tx.tx_id, tx.outermost_tx.tx_id))
+
+let notify ks topic =
+  Profile("notify", PROF.dummy_table, notify ks topic)
 
 module RAW =
 struct
