@@ -42,6 +42,7 @@ sig
 
   val get_update_stream : raw_dump -> update_stream Lwt.t
   val get_update : update_stream -> update option Lwt.t
+  val get_updates : update_stream -> update Lwt_stream.t
   val ack_update : update -> unit Lwt.t
   val nack_update : update -> unit Lwt.t
 

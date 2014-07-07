@@ -89,37 +89,33 @@ let get_synced_db (ich,och) ~dir ~address ~data_address ~master_data_addr
   let db = open_db dir in
   if !debug then eprintf "Getting replication stream\n%!";
   lwt stream = C.Replication.get_update_stream raw_dump in
+  let lwt_stream = C.Replication.get_updates stream in
   if !debug then eprintf "Got replication stream\n%!";
-  async (fun () ->
-      try_lwt
-        let rec get_updates () =
-          match_lwt C.Replication.get_update stream with
-          | None ->
-            return_unit
-          | Some update ->
-            lwt s, off, len = C.Replication.get_update_data update in
-            let () =
-              if !debug then eprintf "Got update (%d bytes).\n%!" len in
-            let update' =
-              Obs_storage.Replication.update_of_string s off len
-            in
-            match update' with
-              None ->
-              (* FIXME: signal dropped update to master *)
-              get_updates ()
-            | Some update' ->
-              Obs_storage.Replication.apply_update db update' >>
-              C.Replication.ack_update update >>
-              get_updates ()
-        in get_updates ()
-      with exn ->
-        (* FIXME: better logging *)
-        let bt = Printexc.get_backtrace () in
-        eprintf "Exception in replication thread: %s\n%s\n%!"
-          (Printexc.to_string exn) bt;
-        raise exn
-    );
+  let iter_f update =
+    try_lwt
+      lwt s, off, len = C.Replication.get_update_data update in
+      let () =
+        if !debug then eprintf "Got update (%d bytes).\n%!" len in
+      let update' =
+        Obs_storage.Replication.update_of_string s off len
+      in
+      match update' with
+      | None ->
+        (* FIXME: signal dropped update to master *)
+        return_unit
+      | Some update' ->
+        Obs_storage.Replication.apply_update db update' >>
+        C.Replication.ack_update update
+    with exn ->
+      (* FIXME: better logging *)
+      let bt = Printexc.get_backtrace () in
+      eprintf "Exception in replication thread: %s\n%s\n%!"
+        (Printexc.to_string exn) bt;
+      raise exn
+
+  in async (fun () -> Lwt_stream.iter_s iter_f lwt_stream);
   return db
+
 let bin_protos =
   [
     (0, 0, 0), (module Obs_protocol_bin.Version_0_0_0 : Obs_protocol.SERVER_FUNCTIONALITY);
