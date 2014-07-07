@@ -126,7 +126,7 @@ struct
     accept_loop handle_connection ~server auth protos sock
 
   let make_sock ?(reuseaddr=true) ?(backlog=1024) address =
-    let sock = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+    let sock = Lwt_unix.socket (Unix.domain_of_sockaddr address) Unix.SOCK_STREAM 0 in
       if reuseaddr then Lwt_unix.setsockopt sock Unix.SO_REUSEADDR true;
       Lwt_unix.bind sock address;
       Lwt_unix.listen sock backlog;

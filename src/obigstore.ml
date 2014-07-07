@@ -23,7 +23,8 @@ open Lwt
 module String = BatString
 module S = Obs_server.Make(Obs_storage)
 
-let port = ref 12050
+let host = ref "0.0.0.0"
+let port = ref "12050"
 let db_dir = ref None
 let debug = ref false
 let write_buffer_size = ref (4 * 1024 * 1024)
@@ -42,7 +43,8 @@ let set_await_recv () =
 let params =
   Arg.align
     [
-      "-port", Arg.Set_int port, "PORT Port to listen at (default: 12050)";
+      "-host", Arg.Set_string host, "HOST IP or hostname to listen to (default: 0.0.0.0)";
+      "-port", Arg.Set_string port, "PORT Port or service name to listen to (default: 12050)";
       "-master", Arg.String (fun s -> master := Some s),
         "HOST:PORT Replicate database reachable on HOST:PORT.";
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
@@ -75,16 +77,15 @@ let open_db dir =
     ~unsafe_mode:!unsafe_mode
     dir
 
-let run_slave ~dir ~address ~data_address host port auth protos ~role ~password =
+let run_slave ~dir ~address ~data_address ~master_addr ~master_data_addr
+    auth protos ~role ~password =
   let module C =
     Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0) in
   let module DUMP =
     Obs_dump.Make(struct include C include C.Raw_dump end) in
-  let master_addr = Unix.ADDR_INET (host, port) in
-  let master_data_address = Unix.ADDR_INET (host, port + 1) in
     Lwt_unix.run begin
       lwt ich, och = Lwt_io.open_connection master_addr in
-      lwt db = C.make ~data_address:master_data_address ich och ~role ~password in
+      lwt db = C.make ~data_address:master_data_addr ich och ~role ~password in
       lwt raw_dump = C.Raw_dump.dump db in
         DUMP.dump_local ~verbose:true ~destdir:dir raw_dump >>
         let db = open_db dir in
@@ -149,8 +150,15 @@ let () =
   Lwt_log.default := Lwt_log.channel
                        ~template:"$(date).$(milliseconds) [$(pid)] $(message)"
                        ~close_mode:`Keep ~channel:Lwt_io.stderr ();
-  let address = Unix.ADDR_INET (Unix.inet_addr_any, !port) in
-  let data_address = Unix.ADDR_INET (Unix.inet_addr_any, !port + 1) in
+  let get_addresses host port =
+    match Unix.getaddrinfo host port [] with
+    | ai::_ ->
+      (match ai.ai_addr with
+       | Unix.ADDR_INET (h, p) -> Unix.ADDR_INET (h, p), Unix.ADDR_INET (h, p + 1)
+       | _ -> raise (Invalid_argument "Supplied address and/or port cannot be resolved"))
+    | _ -> raise (Invalid_argument "Supplied address and/or port cannot be resolved")
+  in
+  let address, data_address = get_addresses !host !port in
   let auth = Obs_auth.accept_all in
     match !db_dir with
         None -> Arg.usage params usage_message;
@@ -172,18 +180,12 @@ let () =
             | Some master ->
                 let host, port =
                   begin try
-                    let h, p = String.split master ":" in
-                      h, int_of_string p
-                  with Not_found | Failure _ ->
+                      String.rsplit master ":"
+                    with Not_found | Failure _ ->
                     eprintf "-master needs argument of the form HOST:PORT \
                              (e.g.: 127.0.0.1:15000)\n%!";
                     exit 1
                   end in
-                let host =
-                  try
-                    (Unix.gethostbyname host).Unix.h_addr_list.(0)
-                  with Not_found ->
-                    eprintf "Couldn't find master %S\n%!" host;
-                    exit 1
-                in run_slave ~dir ~address ~data_address host port auth protos
-                     ~role:"guest" ~password:"guest"
+                let master_addr, master_data_addr = get_addresses host port in
+                run_slave ~dir ~address ~data_address ~master_addr ~master_data_addr
+                  auth protos ~role:"guest" ~password:"guest"
