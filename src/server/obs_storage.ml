@@ -3408,6 +3408,7 @@ struct
 
   let get_update_stream d = return d.Raw_dump.update_stream
   let get_update = Lwt_stream.get
+  let get_updates s = s
 
   let signal u x =
     (try Option.may (fun u -> Lwt.wakeup_later u x) u.up_signal_ack with _ -> ());

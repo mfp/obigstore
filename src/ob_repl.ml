@@ -34,8 +34,8 @@ exception Reload_keyspace of string
 exception Need_reconnect of string option
 
 let keyspace = ref ""
-let server = ref "127.0.0.1"
-let port = ref 12050
+let server = ref "localhost"
+let port = ref "12050"
 let simple_repl = ref false
 let dir = ref ""
 
@@ -45,8 +45,8 @@ let params =
   Arg.align
     [
       "-keyspace", Arg.Set_string keyspace, "NAME Operate in keyspace NAME.";
-      "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
-      "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+      "-server", Arg.Set_string server, "ADDR Connect to server at ADDR (default: localhost)";
+      "-port", Arg.Set_string port, "PORT Connect to server port or service name PORT (default: 12050)";
       "-dir", Arg.Set_string dir, "DIR Use DB at DIR.";
       "-simple", Arg.Set simple_repl, " Simple mode for use with rlwrap and similar.";
     ]
@@ -910,18 +910,31 @@ struct
   include R
 
   let get_db_and_ks () =
-    let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
-    let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
-    lwt ich, och = Lwt_io.open_connection addr in
-    lwt db = R.make ~data_address ich och ~role ~password in
-      if !keyspace = "" then
-        return (db, None)
-      else begin
-        printf "Switching to keyspace %S\n%!" !keyspace;
-        lwt ks = R.register_keyspace db !keyspace in
-          recover_saved_printers ks >>
-          return (db, Some ks)
-      end
+    match Unix.getaddrinfo !server !port [] with
+    | [] -> raise (Invalid_argument "Supplied address and/or port cannot be resolved")
+    | ais ->
+      let rec try_ai ais = match ais with
+        | [] -> raise (Need_reconnect (Some "No server at supplied address/port"))
+        | ai::ais ->
+          try_lwt
+            let addr, data_address =
+              (match ai.Unix.ai_addr with
+               | Unix.ADDR_INET (h, p) -> Unix.ADDR_INET (h, p), Unix.ADDR_INET (h, p + 1)
+               | _ -> raise (Need_reconnect (Some "No server at supplied address/port"))) in
+            lwt ich, och = Lwt_io.open_connection addr in
+            lwt db = R.make ~data_address ich och ~role ~password in
+            if !keyspace = "" then
+              return (db, None)
+            else begin
+              printf "Switching to keyspace %S\n%!" !keyspace;
+              lwt ks = R.register_keyspace db !keyspace in
+              recover_saved_printers ks >>
+              return (db, Some ks)
+            end
+          with Unix.Unix_error _ as exn ->
+            if ais = [] then raise exn
+            else try_ai ais
+      in try_ai ais
 end
 
 module Local : OPS =

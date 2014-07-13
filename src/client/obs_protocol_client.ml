@@ -688,6 +688,8 @@ struct
       lwt x = Lwt_stream.get s.stream in
         return x
 
+    let get_updates s = s.stream
+
     let ack_update u =
       (try Lwt.wakeup (snd u.await_ack) `ACK with _ -> ());
       return_unit
