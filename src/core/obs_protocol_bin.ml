@@ -114,6 +114,12 @@ struct
       lwt y = g ich in
         return (x, y)
 
+    let get_tuple3 f g h ich =
+      lwt x = f ich in
+      lwt y = g ich in
+      lwt z = h ich in
+        return (x, y, z)
+
     let get_option f ich =
       match_lwt get_int32_le ich with
           0 -> return None
@@ -439,13 +445,15 @@ struct
          E.add_status b 0;
          E.add_list E.add_string b l)
 
-  let return_raw_dump_id_and_timestamp =
-    writer (fun b (id, timestamp) -> E.add_status b 0;
-                                     E.add_int64_le b id;
-                                     E.add_int64_le b timestamp)
+  let return_raw_dump_id_timestamp_dir =
+    writer (fun b (id, timestamp, dir) ->
+              E.add_status b 0;
+              E.add_int64_le b id;
+              E.add_int64_le b timestamp;
+              E.add_string b dir)
 
-  let read_raw_dump_id_and_timestamp =
-    reader (D.get_tuple2 D.get_int64_le D.get_int64_le)
+  let read_raw_dump_id_timestamp_dir =
+    reader (D.get_tuple3 D.get_int64_le D.get_int64_le D.get_string)
 
   let return_raw_dump_files =
     writer

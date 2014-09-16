@@ -541,13 +541,14 @@ struct
              P.return_notifications ?buf c.och ~request_id)
     | Trigger_raw_dump { Trigger_raw_dump.record; } ->
       (* FIXME: catch errors in Raw_dump.dump, signal to client *)
-      lwt raw_dump = D.Raw_dump.dump c.server.db in
+      lwt raw_dump  = D.Raw_dump.dump c.server.db in
       lwt timestamp = D.Raw_dump.timestamp raw_dump in
-      let dump_id = c.server.raw_dump_seqno in
+      lwt localdir  = D.Raw_dump.localdir raw_dump in
+      let dump_id   = c.server.raw_dump_seqno in
         c.server.raw_dump_seqno <- Int64.add 1L dump_id;
         Hashtbl.add c.server.raw_dumps dump_id raw_dump;
-        P.return_raw_dump_id_and_timestamp ?buf c.och ~request_id
-          (dump_id, timestamp)
+        P.return_raw_dump_id_timestamp_dir ?buf c.och ~request_id
+          (dump_id, timestamp, localdir)
     | Raw_dump_release { Raw_dump_release.id } ->
         with_raw_dump c id ()
           (fun raw_dump ->

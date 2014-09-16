@@ -28,15 +28,16 @@ module List   = BatList
 
 module S = Set.Make(String)
 
-let keyspace = ref ""
-let tables = ref []
-let server = ref "127.0.0.1"
-let port = ref 12050
-let output = ref "-"
+let keyspace        = ref ""
+let tables          = ref []
+let server          = ref "127.0.0.1"
+let port            = ref 12050
+let output          = ref "-"
 let raw_dump_dstdir = ref None
-let verbose = ref false
+let verbose         = ref false
+let serverside      = ref true
 
-let usage_message = "Usage: ob_dump [-keyspace NAME | -full DIR] [options]"
+let usage_message = "Usage: ob_dump [-serverside | -keyspace NAME | -full DIR] [options]"
 
 let params =
   Arg.align
@@ -46,6 +47,8 @@ let params =
         "NAME Dump table NAME (default: all)";
       "-full", Arg.String (fun s -> raw_dump_dstdir := Some s),
         "DIRNAME Perform raw dump of whole database to given directory.";
+      "-serverside", Arg.Set serverside,
+        " Trigger server-side dump and return directory.";
       "-o", Arg.Set_string output, "FILE Dump to file FILE (default: '-')";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
@@ -85,8 +88,8 @@ let password = "guest"
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
-  begin match !keyspace, !raw_dump_dstdir with
-      "", None -> Arg.usage params usage_message; exit 1
+  begin match !serverside, !keyspace, !raw_dump_dstdir with
+    | false, "", None -> Arg.usage params usage_message; exit 1
     | _ -> ()
   end;
   let only_tables = match List.rev_map Obs_data_model.table_of_string !tables with
@@ -97,8 +100,13 @@ let () =
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
     lwt db = D.make ~data_address ich och ~role ~password in
-      match !raw_dump_dstdir with
-          None ->
+      match !serverside, !raw_dump_dstdir with
+        | true, _ ->
+            lwt raw_dump = D.Raw_dump.dump db in
+            lwt localdir = D.Raw_dump.localdir raw_dump in
+              print_endline localdir;
+              return_unit
+        | _, None ->
             lwt output = match !output with
                 "-" -> return Lwt_io.stdout
               | f -> Lwt_io.open_file
@@ -109,7 +117,7 @@ let () =
                 dump db ~keyspace:!keyspace ?only_tables output
               finally
                 Lwt_io.close output
-        | Some destdir ->
+        | _, Some destdir ->
             let module DUMP =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
             lwt raw_dump = D.Raw_dump.dump db in

@@ -543,7 +543,7 @@ struct
   let return_backup_dump = not_implemented
   let return_backup_load_result = not_implemented
   let return_load_stats = not_implemented
-  let return_raw_dump_id_and_timestamp = not_implemented
+  let return_raw_dump_id_timestamp_dir = not_implemented
   let return_raw_dump_files = not_implemented
   let return_raw_dump_file_digest = not_implemented
 end

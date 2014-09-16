@@ -3346,6 +3346,11 @@ struct
 
   let timestamp d = return d.timestamp
 
+  let localdir d = return @@
+                   if Filename.is_relative d.directory then
+                     Filename.concat (Unix.getcwd ()) d.directory
+                   else d.directory
+
   let list_files d =
     Sys.readdir d.directory |> Array.to_list |>
     List.filter_map

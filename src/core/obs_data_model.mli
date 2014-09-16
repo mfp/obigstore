@@ -110,8 +110,10 @@ sig
     * the actual data). Further operations on the dump will fail. *)
   val release : raw_dump -> unit Lwt.t
 
-  val timestamp : raw_dump -> raw_dump_timestamp Lwt.t
-  val list_files : raw_dump -> (string * Int64.t) list Lwt.t
+
+  val timestamp   : raw_dump -> raw_dump_timestamp Lwt.t
+  val localdir    : raw_dump -> string Lwt.t
+  val list_files  : raw_dump -> (string * Int64.t) list Lwt.t
   val file_digest : raw_dump -> string -> string option Lwt.t
 
   val open_file :

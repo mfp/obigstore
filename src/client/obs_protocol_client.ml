@@ -556,13 +556,13 @@ struct
 
   module Raw_dump =
   struct
-    type raw_dump = { db : db; id : Int64.t; timestamp : Int64.t; }
+    type raw_dump = { db : db; id : Int64.t; timestamp : Int64.t; localdir : string }
 
     let dump t =
-      lwt id, timestamp =
+      lwt id, timestamp, localdir =
         async_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
-          P.read_raw_dump_id_and_timestamp
-      in return { db = t; id; timestamp; }
+          P.read_raw_dump_id_timestamp_dir
+      in return { db = t; id; timestamp; localdir; }
 
     let release d =
       async_request d.db
@@ -587,6 +587,7 @@ struct
           | Some `OK -> return (Some ich)
 
     let timestamp d = return d.timestamp
+    let localdir  d = return d.localdir
 
     let list_files d =
       async_request d.db
