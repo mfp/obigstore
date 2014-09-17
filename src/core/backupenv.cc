@@ -159,7 +159,7 @@ class BackupEnv : public EnvWrapper {
   // file must be copied.  Otherwise the first "length" bytes must be
   // copied.
   Status Backup(const std::string& dir,
-                int (*func)(void*, const char* fname, uint64_t length),
+                int (*func)(void* arg, const char* fname, int64_t length),
                 void* arg);
 
   bool CopyFile(const std::string& fname);
@@ -227,7 +227,7 @@ Status BackupEnv::DeleteFile(const std::string& f) {
 // copied.
 Status
 BackupEnv::Backup(const std::string& dir,
-                  int (*func)(void*, const char* fname, uint64_t length),
+                  int (*func)(void*, const char* fname, int64_t length),
                   void* arg) {
   // Get a consistent view of all files.
   mu_.Lock();
@@ -237,7 +237,7 @@ BackupEnv::Backup(const std::string& dir,
     mu_.Unlock();
     return s;
   }
-  std::vector<uint64_t> lengths(files.size());
+  std::vector<int64_t> lengths(files.size());
   for (size_t i = 0; i < files.size(); i++) {
     if (files[i][0] == '.') {
       continue;
