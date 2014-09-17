@@ -373,3 +373,7 @@ obigstore_crc32c_mask(value t)
 }
 
 }
+
+#include "backupenv.cc"
+
+// vim: set sw=4 expandtab:
