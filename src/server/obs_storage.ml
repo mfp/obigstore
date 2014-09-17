@@ -27,6 +27,15 @@ module L = LevelDB
 module RA = L.Read_access
 module IT = L.Iterator
 
+type backup_env
+
+external backup_env : unit -> backup_env = "obigstore_backup_env" "noalloc"
+external env_of_backup_env : backup_env -> L.env = "%identity"
+
+let locks_section = Lwt_log.Section.make "obigstore:locks"
+
+let section = Lwt_log.Section.make "obigstore:storage"
+
 module String =
 struct
   include BatString
@@ -34,10 +43,6 @@ struct
   let compare x y =
     Obs_string_util.cmp_substrings x 0 (String.length x) y 0 (String.length y)
 end
-
-let locks_section = Lwt_log.Section.make "obigstore:locks"
-
-let section = Lwt_log.Section.make "obigstore:storage"
 
 (* condition that cannot be signalled faster than a given time interval *)
 module Throttled_condition : sig
@@ -183,6 +188,8 @@ module WRITEBATCH : sig
 
   (** [add_slave t ~unregister slave] *)
   val add_slave : t -> unregister:(int -> unit) -> slave -> unit
+
+  val unregister_slave : t -> slave -> unit
 
   val delete_substring : tx -> string -> int -> int -> unit
   val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
@@ -356,6 +363,13 @@ struct
 
   let add_slave t ~unregister slave =
     t.slave_tbl <- IM.add slave.slave_id (unregister, slave) t.slave_tbl
+
+  let unregister_slave t slave =
+    try
+      let unregister, _ = IM.find slave.slave_id t.slave_tbl in
+        t.slave_tbl <- IM.remove slave.slave_id t.slave_tbl;
+        unregister slave.slave_id
+    with Not_found -> ()
 
   let close t =
     t.closed <- true;
@@ -710,6 +724,7 @@ module rec TYPES : sig
       {
         basedir : string;
         db : L.db Miniregion.t;
+        env : backup_env;
         keyspaces : (string, keyspace_proto * WKS.t) Hashtbl.t;
         mutable use_thread_pool : bool;
         load_stats : Obs_load_stats.t;
@@ -878,6 +893,15 @@ let close_db t =
 
 let throttling t = WRITEBATCH.throttling t.writebatch
 
+let add_slave db slave =
+  let unregister id = db.slaves <- IM.remove id db.slaves in
+    db.slaves <- IM.add slave.slave_id slave db.slaves;
+    (* don't forget to register slaves in new writebatch! *)
+    WRITEBATCH.add_slave ~unregister db.writebatch slave
+
+let remove_slave db slave =
+  WRITEBATCH.unregister_slave db.writebatch slave
+
 let open_db
       ?(write_buffer_size = 4 * 1024 * 1024)
       ?(block_size = 4096)
@@ -885,9 +909,11 @@ let open_db
       ?(assume_page_fault = false)
       ?(unsafe_mode = false)
       basedir =
+  let env  = backup_env () in
   let lldb = L.open_db
              ~write_buffer_size ~block_size ~max_open_files
-             ~comparator:Obs_datum_encoding.custom_comparator basedir in
+             ~comparator:Obs_datum_encoding.custom_comparator
+             ~env:(env_of_backup_env env) basedir in
   let db_iter_pool = ref (make_iter_pool lldb) in
   let fsync = not unsafe_mode in
   let writebatch =
@@ -897,7 +923,8 @@ let open_db
     if not (L.mem lldb Obs_datum_encoding.end_of_db_key) then
       L.put ~sync:fsync lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
     let rec db =
-      { basedir; db = Miniregion.make lldb;
+      { basedir; env;
+        db = Miniregion.make lldb;
         keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
@@ -917,13 +944,11 @@ let open_db
       in
         db.db_iter_pool := make_iter_pool lldb;
         db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool ~fsync:db.fsync;
-        Option.may
-          (fun slave -> db.slaves <- IM.add slave.slave_id slave db.slaves)
-          new_slave;
         (* don't forget to register slaves in new writebatch! *)
         IM.iter
           (fun id slave -> WRITEBATCH.add_slave ~unregister db.writebatch slave)
           db.slaves;
+        Option.may (add_slave db) new_slave;
         lldb
     in
       (* must ensure this is run in the main thread *)
@@ -3299,6 +3324,10 @@ struct
     let n = ref 0 in
       (fun () -> incr n; !n)
 
+  external hot_backup : backup_env -> srcdir:string -> dstdir:string -> bool =
+    "obigstore_hot_backup"
+
+      (*
   let dump db =
     let dstdir = ref "" in
     let timestamp = ref 0L in
@@ -3343,6 +3372,42 @@ struct
     let ret = { id; directory = !dstdir; timestamp = !timestamp;
                 update_stream; push_update; }
     in return ret
+         *)
+
+  let dump db =
+    let id        = new_dump_id () in
+    let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
+    let dstdir    = Filename.concat db.basedir (sprintf "dump-%Ld" timestamp) in
+
+    let update_stream, push_update = Lwt_stream.create () in
+
+    let push_update_bytea b u =
+      push_update
+        (Some { up_buf = Obs_bytea.unsafe_string b;
+                up_off = 0; up_len = Obs_bytea.length b;
+                up_signal_ack = Some u; }) in
+
+    let new_slave =
+      { slave_id = id; slave_push = push_update_bytea;
+        slave_mode = Async; slave_mode_target = Sync;
+        slave_pending_updates = 0;
+      }
+    in
+      Unix.mkdir dstdir 0o755;
+      add_slave db new_slave;
+      match_lwt
+        Lwt_preemptive.detach
+          (hot_backup ~srcdir:db.basedir ~dstdir) db.env
+      with
+        | true ->
+            let ret = { id; directory = dstdir; timestamp;
+                        update_stream; push_update; }
+            in
+              return ret
+        | false ->
+            (* FIXME: delete dstdir *)
+            remove_slave db new_slave;
+            fail (Failure "Hot backup failed")
 
   let timestamp d = return d.timestamp
 
