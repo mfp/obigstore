@@ -430,33 +430,6 @@ struct
     put_substring tx k 0 (String.length k) v 0 (String.length v)
 end
 
-module Miniregion : sig
-  type 'a t
-
-  val make : 'a -> 'a t
-  val use : 'a t -> ('a -> 'b Lwt.t) -> 'b Lwt.t
-  val update_value : 'a t -> ('a -> 'a Lwt.t) -> unit Lwt.t
-end =
-struct
-  type 'a t =
-      {
-        mutable v : 'a;
-        mutex : Obs_shared_mutex.t;
-      }
-
-  let make v = { v; mutex = Obs_shared_mutex.create (); }
-
-  let use t f =
-    Obs_shared_mutex.with_lock ~shared:true t.mutex (fun () -> f t.v)
-
-  let update_value t f =
-    Obs_shared_mutex.with_lock ~shared:false t.mutex
-      (fun () ->
-         lwt new_v = f t.v in
-           t.v <- new_v;
-           return_unit)
-end
-
 module S =
 struct
   include Set.Make(String)
@@ -723,7 +696,7 @@ module rec TYPES : sig
   type db =
       {
         basedir : string;
-        db : L.db Miniregion.t;
+        db : L.db;
         env : backup_env;
         keyspaces : (string, keyspace_proto * WKS.t) Hashtbl.t;
         mutable use_thread_pool : bool;
@@ -885,11 +858,9 @@ let reload_keyspaces t lldb =
       new_keyspaces
 
 let close_db t =
-  Miniregion.use t.db
-    (fun lldb ->
-       lwt () = WRITEBATCH.close t.writebatch in
-         L.close lldb;
-         return_unit)
+  lwt () = WRITEBATCH.close t.writebatch in
+    L.close t.db;
+    return_unit
 
 let throttling t = WRITEBATCH.throttling t.writebatch
 
@@ -924,7 +895,7 @@ let open_db
       L.put ~sync:fsync lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
     let rec db =
       { basedir; env;
-        db = Miniregion.make lldb;
+        db = lldb;
         keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
@@ -957,8 +928,8 @@ let open_db
       db
 
 let reset_iter_pool t =
-  Miniregion.use t.db
-    (fun lldb -> t.db_iter_pool := make_iter_pool lldb; return_unit)
+  t.db_iter_pool := make_iter_pool t.db;
+  return_unit
 
 let use_thread_pool db v = db.use_thread_pool <- v
 
@@ -1079,9 +1050,6 @@ let register_keyspace =
     (fun t ks_name ->
        Lwt_mutex.with_lock mutex (fun () -> register_keyspace t ks_name))
 
-let register_keyspace t ks_name =
-  Miniregion.use t.db (fun lldb -> register_keyspace t ks_name)
-
 let get_keyspace t ks_name =
   if Hashtbl.mem t.keyspaces ks_name then begin
     lwt ks = register_keyspace t ks_name in
@@ -1142,13 +1110,10 @@ let list_tables ks =
             | None -> acc
           in collect_tables it acc
         end
-    end
+    end in
 
-  in
-    Miniregion.use ks.ks_db.db
-      (fun lldb ->
-         let it = L.iterator lldb in
-           detach_ks_op ks (collect_tables it) [] >|= List.sort cmp_table)
+  let it = L.iterator ks.ks_db.db in
+    detach_ks_op ks (collect_tables it) [] >|= List.sort cmp_table
 
 let table_size_on_disk ks table =
   match find_maybe ks.ks_tables table with
@@ -1162,9 +1127,7 @@ let table_size_on_disk ks table =
             ~table ~key:"\255\255\255\255\255\255" ~column:"\255\255\255\255\255\255"
             ~timestamp:Int64.zero
         in
-          Miniregion.use ks.ks_db.db
-            (fun lldb ->
-               detach_ks_op ks (L.get_approximate_size lldb _from) _to)
+          detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
 
 let compact ks =
   let from_key = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
@@ -1172,11 +1135,10 @@ let compact ks =
   let to_key   = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
                    ~table:max_int ~key:"" ~column:"" ~timestamp:Int64.max_int
   in
-    Miniregion.use ks.ks_db.db
-      (fun lldb -> Lwt_preemptive.detach
-                     (fun () -> L.compact_range lldb
-                                  ~from_key:(Some from_key)
-                                  ~to_key:(Some to_key)) ())
+    Lwt_preemptive.detach
+      (fun () -> L.compact_range ks.ks_db.db
+                   ~from_key:(Some from_key)
+                   ~to_key:(Some to_key)) ()
 
 let max_key = String.make 256 '\xFF'
 
@@ -1189,11 +1151,10 @@ let compact_table ks table ?(from_key = "") ?(to_key=max_key) () =
         let to_key   = Obs_datum_encoding.encode_datum_key_to_string ks.ks_id
                          ~table:max_int ~key:to_key ~column:max_key ~timestamp:Int64.max_int
         in
-          Miniregion.use ks.ks_db.db
-            (fun lldb -> Lwt_preemptive.detach
-                           (fun () -> L.compact_range lldb
-                                        ~from_key:(Some from_key)
-                                        ~to_key:(Some to_key)) ())
+          Lwt_preemptive.detach
+            (fun () -> L.compact_range ks.ks_db.db
+                         ~from_key:(Some from_key)
+                         ~to_key:(Some to_key)) ()
 
 let key_range_size_on_disk ks ?first ?up_to table =
   match find_maybe ks.ks_tables table with
@@ -1210,8 +1171,7 @@ let key_range_size_on_disk ks ?first ?up_to table =
             ~column:"\255\255\255\255\255\255"
             ~timestamp:Int64.zero
         in
-          Miniregion.use ks.ks_db.db
-            (fun lldb -> detach_ks_op ks (L.get_approximate_size lldb _from) _to)
+          detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
 
 let register_new_table_and_add_to_writebatch_aux put ks wb table =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
@@ -1343,12 +1303,9 @@ and commit_outermost_transaction ks tx =
     else
       let b = Lazy.force tx.backup_writebatch in
         Obs_load_stats.record_writes tx.ks.ks_db.load_stats 1;
-        Miniregion.use ks.ks_db.db
-          (fun lldb ->
-             Lwt_preemptive.detach
-               (L.Batch.write ~sync:ks.ks_db.fsync lldb) b >>
-             reset_iter_pool ks.ks_db >>
-             return_unit)
+        Lwt_preemptive.detach
+          (L.Batch.write ~sync:ks.ks_db.fsync ks.ks_db.db) b >>
+        reset_iter_pool ks.ks_db
     end >>
 
     (* write normal data and wait for group commit sync *)
@@ -1459,28 +1416,24 @@ and notify ks topic =
     with _ -> () end
 
 let read_committed_transaction ks f =
-  Miniregion.use ks.ks_db.db
-    (fun _ ->
-       transaction_aux
-         (fun db parent_tx f -> match parent_tx with
-              None -> f ~iter_pool:db.db_iter_pool ~repeatable_read:false
-            | Some tx -> f ~iter_pool:tx.iter_pool ~repeatable_read:false)
-         ks f)
+  transaction_aux
+    (fun db parent_tx f -> match parent_tx with
+         None -> f ~iter_pool:db.db_iter_pool ~repeatable_read:false
+       | Some tx -> f ~iter_pool:tx.iter_pool ~repeatable_read:false)
+    ks f
 
 let repeatable_read_transaction ks f =
-  Miniregion.use ks.ks_db.db
-    (fun lldb ->
-       transaction_aux
-         (fun db parent_tx f -> match parent_tx with
-              Some { repeatable_read = true; iter_pool; _} ->
-                f ~iter_pool ~repeatable_read:true
-            | _ ->
-                let access = lazy (L.Snapshot.read_access (L.Snapshot.make lldb)) in
-                let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
-                             (fun () -> return (RA.iterator (Lazy.force access)))
-                in
-                  f ~iter_pool:(ref pool) ~repeatable_read:true)
-         ks f)
+  transaction_aux
+    (fun db parent_tx f -> match parent_tx with
+         Some { repeatable_read = true; iter_pool; _} ->
+           f ~iter_pool ~repeatable_read:true
+       | _ ->
+           let access = lazy (L.Snapshot.read_access (L.Snapshot.make ks.ks_db.db)) in
+           let pool = Lwt_pool.create 1000 (* FIXME: which limit? *)
+                        (fun () -> return (RA.iterator (Lazy.force access)))
+           in
+             f ~iter_pool:(ref pool) ~repeatable_read:true)
+    ks f
 
 let lock_one ks ~shared name =
   match Lwt.get ks.ks_tx_key with
@@ -3031,12 +2984,6 @@ let rec put_multi_columns_no_tx ks table data =
 
 and put_multi_columns_no_tx_buf = Obs_bytea.create 10
 
-let put_multi_columns_no_tx ks table data =
-  (* we wrap in Miniregion.use because we don't want ks.ks_db.writebatch to
-   * change under our feet (due to a concurrent Raw_dump.dump) *)
-  Miniregion.use ks.ks_db.db
-    (fun _ -> put_multi_columns_no_tx ks table data)
-
 let delete_columns tx table key cols =
   tx.added <-
     TM.modify_if_found
@@ -3278,11 +3225,9 @@ let load tx data =
         else begin
           tx.backup_writebatch <- lazy (L.Batch.make ());
           tx.backup_writebatch_size <- 0;
-          Miniregion.use tx.ks.ks_db.db
-            (fun lldb ->
-               detach_ks_op tx.ks
-                 (L.Batch.write ~sync:tx.ks.ks_db.fsync lldb) wb >>
-               reset_iter_pool tx.ks.ks_db)
+          detach_ks_op tx.ks
+            (L.Batch.write ~sync:tx.ks.ks_db.fsync tx.ks.ks_db.db) wb >>
+          reset_iter_pool tx.ks.ks_db
         end
       end >>
       return true
@@ -3326,53 +3271,6 @@ struct
 
   external hot_backup : backup_env -> srcdir:string -> dstdir:string -> bool =
     "obigstore_hot_backup"
-
-      (*
-  let dump db =
-    let dstdir = ref "" in
-    let timestamp = ref 0L in
-    let id = new_dump_id () in
-    let update_stream, push_update = Lwt_stream.create () in
-    let push_update_bytea b u =
-      push_update
-        (Some { up_buf = Obs_bytea.unsafe_string b;
-                up_off = 0; up_len = Obs_bytea.length b;
-                up_signal_ack = Some u; })
-    in
-      Miniregion.update_value db.db
-        (fun lldb ->
-           (* flush *)
-           WRITEBATCH.close db.writebatch >>
-           let () = L.close lldb in
-           let new_slave =
-             { slave_id = id; slave_push = push_update_bytea;
-               slave_mode = Async; slave_mode_target = Sync;
-               slave_pending_updates = 0;
-             } in
-           let lldb = db.reopen ~new_slave () in
-             begin try_lwt
-               timestamp := Int64.of_float (Unix.gettimeofday () *. 1e6);
-               dstdir := Filename.concat db.basedir (sprintf "dump-%Ld" !timestamp);
-               let is_file fname = is_file (Filename.concat db.basedir fname) in
-               let hardlink_file fname =
-                 let src = Filename.concat db.basedir fname in
-                 let dst = Filename.concat !dstdir fname in
-                   Unix.link src dst in
-               let src_files =
-                 Sys.readdir db.basedir |> Array.to_list |>
-                 List.filter is_file
-               in
-                 Unix.mkdir !dstdir 0o755;
-                 List.iter hardlink_file src_files;
-                 return_unit
-             with exn ->
-               Lwt_log.error_f ~section ~exn "Error in Raw_dump.dump"
-             end >>
-             return lldb) >>
-    let ret = { id; directory = !dstdir; timestamp = !timestamp;
-                update_stream; push_update; }
-    in return ret
-         *)
 
   let dump db =
     let id        = new_dump_id () in
@@ -3502,45 +3400,43 @@ struct
       a + (b lsl 8) + (c lsl 16) + (d lsl 24)
 
   let apply_update db update =
-    Miniregion.use db.db begin fun lldb ->
-      let must_reload = ref false in
-      let wait_sync =
-         WRITEBATCH.perform db.writebatch begin fun b ->
-           let rec apply_update s n max =
-             if n >= max then ()
-             else begin
-               match s.[n] with
-                 | '\x01' -> (* add *)
-                   let klen = read_int32_le s (n + 1) in
-                   let vlen = read_int32_le s (n + 1 + 4 + klen) in
-                     (* TODO: instead of writing as usual and letting
-                      * WRITEBATCH serialize the change again (in case we have
-                      * slaves), write locally (need some ?push:bool option in
-                      * WRITEBATCH.put_substring and delete_substring) and
-                      * forward the entire update as is *)
-                     WRITEBATCH.put_substring b
-                       s (n + 1 + 4) klen
-                       s (n + 1 + 4 + klen + 4) vlen;
-                     apply_update s (n + 1 + 4 + klen + 4 + vlen) max
-                 | '\x00' -> (* delete *)
-                   let klen = read_int32_le s (n + 1) in
-                     WRITEBATCH.delete_substring b s (n + 1 + 4) klen;
-                     apply_update s (n + 1 + 4 + klen) max
-                 | '\xFF' -> (* reload keyspaces *)
-                     must_reload := true;
-                     apply_update s (n + 1) max
-                 | _ -> (* unrecognized record, abort processing *)
-                     (* FIXME: error out or just log? *)
-                     ()
-             end
-           in apply_update
-                update.up_buf update.up_off
-                (update.up_off + update.up_len)
-         end in
-      lwt () = wait_sync in
-        if !must_reload then reload_keyspaces db lldb;
-        return_unit
-    end
+    let must_reload = ref false in
+    let wait_sync =
+       WRITEBATCH.perform db.writebatch begin fun b ->
+         let rec apply_update s n max =
+           if n >= max then ()
+           else begin
+             match s.[n] with
+               | '\x01' -> (* add *)
+                 let klen = read_int32_le s (n + 1) in
+                 let vlen = read_int32_le s (n + 1 + 4 + klen) in
+                   (* TODO: instead of writing as usual and letting
+                    * WRITEBATCH serialize the change again (in case we have
+                    * slaves), write locally (need some ?push:bool option in
+                    * WRITEBATCH.put_substring and delete_substring) and
+                    * forward the entire update as is *)
+                   WRITEBATCH.put_substring b
+                     s (n + 1 + 4) klen
+                     s (n + 1 + 4 + klen + 4) vlen;
+                   apply_update s (n + 1 + 4 + klen + 4 + vlen) max
+               | '\x00' -> (* delete *)
+                 let klen = read_int32_le s (n + 1) in
+                   WRITEBATCH.delete_substring b s (n + 1 + 4) klen;
+                   apply_update s (n + 1 + 4 + klen) max
+               | '\xFF' -> (* reload keyspaces *)
+                   must_reload := true;
+                   apply_update s (n + 1) max
+               | _ -> (* unrecognized record, abort processing *)
+                   (* FIXME: error out or just log? *)
+                   ()
+           end
+         in apply_update
+              update.up_buf update.up_off
+              (update.up_off + update.up_len)
+       end in
+    lwt () = wait_sync in
+      if !must_reload then reload_keyspaces db db.db;
+      return_unit
 end
 
 (* @param ensure_exclusion if true, check whether a nested TX is being
@@ -3672,7 +3568,7 @@ let repeatable_read_transaction ks f =
   end)
 
 let get_property t property =
-  Miniregion.use t.db (fun lldb -> return (L.get_property lldb property))
+  return (L.get_property t.db property)
 
 let transaction_id ks =
   match Lwt.get ks.ks_tx_key with
