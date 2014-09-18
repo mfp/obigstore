@@ -413,7 +413,7 @@ backup_file(void *bd_, const char* fname, int64_t len_)
    int srcfd = open(src.c_str(), O_RDONLY, 0);
    if(srcfd < 0) return -1;
 
-   int dstfd = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+   int dstfd = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
    if(dstfd < 0) {
      close(srcfd);
      return -1;
