@@ -707,7 +707,6 @@ module rec TYPES : sig
          * transactions whenever possible. After an update, the db_iter_pool is
          * replaced by a new one (so that only new iterators are used). *)
 
-        reopen : ?new_slave:slave -> unit -> L.db;
         mutable slaves : slave IM.t;
 
         (* Mandates whether even "short requests" are to be detached when
@@ -893,34 +892,19 @@ let open_db
     (* ensure we have a end_of_db record *)
     if not (L.mem lldb Obs_datum_encoding.end_of_db_key) then
       L.put ~sync:fsync lldb Obs_datum_encoding.end_of_db_key (String.make 8 '\000');
-    let rec db =
+
+    let db =
       { basedir; env;
         db = lldb;
         keyspaces = Hashtbl.create 13;
         use_thread_pool = false;
         load_stats = Obs_load_stats.make [1; 60; 300; 900];
-        writebatch; db_iter_pool; reopen; slaves = IM.empty;
+        writebatch; db_iter_pool; slaves = IM.empty;
         assume_page_fault; fsync = fsync;
         locks = M.empty;
         subscriptions = Hashtbl.create 13;
         prefix_subscriptions = Hashtbl.create 13;
       }
-    and reopen ?new_slave () =
-      let lldb = L.open_db
-                    ~write_buffer_size ~block_size ~max_open_files
-                    ~comparator:Obs_datum_encoding.custom_comparator
-                    basedir in
-      let unregister id =
-        db.slaves <- IM.remove id db.slaves
-      in
-        db.db_iter_pool := make_iter_pool lldb;
-        db.writebatch <- WRITEBATCH.make lldb db.db_iter_pool ~fsync:db.fsync;
-        (* don't forget to register slaves in new writebatch! *)
-        IM.iter
-          (fun id slave -> WRITEBATCH.add_slave ~unregister db.writebatch slave)
-          db.slaves;
-        Option.may (add_slave db) new_slave;
-        lldb
     in
       (* must ensure this is run in the main thread *)
       Lwt_gc.finalise close_db db;
