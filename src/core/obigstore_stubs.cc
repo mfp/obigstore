@@ -46,6 +46,7 @@ extern "C" {
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
 #include <caml/alloc.h>
+#include <caml/threads.h>
 
 const char cMetadata_prefix = 0;
 const char cDatum_prefix = 1;
@@ -373,3 +374,81 @@ obigstore_crc32c_mask(value t)
 }
 
 }
+
+#include "backupenv.cc"
+
+extern "C" {
+
+static BackupEnv backupenv(leveldb::Env::Default());
+
+CAMLprim value
+obigstore_backup_env(value unit)
+{
+ return (value)&backupenv;
+}
+
+struct backup_dirs
+{
+   backup_dirs(const char *src_, const char* dst_) : src(src_), dst(dst_) { }
+   std::string src;
+   std::string dst;
+};
+
+static int
+backup_file(void *bd_, const char* fname, int64_t len_)
+{
+ backup_dirs *bd = static_cast<struct backup_dirs*>(bd_);
+ std::string src = bd->src + "/" + fname;
+ std::string dst = bd->dst + "/" + fname;
+
+ if(len_ < 0) {
+   if(link(src.c_str(), dst.c_str()) < 0) {
+      return -1;
+   };
+ } else {
+   char buf[BUFSIZ];
+   size_t size;
+   uint64_t len = static_cast<uint64_t>(len_);
+
+   int srcfd = open(src.c_str(), O_RDONLY, 0);
+   if(srcfd < 0) return -1;
+
+   int dstfd = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+   if(dstfd < 0) {
+     close(srcfd);
+     return -1;
+   }
+
+   while(len > 0 &&
+       (size = read(srcfd, buf, std::min(static_cast<uint64_t>(BUFSIZ), len))) > 0) {
+     len -= size;
+     write(dstfd, buf, size);
+   }
+   close(srcfd);
+   close(dstfd);
+
+   if(len > 0) return -1;
+ }
+
+ return 0;
+}
+
+CAMLprim value
+obigstore_hot_backup(value env_, value srcdir_, value dstdir_)
+{
+ CAMLparam2(srcdir_, dstdir_);
+ BackupEnv *env = reinterpret_cast<BackupEnv *>(env_);
+ Status s;
+ backup_dirs bd(String_val(srcdir_), String_val(dstdir_));
+ std::string srcdir(String_val(srcdir_));
+
+ caml_release_runtime_system();
+ s = env->Backup(srcdir, backup_file, &bd);
+ caml_acquire_runtime_system();
+
+ CAMLreturn(Val_bool(s.ok()));
+}
+
+}
+
+// vim: set sw=4 expandtab:
