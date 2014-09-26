@@ -192,7 +192,7 @@ struct
     | -2 -> raise_lwt (Error Unknown_keyspace)
     | -3 -> raise_lwt (Error Unknown_serialization)
     | -4 -> raise_lwt (Error Internal_error)
-    | -5 -> raise_lwt (Error Deadlock)
+    | -5 -> raise_lwt Deadlock
     | -6 -> raise_lwt Dirty_data
     | n -> raise_lwt (Error (Other n))
 

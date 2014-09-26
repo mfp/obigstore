@@ -138,21 +138,28 @@ let register_tests name tests =
 let get_all_tests () = List.rev !all_tests
 
 let lwt_tests
-      ?(sequential_timeout = 5.0) ?(concurrent_timeout = 10.0)
+      ?(sequential_timeout = 5.0)
+      ?(max_concurrency = 10)
+      ?(concurrent_timeout = 10.0)
       ?(sequential=[]) concurrent =
+  let region     = Lwt_util.make_region max_concurrency in
+
   let concurrent =
     List.map
       (fun (name, f) ->
          let t, u = Lwt.task () in
          let init_t, init_u = Lwt.task () in
          let g () =
-           ignore begin try_lwt
-             lwt () = init_t in
-             lwt () = f () in
-               Lwt.wakeup u ();
-               return ()
-           with e -> Lwt.wakeup_exn u e;
-                     return ()
+           ignore begin
+             Lwt_util.run_in_region region 1
+               (fun () ->
+                  try_lwt
+                    lwt () = init_t in
+                    lwt () = f () in
+                      Lwt.wakeup u ();
+                      return ()
+                  with e -> Lwt.wakeup_exn u e;
+                            return ())
            end
          in (name, t, g, init_u))
       concurrent in

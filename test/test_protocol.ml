@@ -35,7 +35,7 @@ struct
 
   let with_db f =
     let dir = make_temp_dir () in
-    let db = Obs_storage.open_db ~unsafe_mode:true dir in
+    let db = Obs_storage.open_db ~deadlock_check_period:0.1 ~unsafe_mode:true dir in
     let ch1_in, ch1_out = Lwt_io.pipe () in
     let ch2_in, ch2_out = Lwt_io.pipe () in
     let server = SERVER.make db in
@@ -57,7 +57,7 @@ struct
 
   let with_db_pool f =
     let dir = make_temp_dir () in
-    let db = Obs_storage.open_db ~unsafe_mode:true dir in
+    let db = Obs_storage.open_db ~deadlock_check_period:0.1 ~unsafe_mode:true dir in
     let server = SERVER.make db in
     let clients = ref [] in
     let mk_client () =

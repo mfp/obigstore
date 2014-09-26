@@ -49,6 +49,7 @@ OCAMLPACKS[] =
     lwt.syntax
     lwt.syntax.log
     lwt.preemptive
+    ocamlgraph
 
 if $(not $(defined LEVELDB_DIR))
     OCAMLPACKS[] += leveldb

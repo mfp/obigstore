@@ -24,7 +24,6 @@ open Obs_data_model
 type error =
     Internal_error | Closed | Corrupted_frame | Bad_request
   | Unknown_serialization | Unknown_keyspace
-  | Deadlock
   | Inconsistent_length of int * int  (* expected, actual *)
   | Other of int | Exception of exn
 
@@ -46,7 +45,6 @@ let string_of_error = function
   | Bad_request -> "Bad_request"
   | Unknown_serialization -> "Unknown_serialization"
   | Unknown_keyspace  -> "Unknown_keyspace"
-  | Deadlock -> "Deadlock"
   | Inconsistent_length (exp, act) ->
       sprintf "(Inconsistent_length (%d, %d))" exp act
   | Other n -> sprintf "(Other %d)" n

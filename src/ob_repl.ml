@@ -376,9 +376,15 @@ struct
                finally
                  decr tx_level;
                  return_unit)
-        with Abort_exn -> print_endline "Aborting";
-                          Timing.abort_timing ();
-                          return_unit
+        with
+          | Abort_exn ->
+              print_endline "Aborting";
+              Timing.abort_timing ();
+              return_unit
+          | Deadlock ->
+              print_endline "Deadlock detected, aborting";
+              Timing.abort_timing ();
+              return_unit
         end >>=
         ret_nothing
     | Abort _ -> raise_lwt Abort_exn
@@ -848,7 +854,7 @@ struct
       | Parsing.Parse_error ->
           print_endline "Parse error";
           return_unit
-      | End_of_file | Abort_exn | Commit_exn | Reload_keyspace _ as e -> raise_lwt e
+      | End_of_file | Deadlock | Abort_exn | Commit_exn | Reload_keyspace _ as e -> raise_lwt e
       | Obs_protocol.Error (Obs_protocol.Exception End_of_file)
       | Obs_protocol.Error (Obs_protocol.Closed) ->
           if !tx_level > 0 then begin

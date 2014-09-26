@@ -26,6 +26,9 @@ exception Invalid_BSON_column of string
   * transaction is being performed. *)
 exception Dirty_data
 
+(** Exception raised by the {!lock} operation if a deadlock is detected. *)
+exception Deadlock
+
 type table = string
 
 let table_of_string x = x
