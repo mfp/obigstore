@@ -546,4 +546,7 @@ struct
   let return_raw_dump_id_timestamp_dir = not_implemented
   let return_raw_dump_files = not_implemented
   let return_raw_dump_file_digest = not_implemented
+
+  let return_transaction_list = not_implemented
+  let return_changed_tables = not_implemented
 end

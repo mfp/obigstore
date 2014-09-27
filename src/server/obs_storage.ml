@@ -3767,6 +3767,31 @@ let transaction_id ks =
 let notify ks topic =
   Profile("notify", PROF.dummy_table, notify ks topic)
 
+let list_transactions ks =
+  return @@
+  List.map
+    (fun (_, tx) ->
+       let lock_list m =
+         M.bindings m |>
+         List.map (fun (k, (kind, _)) -> (k, kind))
+       in
+         { Obs_data_model.wanted_locks = lock_list tx.tx_wanted_locks;
+           held_locks   = lock_list tx.tx_locks;
+           started_at   = tx.started_at;
+           tx_id        = Int64.of_int tx.tx_id;
+         }) @@
+  CURRENT_TXS.bindings @@
+  !(ks.ks_curr_txs)
+
+let changed_tables ks txid =
+  try
+    let tx      = CURRENT_TXS.find (Int64.to_int txid) !(ks.ks_curr_txs) in
+    let changed = (TM.bindings tx.added_keys |> List.map fst) @
+                  (TM.bindings tx.deleted_keys |> List.map fst) in
+    let changed = List.sort_unique String.compare (changed :> string list) in
+      return changed
+  with Not_found -> return []
+
 module RAW =
 struct
   type keyspace_ = keyspace

@@ -50,6 +50,7 @@
       "to", TO;
       "watch", WATCH;
       "compact", COMPACT;
+      "debug", DEBUG;
     ]
 
  let () =

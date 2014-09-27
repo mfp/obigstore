@@ -511,6 +511,14 @@ struct
     async_request_ks ks (Stats { Stats.keyspace = ks.ks_id })
       P.read_load_stats
 
+  let list_transactions ks =
+    async_request_ks ks (List_transactions { List_transactions.keyspace = ks.ks_id })
+      P.read_transaction_list
+
+  let changed_tables ks tx_id =
+    async_request_ks ks (Changed_tables { Changed_tables.keyspace = ks.ks_id; tx_id })
+      P.read_changed_tables
+
   let string_of_cursor x = x
   let cursor_of_string x = Some x
 

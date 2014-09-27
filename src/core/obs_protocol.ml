@@ -117,6 +117,8 @@ sig
   val return_raw_dump_file_digest : string option writer
   val return_property : string option writer
   val return_tx_id : (int * int) option writer
+  val return_transaction_list : Obs_data_model.tx_info list writer
+  val return_changed_tables : string list writer
 end
 
 module type SERVER_FUNCTIONALITY =
@@ -153,6 +155,8 @@ sig
   val read_raw_dump_file_digest : string option reader
   val read_property : string option reader
   val read_tx_id : (int * int) option reader
+  val read_transaction_list : Obs_data_model.tx_info list reader
+  val read_changed_tables : string list reader
 end
 
 type data_protocol_version = int * int * int

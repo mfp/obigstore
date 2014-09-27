@@ -84,6 +84,8 @@ struct
                   f b x
 
     let add_bool b x = add_byte b (if x then 1 else 0)
+
+    let add_float b x = add_int64_le b (Int64.bits_of_float x)
   end
 
   module D =
@@ -479,6 +481,48 @@ struct
 
   let read_property =
     reader (D.get_option D.get_string)
+
+  let return_changed_tables =
+    writer
+      (fun b l ->
+         E.add_status b 0;
+         E.add_list E.add_string b l)
+
+  let read_changed_tables = reader (D.get_list D.get_string)
+
+  let read_transaction_list =
+    reader
+      (fun ich ->
+         let read_lock ich =
+           lwt name      = D.get_string ich in
+           lwt exclusive = D.get_bool ich in
+             return (name, if exclusive then `EXCLUSIVE else `SHARED) in
+
+         let read_tx_info ich =
+           lwt tx_id        = D.get_int64_le ich in
+           lwt started_at   = D.get_float ich in
+           lwt wanted_locks = D.get_list read_lock ich in
+           lwt held_locks   = D.get_list read_lock ich in
+             return { tx_id; started_at; wanted_locks; held_locks; }
+         in
+           D.get_list read_tx_info ich)
+
+  let return_transaction_list =
+    writer
+      (fun b l ->
+         let add_lock b (name, kind) =
+           E.add_string b name;
+           E.add_bool b (match kind with `EXCLUSIVE -> true | `SHARED -> false) in
+
+         let write_tx_info b t =
+           E.add_int64_le b t.tx_id;
+           E.add_float b t.started_at;
+           E.add_list add_lock b t.wanted_locks;
+           E.add_list add_lock b t.held_locks
+         in
+
+           E.add_status b 0;
+           E.add_list write_tx_info b l)
 
   let return_tx_id =
     writer

@@ -226,7 +226,11 @@ struct
 \n\
      DUMP                       Trigger server-side database dump.\n\
      DUMP LOCAL                 Dump database in new (timestamped) directory.\n\
-     DUMP LOCAL TO dirname      Dump database to directory 'dirname'."
+     DUMP LOCAL TO dirname      Dump database to directory 'dirname'.\n\
+\n\
+     DEBUG txs                  List ongoing transactions.\n\
+     DEBUG tx 42                List tables modified by ongoing transaction 42.\n\
+"
 
   let help_message = function
       `Ignore_args (cmd, _, h) -> sprintf ".%-24s  %s" (cmd ^ ";") h
@@ -504,6 +508,35 @@ struct
       | Compact_table { Compact_table.table; from_key; to_key; _ } ->
           D.compact_table (get ks) table ?from_key ?to_key () >>
           ret print_endline "OK"
+      | List_transactions _ ->
+          lwt txs = D.list_transactions (get ks) in
+            printf "%10s  %20s  wanted  held\n" "id" "started_at";
+            List.iter
+              (fun tx ->
+                 let fmt_time t =
+                   let tm = Unix.gmtime t in
+                     sprintf "%04d-%02d-%02dT%02d:%02d:%02d"
+                       (1900 + tm.tm_year) (1 + tm.tm_mon) tm.tm_mday
+                       tm.tm_hour tm.tm_min tm.tm_sec in
+
+                 let fmt_lock_list l =
+                   String.concat "," @@
+                   List.map
+                     (fun (name, kind) -> match kind with
+                        | `SHARED -> sprintf "%S" name
+                        | `EXCLUSIVE -> sprintf "EXC%S" name)
+                     l
+                 in
+                   printf "%10Ld  %20s %s  %s\n"
+                     tx.tx_id (fmt_time tx.started_at)
+                     (fmt_lock_list tx.wanted_locks)
+                     (fmt_lock_list tx.held_locks))
+              txs;
+            ret print_endline ""
+      | Changed_tables { Changed_tables.tx_id; _ } ->
+          lwt l = D.changed_tables (get ks) tx_id in
+            List.sort String.compare l |> List.iter print_endline;
+            ret print_endline ""
 
   let execute ?(fmt = Format.std_formatter) ks db loop req =
     let keys = !Timing.cnt_keys in

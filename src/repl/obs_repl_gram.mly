@@ -79,7 +79,7 @@ let encode_key_list table l =
 %token <string> DIRECTIVE
 %token PRINTER LPAREN RPAREN PLUS MINUS
 %token KEYSPACES TABLES KEYSPACE SIZE BEGIN ABORT COMMIT KEYS COUNT GET PUT DELETE
-%token LOCK SHARED WATCH STATS LISTEN UNLISTEN LISTENP UNLISTENP NOTIFY AWAIT DUMP LOCAL TO TXID
+%token LOCK SHARED WATCH STATS LISTEN UNLISTEN LISTENP UNLISTENP NOTIFY AWAIT DUMP LOCAL TO TXID DEBUG
 %token LBRACKET RBRACKET COLON REVRANGE COND EQ COMMA EOF AND OR LT LE EQ GE GT
 %token LBRACE RBRACE COMPACT
 
@@ -139,6 +139,18 @@ phrase : /* empty */  { Nothing }
   | DUMP LOCAL { Dump_local None }
   | DUMP LOCAL id { Dump_local (Some $3) }
   | DUMP LOCAL TO id { Dump_local (Some $4) }
+  | DEBUG id_list_no_sep
+              {  match List.map String.uppercase $2 with 
+                   | "TXS" :: _ ->
+                       with_ks (fun keyspace ->
+                                  R.List_transactions { R.List_transactions.keyspace })
+                   | "TX" :: id :: _ ->
+                       let tx_id = Int64.of_string id in
+                         with_ks
+                           (fun keyspace ->
+                              R.Changed_tables { R.Changed_tables.keyspace; tx_id })
+                   | _ -> failwith "unknown DEBUG command"
+              }
   | count     { $1 }
   | get       { $1 }
   | put       { $1 }
@@ -484,6 +496,10 @@ opt_cond :
 id_list :
     id                { [$1] }
   | id_list COMMA id  { $1 @ [$3] }
+
+id_list_no_sep :
+    id                { [$1] }
+  | id_list id        { $1 @ [$2] }
 
 opt_id :
     /* empty */  { None }

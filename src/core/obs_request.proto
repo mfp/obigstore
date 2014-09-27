@@ -164,5 +164,7 @@ message request =
   | Compact_keyspace { keyspace : keyspace }
   | Compact_table { keyspace : keyspace; table : table;
                     from_key : opt<key>; to_key : opt<key> }
+  | List_transactions { keyspace : keyspace }
+  | Changed_tables { keyspace : keyspace; tx_id : long }
 
 (* vim:set ft=omlet: *) 

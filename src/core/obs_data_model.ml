@@ -99,6 +99,16 @@ type backup_format = int
 
 type raw_dump_timestamp = Int64.t
 
+type tx_id  = Int64.t
+type lock_kind = [`SHARED | `EXCLUSIVE]
+type tx_info   =
+    {
+      tx_id : tx_id;
+      started_at : float;
+      wanted_locks : (string * lock_kind) list;
+      held_locks : (string * lock_kind) list;
+    }
+
 (* {2 Data model } *)
 
 module type RAW_DUMP =
@@ -385,6 +395,10 @@ sig
   (** [load tx data] returns [false] if the data is in an unknown format. *)
   val load : keyspace -> string -> bool Lwt.t
 
+  module Raw_dump : RAW_DUMP with type db := db
+
+  (** {3 Administration} *)
+
   (** Load statistics  *)
   val load_stats : keyspace -> Obs_load_stats.stats Lwt.t
 
@@ -400,9 +414,11 @@ sig
     * of the table if not suppplied). *)
   val compact_table :
     keyspace -> table -> ?from_key:string -> ?to_key:string -> unit -> unit Lwt.t
+  (** List currently executing transactions. *)
+  val list_transactions : keyspace -> tx_info list Lwt.t
 
-  (** {3} Database dump. *)
-  module Raw_dump : RAW_DUMP with type db := db
+  (** List keys of tables modified so far in the specified transaction.  *)
+  val changed_tables : keyspace -> tx_id -> string list Lwt.t
 end
 
 (** DB operations with BSON-encoded columns: columns whose name begins with
