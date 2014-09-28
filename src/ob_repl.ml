@@ -510,7 +510,7 @@ struct
           ret print_endline "OK"
       | List_transactions _ ->
           lwt txs = D.list_transactions (get ks) in
-            printf "%10s  %20s  wanted  held\n" "id" "started_at";
+            printf "%10s  %20s  [wanted]  held\n" "id" "started_at";
             List.iter
               (fun tx ->
                  let fmt_time t =
@@ -527,7 +527,7 @@ struct
                         | `EXCLUSIVE -> sprintf "EXC%S" name)
                      l
                  in
-                   printf "%10Ld  %20s %s  %s\n"
+                   printf "%10Ld  %20s [%s]  %s\n"
                      tx.tx_id (fmt_time tx.started_at)
                      (fmt_lock_list tx.wanted_locks)
                      (fmt_lock_list tx.held_locks))
