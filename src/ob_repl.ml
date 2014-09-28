@@ -510,12 +510,12 @@ struct
           ret print_endline "OK"
       | List_transactions _ ->
           lwt txs = D.list_transactions (get ks) in
-            printf "%10s  %20s  [wanted]  held\n" "id" "started_at";
+            printf "%10s  %20s  <wanted>  held\n" "id" "started_at";
             List.iter
               (fun tx ->
                  let fmt_time t =
                    let tm = Unix.gmtime t in
-                     sprintf "%04d-%02d-%02dT%02d:%02d:%02d"
+                     sprintf "%04d-%02d-%02dT%02d:%02d:%02dZ"
                        (1900 + tm.tm_year) (1 + tm.tm_mon) tm.tm_mday
                        tm.tm_hour tm.tm_min tm.tm_sec in
 
@@ -527,7 +527,7 @@ struct
                         | `EXCLUSIVE -> sprintf "EXC%S" name)
                      l
                  in
-                   printf "%10Ld  %20s [%s]  %s\n"
+                   printf "%10Ld  %20s  <%s>  %s\n"
                      tx.tx_id (fmt_time tx.started_at)
                      (fmt_lock_list tx.wanted_locks)
                      (fmt_lock_list tx.held_locks))
