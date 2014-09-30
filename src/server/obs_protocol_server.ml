@@ -555,11 +555,11 @@ struct
           Hashtbl.add c.server.raw_dumps dump_id raw_dump;
           P.return_raw_dump_id_timestamp_dir ?buf c.och ~request_id
             (dump_id, timestamp, localdir)
-    | Raw_dump_release { Raw_dump_release.id } ->
+    | Raw_dump_release { Raw_dump_release.id; keep_files; } ->
         with_raw_dump c id ()
           (fun raw_dump ->
              Hashtbl.remove c.server.raw_dumps id;
-             D.Raw_dump.release raw_dump) >>=
+             D.Raw_dump.release raw_dump ~keep_files) >>=
         P.return_ok ?buf c.och ~request_id
     | Raw_dump_list_files { Raw_dump_list_files.id } ->
         with_raw_dump c id [] D.Raw_dump.list_files >>=
@@ -819,7 +819,7 @@ struct
               with exn ->
                 D.Replication.nack_update update >>
                 (* release no longer needed dump resources (e.g. files) *)
-                D.Raw_dump.release dump >>
+                D.Raw_dump.release dump ~keep_files:false >>
                 raise_lwt exn
               end >>
               forward_updates ()

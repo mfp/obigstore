@@ -121,7 +121,7 @@ sig
 
   (** Allow to release the resources associated to the dump (e.g., delete
     * the actual data). Further operations on the dump will fail. *)
-  val release : raw_dump -> unit Lwt.t
+  val release : raw_dump -> keep_files:bool -> unit Lwt.t
 
 
   val timestamp   : raw_dump -> raw_dump_timestamp Lwt.t

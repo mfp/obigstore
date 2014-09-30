@@ -104,6 +104,7 @@ let () =
         | true, _ ->
             lwt raw_dump = D.Raw_dump.dump ~mode:`No_stream db in
             lwt localdir = D.Raw_dump.localdir raw_dump in
+            lwt ()       = D.Raw_dump.release raw_dump ~keep_files:true in
               print_endline localdir;
               return_unit
         | _, None ->
@@ -122,6 +123,7 @@ let () =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
             lwt raw_dump = D.Raw_dump.dump ~mode:`No_stream db in
             lwt st       = DUMP.dump_local ~verbose:!verbose ~destdir raw_dump in
+            lwt ()       = D.Raw_dump.release raw_dump ~keep_files:false in
             let added    = List.enum st.Obs_dump.added_files |> S.of_enum in
             let all      = List.filter
                              (function

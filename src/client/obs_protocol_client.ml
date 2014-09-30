@@ -579,9 +579,9 @@ struct
           P.read_raw_dump_id_timestamp_dir
       in return { db = t; id; timestamp; localdir; }
 
-    let release d =
+    let release d ~keep_files =
       async_request d.db
-        (Raw_dump_release { Raw_dump_release.id = d.id; })
+        (Raw_dump_release { Raw_dump_release.id = d.id; keep_files; })
         P.read_ok
 
     let open_file d ?(offset=0L) fname =

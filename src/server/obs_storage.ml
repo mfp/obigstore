@@ -3455,6 +3455,7 @@ struct
         update_stream : update Lwt_stream.t;
         push_update : update option -> unit;
         on_get_stream : unit -> unit;
+        on_release : unit -> unit;
       }
 
   let is_file fname =
@@ -3493,8 +3494,10 @@ struct
 
     let on_get_stream () = match mode with
       | `Async | `No_stream -> ()
-      | `Sync -> new_slave.slave_mode_target <- Sync
-    in
+      | `Sync -> new_slave.slave_mode_target <- Sync in
+
+    let on_release () = remove_slave db new_slave in
+
       Unix.mkdir dstdir 0o755;
       add_slave db new_slave;
       match_lwt
@@ -3503,7 +3506,8 @@ struct
       with
         | true ->
             let ret = { id; directory = dstdir; timestamp;
-                        update_stream; push_update; on_get_stream; }
+                        update_stream; push_update; on_get_stream;
+                        on_release; }
             in
               return ret
         | false ->
@@ -3563,11 +3567,14 @@ struct
   let ign_unix_error f x =
     try f x with Unix.Unix_error _ -> ()
 
-  let release d =
-    Array.iter
-      (fun fname -> ign_unix_error Unix.unlink (Filename.concat d.directory fname))
-      (Sys.readdir d.directory);
-    ign_unix_error Unix.rmdir d.directory;
+  let release d ~keep_files =
+    d.on_release ();
+    if not keep_files then begin
+      Array.iter
+        (fun fname -> ign_unix_error Unix.unlink (Filename.concat d.directory fname))
+        (Sys.readdir d.directory);
+      ign_unix_error Unix.rmdir d.directory;
+    end;
     return_unit
 end
 

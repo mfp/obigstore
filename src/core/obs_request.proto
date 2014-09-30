@@ -151,7 +151,7 @@ message request =
   | Notify { keyspace : keyspace; topic : string; }
   | Await { keyspace : keyspace; }
   | Trigger_raw_dump { mode : raw_dump_mode; }
-  | Raw_dump_release { id : raw_dump_id; }
+  | Raw_dump_release { id : raw_dump_id; keep_files : bool; }
   | Raw_dump_list_files { id : raw_dump_id; }
   | Raw_dump_file_digest { id : raw_dump_id; file : string; }
   | Release_keyspace { keyspace : keyspace }
