@@ -227,11 +227,17 @@ type slave =
       slave_id : int;
       slave_push : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit);
       mutable slave_mode : sync_mode;
-      slave_mode_target : sync_mode;
+
+      (* slave_mode_target will be changed from Async to Sync after
+       * [get_update_stream] is applied on a raw_dump created in [`Sync] mode;
+       * i.e., the slave is async until the time the update stream is
+       * accessed, thus avoiding blocking writes while the slave is fetching
+       * data files before it can start to process the update stream *)
+      mutable slave_mode_target : sync_mode;
       mutable slave_pending_updates : int;
     }
 
-and sync_mode = Async | Sync
+and sync_mode = Async | Sync | No_stream
 
 module WRITEBATCH : sig
   type t
@@ -295,43 +301,46 @@ struct
   type tx = { t : t; mutable valid : bool; timestamp : Int64.t; }
 
   let do_push t serialized_update (slave_id, (unregister, slave)) =
-    let waiter, u = Lwt.task () in
-      (* see if we have to switch from async to sync (slave caught up
-       * with update stream) *)
-      begin match slave.slave_mode, slave.slave_mode_target with
-          Sync, _ | _, Async -> ()
-        | Async, Sync ->
-            if slave.slave_pending_updates = 0 then
-              slave.slave_mode <- Sync;
-      end;
-      slave.slave_pending_updates <- slave.slave_pending_updates + 1;
-      let wait_for_signal () =
-        try_lwt
-          match_lwt waiter with
-              `ACK -> return_unit
-            | `NACK ->
-                t.slave_tbl <- IM.remove slave_id t.slave_tbl;
-                unregister slave_id;
-                return_unit
-        finally
-          slave.slave_pending_updates <- slave.slave_pending_updates - 1;
-          return_unit
-      in
-        match slave.slave_mode with
-            Sync -> begin
-              slave.slave_push serialized_update u;
-              wait_for_signal ()
-            end
-          | Async -> begin
-              slave.slave_push serialized_update u;
-              ignore begin try_lwt
+    if slave.slave_mode = No_stream then return_unit
+    else
+      let waiter, u = Lwt.task () in
+        (* see if we have to switch from async to sync (slave caught up
+         * with update stream) *)
+        begin match slave.slave_mode, slave.slave_mode_target with
+            (Sync | No_stream), _ | _, (Async | No_stream) -> ()
+          | Async, Sync ->
+              if slave.slave_pending_updates = 0 then
+                slave.slave_mode <- Sync;
+        end;
+        slave.slave_pending_updates <- slave.slave_pending_updates + 1;
+        let wait_for_signal () =
+          try_lwt
+            match_lwt waiter with
+                `ACK -> return_unit
+              | `NACK ->
+                  t.slave_tbl <- IM.remove slave_id t.slave_tbl;
+                  unregister slave_id;
+                  return_unit
+          finally
+            slave.slave_pending_updates <- slave.slave_pending_updates - 1;
+            return_unit
+        in
+          match slave.slave_mode with
+            | No_stream -> return_unit
+            | Sync -> begin
+                slave.slave_push serialized_update u;
                 wait_for_signal ()
-              with exn ->
-                (* FIXME: log? *)
+              end
+            | Async -> begin
+                slave.slave_push serialized_update u;
+                ignore begin try_lwt
+                  wait_for_signal ()
+                with exn ->
+                  (* FIXME: log? *)
+                  return_unit
+                end;
                 return_unit
-              end;
-              return_unit
-            end
+              end
 
   let push_to_slaves t serialized_update =
     let slaves = IM.fold (fun k v l -> (k, v) :: l) t.slave_tbl [] in
@@ -3445,6 +3454,7 @@ struct
         directory : string;
         update_stream : update Lwt_stream.t;
         push_update : update option -> unit;
+        on_get_stream : unit -> unit;
       }
 
   let is_file fname =
@@ -3461,7 +3471,7 @@ struct
   external hot_backup : backup_env -> srcdir:string -> dstdir:string -> bool =
     "obigstore_hot_backup"
 
-  let dump db =
+  let dump db ~mode =
     let id        = new_dump_id () in
     let timestamp = Int64.of_float (Unix.gettimeofday () *. 1e6) in
     let dstdir    = Filename.concat db.basedir (sprintf "dump-%Ld" timestamp) in
@@ -3476,9 +3486,14 @@ struct
 
     let new_slave =
       { slave_id = id; slave_push = push_update_bytea;
-        slave_mode = Async; slave_mode_target = Sync;
+        slave_mode = Async;
+        slave_mode_target = (match mode with `No_stream -> No_stream | _ -> Async);
         slave_pending_updates = 0;
-      }
+      } in
+
+    let on_get_stream () = match mode with
+      | `Async | `No_stream -> ()
+      | `Sync -> new_slave.slave_mode_target <- Sync
     in
       Unix.mkdir dstdir 0o755;
       add_slave db new_slave;
@@ -3488,7 +3503,7 @@ struct
       with
         | true ->
             let ret = { id; directory = dstdir; timestamp;
-                        update_stream; push_update; }
+                        update_stream; push_update; on_get_stream; }
             in
               return ret
         | false ->
@@ -3563,8 +3578,12 @@ struct
   type _update_stream = update_stream
   type update_stream = _update_stream
 
-  let get_update_stream d = return d.Raw_dump.update_stream
+  let get_update_stream d =
+    d.Raw_dump.on_get_stream ();
+    return d.Raw_dump.update_stream
+
   let get_update = Lwt_stream.get
+
   let get_updates s = s
 
   let signal u x =

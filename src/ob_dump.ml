@@ -102,7 +102,7 @@ let () =
     lwt db = D.make ~data_address ich och ~role ~password in
       match !serverside, !raw_dump_dstdir with
         | true, _ ->
-            lwt raw_dump = D.Raw_dump.dump db in
+            lwt raw_dump = D.Raw_dump.dump ~mode:`No_stream db in
             lwt localdir = D.Raw_dump.localdir raw_dump in
               print_endline localdir;
               return_unit
@@ -120,7 +120,7 @@ let () =
         | _, Some destdir ->
             let module DUMP =
               Obs_dump.Make(struct include D include D.Raw_dump end) in
-            lwt raw_dump = D.Raw_dump.dump db in
+            lwt raw_dump = D.Raw_dump.dump ~mode:`No_stream db in
             lwt st       = DUMP.dump_local ~verbose:!verbose ~destdir raw_dump in
             let added    = List.enum st.Obs_dump.added_files |> S.of_enum in
             let all      = List.filter

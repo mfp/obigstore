@@ -135,7 +135,7 @@ phrase : /* empty */  { Nothing }
   | AWAIT
               { with_ks (fun keyspace -> R.Await { R.Await.keyspace; }) }
   | DUMP      { with_ks (fun keyspace -> R.Trigger_raw_dump
-                                           { R.Trigger_raw_dump.record = false }) }
+                                           { R.Trigger_raw_dump.mode = Raw_dump_mode.No_stream }) }
   | DUMP LOCAL { Dump_local None }
   | DUMP LOCAL id { Dump_local (Some $3) }
   | DUMP LOCAL TO id { Dump_local (Some $4) }

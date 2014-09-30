@@ -355,7 +355,7 @@ struct
     | Raw_dump_file_digest _ | Raw_dump_list_files _
     | Raw_dump_release _ | Release_keyspace _ | Watch_prefixes _ -> ret_nothing ()
     | Trigger_raw_dump _ ->
-        D.Raw_dump.dump db >>=
+        D.Raw_dump.dump db ~mode:`Async >>=
         ret (fun _ -> printf "Raw dump saved\n%!")
     | List_keyspaces _ -> D.list_keyspaces db >>= ret (print_list (sprintf "%S"))
     | List_tables _ ->
@@ -871,7 +871,7 @@ struct
                                                 include D
                                                 include D.Raw_dump
                                               end ) in
-              lwt raw_dump = D.Raw_dump.dump db in
+              lwt raw_dump = D.Raw_dump.dump db ~mode:`Async in
               lwt _ = DUMP.dump_local raw_dump ?destdir in
                 return_unit
           | Codec_directive (table, desc) ->

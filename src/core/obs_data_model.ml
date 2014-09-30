@@ -117,7 +117,7 @@ sig
   type raw_dump
 
   (** Request that the current state of the DB be dumped. *)
-  val dump : db -> raw_dump Lwt.t
+  val dump : db -> mode:[`Sync | `Async | `No_stream] -> raw_dump Lwt.t
 
   (** Allow to release the resources associated to the dump (e.g., delete
     * the actual data). Further operations on the dump will fail. *)

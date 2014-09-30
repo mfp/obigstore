@@ -84,7 +84,7 @@ let get_synced_db (ich,och) ~dir ~address ~data_address ~master_data_addr
   let module DUMP =
     Obs_dump.Make(struct include C include C.Raw_dump end) in
   lwt db = C.make ~data_address:master_data_addr ich och ~role ~password in
-  lwt raw_dump = C.Raw_dump.dump db in
+  lwt raw_dump = C.Raw_dump.dump ~mode:`Sync db in
   DUMP.dump_local ~verbose:true ~destdir:dir raw_dump >>
   let db = open_db dir in
   if !debug then eprintf "Getting replication stream\n%!";

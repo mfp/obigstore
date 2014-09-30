@@ -567,9 +567,15 @@ struct
   struct
     type raw_dump = { db : db; id : Int64.t; timestamp : Int64.t; localdir : string }
 
-    let dump t =
+    let dump t ~mode =
+      let open Raw_dump_mode in
       lwt id, timestamp, localdir =
-        async_request t (Trigger_raw_dump { Trigger_raw_dump.record = false })
+        async_request t
+          (Trigger_raw_dump
+             { Trigger_raw_dump.mode = match mode with
+                                         | `No_stream -> No_stream
+                                         | `Sync -> Sync
+                                         | `Async -> Async })
           P.read_raw_dump_id_timestamp_dir
       in return { db = t; id; timestamp; localdir; }
 

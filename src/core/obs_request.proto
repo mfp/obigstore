@@ -99,6 +99,8 @@ type tx_type =
 
 type raw_dump_id = long
 
+type raw_dump_mode = Sync | Async | No_stream
+
 message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
@@ -148,7 +150,7 @@ message request =
   | Unlisten { keyspace : keyspace; topic : string }
   | Notify { keyspace : keyspace; topic : string; }
   | Await { keyspace : keyspace; }
-  | Trigger_raw_dump { record : bool; }
+  | Trigger_raw_dump { mode : raw_dump_mode; }
   | Raw_dump_release { id : raw_dump_id; }
   | Raw_dump_list_files { id : raw_dump_id; }
   | Raw_dump_file_digest { id : raw_dump_id; file : string; }
