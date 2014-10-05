@@ -20,7 +20,15 @@ OMake*.omc
 *.sig
 *.log
 gmon.out
+/ob_benchmark
+/ob_bm_makedata
+/ob_bm_read
+/ob_bm_write
 /ob_dump
+/obigstore
 /ob_load
 /ob_repl
-/obigstore
+/test/ob_benchmark
+/test/ob_bm_makedata
+/test/ob_bm_read
+/test/ob_bm_write
