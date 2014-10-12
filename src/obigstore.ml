@@ -36,6 +36,7 @@ let unsafe_mode = ref false
 let replication_wait = ref Obs_protocol_server.Await_commit
 let max_concurrency = ref 5000
 let engine = ref "default"
+let async_replication = ref false
 
 let set_await_recv () =
   replication_wait := Obs_protocol_server.Await_commit
@@ -47,6 +48,8 @@ let params =
       "-port", Arg.Set_string port, "PORT Port or service name to listen to (default: 12050)";
       "-master", Arg.String (fun s -> master := Some s),
         "HOST:PORT Replicate database reachable on HOST:PORT.";
+      "-async-replication", Arg.Set async_replication,
+        " Perform asynchronous replication (used with -master).";
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
       "-write-buffer-size", Arg.Set_int write_buffer_size, "N Write buffer size (default: 4MB)";
       "-block-size", Arg.Set_int block_size, "N Block size (default: 4KB)";
@@ -77,13 +80,14 @@ let open_db dir =
     ~unsafe_mode:!unsafe_mode
     dir
 
-let get_synced_db (ich,och) ~dir ~address ~data_address ~master_data_addr
+let get_synced_db (ich,och)
+      ~mode ~dir ~address ~data_address ~master_data_addr
     auth protos ~role ~password =
   let module C    = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0) in
   let module DUMP = Obs_dump.Make(struct include C include C.Raw_dump end) in
 
   lwt db         = C.make ~data_address:master_data_addr ich och ~role ~password in
-  lwt raw_dump   = C.Raw_dump.dump ~mode:`Sync db in
+  lwt raw_dump   = C.Raw_dump.dump ~mode db in
   lwt _          = DUMP.dump_local ~verbose:true ~destdir:dir raw_dump in
   let db         = open_db dir in
   let ()         = if !debug then eprintf "Getting replication stream\n%!" in
@@ -196,7 +200,8 @@ let () =
                                 else try_connect pairs
                     in
                     lwt mic, moc, master_data_addr = try_connect remote_pairs in
-                      get_synced_db (mic, moc) ~dir ~address ~data_address ~master_data_addr
+                    let mode = if !async_replication then `Async else `Sync in
+                      get_synced_db (mic, moc) ~mode ~dir ~address ~data_address ~master_data_addr
                         auth protos ~role:"guest" ~password:"guest"
             in
               S.run_server db
