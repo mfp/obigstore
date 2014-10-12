@@ -19,10 +19,14 @@
 
 type t
 
-val make : (string * string) list -> t
+type perms    = [ `Full_access | `Replication ]
+type username = string
+and password  = string
+
+val make : (username * password * perms) list -> t
 val accept_all : t
 
 val challenge : t -> string
 
 (* @raise [Failure _] if the response is incorrect. *)
-val check_response : t -> role:string -> challenge:string -> response:string -> unit
+val check_response : t -> role:string -> challenge:string -> response:string -> perms

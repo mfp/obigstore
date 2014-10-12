@@ -201,7 +201,29 @@ struct
       (PP.pp pp_request_id request_id) c.id (PP.pp pp x) >>
     return x
 
-  let rec service c =
+  exception Denied
+
+  let check_perms perms req =
+    let open Obs_request.Request in
+    match perms, req with
+    | `Full_access, _ -> ()
+    | `Replication,
+      (Trigger_raw_dump _ | Raw_dump_release _ |
+       Raw_dump_list_files _ | Raw_dump_file_digest _) -> ()
+    | `Replication,
+      (Register_keyspace _ | Get_keyspace _ | List_keyspaces _ | List_tables _
+      | Table_size_on_disk _ | Key_range_size_on_disk _ | Begin _ | Commit _
+      | Abort _ | Lock _ | Exist_keys _ | Get_keys _ | Count_keys _ | Get_slice _
+      | Get_slice_values _ | Get_slice_values_timestamps _ | Get_columns _
+      | Get_column_values _ | Get_column _ | Put_columns _ | Delete_columns _
+      | Delete_key _ | Dump _ | Load _ | Stats _ | Listen _ | Unlisten _
+      | Notify _ | Await _ | Release_keyspace _
+      | Get_property _ | Watch_keys _ | Watch_columns _ | Delete_keys _
+      | Watch_prefixes _ | Get_transaction_id _ | Listen_prefix _
+      | Unlisten_prefix _ | Compact_keyspace _ | Compact_table _
+      | List_transactions _ | Changed_tables _) -> raise Denied
+
+  let rec service c perms =
     !auto_yielder () >>
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
     let throttling = D.throttling c.server.db in
@@ -211,17 +233,23 @@ struct
         c.server.async_req_region c.server.curr_concurrency_factor;
 
       match_lwt Lwt.choose [fst c.signal_error; c.read_request c] with
-          None -> service c
+          None -> service c perms
         | Some (r, request_id, len) ->
             let cost = request_slot_cost c.server ~request_size:len r in
               ignore begin
                 Lwt_util.run_in_region c.server.async_req_region cost
                   (fun () ->
                      begin try_lwt
+                       check_perms perms r;
                        relay_to_handler c ~request_id r
                      with
                        | End_of_file | Lwt_io.Channel_closed _
                        | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _)
+                       | Denied -> begin
+                           try_lwt
+                             P.bad_request c.och ~request_id ()
+                           with _ -> return_unit
+                         end
                        | Abort_all_txs ->
                            (* catch exns that indicate that the connection
                             * is gone, and signal End_of_file *)
@@ -245,7 +273,7 @@ struct
                * until one of them is done. Using [cost] here ensures we block
                * if the request consumed all of [curr_concurrency_factor - 1]. *)
               Lwt_util.run_in_region c.server.async_req_region cost (fun () -> return_unit) >>
-              service c
+              service c perms
 
   and relay_to_handler c ~request_id = function
     | List_tables { List_tables.keyspace; _ }
@@ -720,7 +748,7 @@ struct
 
   let client_id = ref 0
 
-  let service_client server protocol ich och =
+  let service_client server protocol ich och perms =
     let module PROTO = (val protocol : Obs_protocol.SERVER_FUNCTIONALITY) in
     let read_request c = PROTO.read_request c.in_buf c.ich c.och in
     let payload_writer = (module PROTO : Obs_protocol.PAYLOAD_WRITER) in
@@ -737,7 +765,7 @@ struct
     in setup_auto_yield server c;
        Lwt_log.debug_f ~section:req_section "New client %d" c.id >>
        try_lwt
-         service c
+         service c perms
        with Unix.Unix_error (Unix.ECONNRESET, _, _) ->
          raise_lwt End_of_file
        finally
@@ -828,7 +856,7 @@ struct
         forward_updates ()
     with Not_found -> send_response_code `Unknown_dump och
 
-  let service_data_client server ?(debug=false) ich och =
+  let service_data_client server ?(debug=false) ich och perms =
     try_lwt
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
       match_lwt read_checksummed_int ich with
@@ -838,8 +866,11 @@ struct
             lwt req_crc = Obs_protocol.read_exactly ich 4 in
               if Obs_crc32c.string_masked req <> req_crc then raise Corrupted_data_header;
               let req_ch = Lwt_io.of_string Lwt_io.input req in
+              (* make sure we get a compile-time error if we ever change the
+               * type witness *)
+              let ()     = match perms with | `Full_access | `Replication -> () in
                 match_lwt Lwt_io.LE.read_int req_ch >|= data_request_of_code with
-                    `Get_file -> handle_get_file ~debug server req_ch ich och
+                  | `Get_file -> handle_get_file ~debug server req_ch ich och
                   | `Get_updates -> handle_get_updates ~debug server req_ch ich och
                   | _ -> return_unit
         with Unix.Unix_error (Unix.ECONNRESET, _, _) ->

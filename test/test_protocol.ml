@@ -48,7 +48,7 @@ struct
       try_lwt
         ignore
           (try_lwt
-             SERVER.service_client server binary_protocol ch1_in ch2_out
+             SERVER.service_client server binary_protocol ch1_in ch2_out `Full_access
            with _ -> return ());
         f client
       finally
@@ -72,7 +72,7 @@ struct
         clients := client :: !clients;
         ignore
           (try_lwt
-             SERVER.service_client server binary_protocol ch1_in ch2_out
+             SERVER.service_client server binary_protocol ch1_in ch2_out `Full_access
            with _ -> return ());
         return  client in
     let pool = Lwt_pool.create 100 mk_client in

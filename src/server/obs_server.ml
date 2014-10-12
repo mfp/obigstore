@@ -30,8 +30,9 @@ let perform_auth auth ich och =
     write_line och challenge >>
     lwt response = Lwt_io.read_line ich in
       try_lwt
-        Obs_auth.check_response auth ~role ~challenge ~response;
-        write_line och "+OK"
+        let perms = Obs_auth.check_response auth ~role ~challenge ~response in
+          write_line och "+OK" >>
+          return perms
       with e ->
         write_line och "-ERR" >>
         raise_lwt e
@@ -53,7 +54,7 @@ let connection_handshake server auth ((bin, text) as protos) ich och =
       return (Scanf.sscanf s "%d.%d.%d" (fun a b c -> (a, b, c))) in
   let find_max_version = List.fold_left (fun v (w, _) -> max v w) (-1, 0, 0) in
   let to_s (m, n, o) = sprintf "%d.%d.%d" m n o in
-    perform_auth auth ich och >>
+  lwt perms          = perform_auth auth ich och in
     write_line och (to_s (find_max_version bin)) >>
     write_line och (to_s (find_max_version text)) >>
     lwt requested_proto =
@@ -65,7 +66,7 @@ let connection_handshake server auth ((bin, text) as protos) ich och =
       match find_protocol protos requested_proto with
           Some ((a, b, c), proto) ->
             write_line och (sprintf "%d.%d.%d" a b c) >>
-            return proto
+            return (proto, perms)
         | None ->
             write_line och "-ERR" >>
             raise_lwt (Failure "Cannot find matching protocol")
@@ -143,10 +144,10 @@ struct
         ]
 
   and handle_connection server auth protos conn =
-    lwt proto = connection_handshake server auth protos conn.ich conn.och in
-      S.service_client server proto conn.ich conn.och
+    lwt proto, perms = connection_handshake server auth protos conn.ich conn.och in
+      S.service_client server proto conn.ich conn.och perms
 
   and handle_data_connection server auth protos conn =
-    perform_auth auth conn.ich conn.och >>
-    S.service_data_client server conn.ich conn.och
+    lwt perms = perform_auth auth conn.ich conn.och in
+      S.service_data_client server conn.ich conn.och perms
 end

@@ -19,9 +19,13 @@
 
 open Printf
 
+type perms    = [ `Full_access | `Replication ]
+type username = string
+and password  = string
+
 type t =
     Accept_all
-  | Password of (string, string) Hashtbl.t
+  | Password of (string, password * perms) Hashtbl.t
 
 let rng =
   try Cryptokit.Random.device_rng "/dev/urandom"
@@ -33,7 +37,7 @@ let rng =
 
 let make l =
   let h = Hashtbl.create (List.length l) in
-    List.iter (fun (role, pwd) -> Hashtbl.add h role pwd) l;
+    List.iter (fun (role, pwd, perms) -> Hashtbl.add h role (pwd, perms)) l;
     (Password h)
 
 let accept_all = Accept_all
@@ -63,14 +67,14 @@ let cmp_constant_time s1 s2 =
  * enough not to leak info about the password! *)
 let check_response auth ~role ~challenge ~response =
   try
-    let pwd = Hashtbl.find auth role in
-    let expected = to_hex Cryptokit.(hash_string (MAC.hmac_sha1 pwd) challenge) in
+    let pwd, perms = Hashtbl.find auth role in
+    let expected   = to_hex Cryptokit.(hash_string (MAC.hmac_sha1 pwd) challenge) in
       match cmp_constant_time expected response with
-          `Equal -> ()
+        | `Equal -> perms
         | `Different -> failwith (sprintf "Incorrect password")
   with Not_found -> failwith (sprintf "Unknown role %S" role)
 
 let check_response auth ~role ~challenge ~response =
   match auth with
-      Accept_all -> ()
+    | Accept_all -> `Full_access
     | Password t -> check_response t ~role ~challenge ~response
