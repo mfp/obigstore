@@ -789,14 +789,17 @@ struct
           match_lwt D.Raw_dump.open_file dump ~offset name with
               None -> send_response_code `Unknown_file och
             | Some ic ->
-                send_response_code `OK och >>
-                let buf = String.create 16384 in
-                let rec loop_copy_data () =
-                  match_lwt Lwt_io.read_into ic buf 0 16384 with
-                      0 -> return_unit
-                    | n -> Lwt_io.write_from_exactly och buf 0 n >>
-                           loop_copy_data ()
-                in loop_copy_data ()
+                try_lwt
+                  send_response_code `OK och >>
+                  let buf = String.create 16384 in
+                  let rec loop_copy_data () =
+                    match_lwt Lwt_io.read_into ic buf 0 16384 with
+                        0 -> return_unit
+                      | n -> Lwt_io.write_from_exactly och buf 0 n >>
+                             loop_copy_data ()
+                  in loop_copy_data ()
+                finally
+                  Lwt_io.close ic
       with Not_found -> send_response_code `Unknown_dump och
 
   let rec write_and_update_crc crc och buf off len =
