@@ -1,0 +1,12 @@
+
+type name     = string
+type password = string
+type perms    = [Full_access | Replication] list
+type role     = { role     : name;
+                  password : password;
+                  perms    : perms
+                }
+
+type roles = role list
+
+(* vim: set ft=ocaml: *)

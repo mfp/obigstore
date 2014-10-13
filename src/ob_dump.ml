@@ -36,6 +36,8 @@ let output          = ref "-"
 let raw_dump_dstdir = ref None
 let verbose         = ref false
 let serverside      = ref true
+let role            = ref "guest"
+let password        = ref "guest"
 
 let usage_message = "Usage: ob_dump [-serverside | -keyspace NAME | -full DIR] [options]"
 
@@ -52,6 +54,8 @@ let params =
       "-o", Arg.Set_string output, "FILE Dump to file FILE (default: '-')";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+      "-role", Arg.Set_string role, "ROLE Authentify as ROLE";
+      "-password", Arg.Set_string password, "PASS Authentify using password PASS";
       "-v", Arg.Set verbose, " Verbose mode.";
     ]
 
@@ -82,9 +86,6 @@ let dump db ~keyspace ~only_tables och =
                in Progress_report.with_progress_report ~max:approx_size
                     Lwt_io.stderr (loop_dump None))
 
-let role = "guest"
-let password = "guest"
-
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
@@ -99,7 +100,7 @@ let () =
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
-    lwt db = D.make ~data_address ich och ~role ~password in
+    lwt db = D.make ~data_address ich och ~role:!role ~password:!password in
       match !serverside, !raw_dump_dstdir with
         | true, _ ->
             lwt raw_dump = D.Raw_dump.dump ~mode:`No_stream db in

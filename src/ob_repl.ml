@@ -33,22 +33,26 @@ exception Reload_keyspace of string
 
 exception Need_reconnect of string option
 
-let keyspace = ref ""
-let server = ref "localhost"
-let port = ref "12050"
+let keyspace    = ref ""
+let server      = ref "localhost"
+let port        = ref "12050"
 let simple_repl = ref false
-let dir = ref ""
+let dir         = ref ""
+let role        = ref "guest"
+let password    = ref "guest"
 
 let usage_message = "Usage: ob_repl [options]"
 
 let params =
   Arg.align
     [
-      "-keyspace", Arg.Set_string keyspace, "NAME Operate in keyspace NAME.";
+      "-keyspace", Arg.Set_string keyspace, "NAME Operate in keyspace NAME";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR (default: localhost)";
       "-port", Arg.Set_string port, "PORT Connect to server port or service name PORT (default: 12050)";
-      "-dir", Arg.Set_string dir, "DIR Use DB at DIR.";
-      "-simple", Arg.Set simple_repl, " Simple mode for use with rlwrap and similar.";
+      "-dir", Arg.Set_string dir, "DIR Use DB at DIR";
+      "-simple", Arg.Set simple_repl, " Simple mode for use with rlwrap and similar";
+      "-role", Arg.Set_string role, "ROLE Authentify as ROLE";
+      "-password", Arg.Set_string password, "PASS Authentify using password PASS";
     ]
 
 let tx_level = ref 0
@@ -933,9 +937,6 @@ struct
       return_unit
 end
 
-let role = "guest"
-let password = "guest"
-
 module type OPS =
 sig
   include Obs_data_model.S
@@ -961,7 +962,7 @@ struct
                | Unix.ADDR_INET (h, p) -> Unix.ADDR_INET (h, p), Unix.ADDR_INET (h, p + 1)
                | _ -> raise (Need_reconnect (Some "No server at supplied address/port"))) in
             lwt ich, och = Lwt_io.open_connection addr in
-            lwt db = R.make ~data_address ich och ~role ~password in
+            lwt db = R.make ~data_address ich och ~role:!role ~password:!password in
             if !keyspace = "" then
               return (db, None)
             else begin

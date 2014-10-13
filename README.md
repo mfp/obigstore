@@ -60,6 +60,8 @@ Requirements
 * oUnit for the unit tests  (libounit-ocaml-dev)
 * extprot
 * ocaml-leveldb
+* atdgen (libatdgen-ocaml-dev)
+* yojson (libyojson-ocaml-dev)
 
 Building
 --------

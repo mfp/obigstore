@@ -20,6 +20,7 @@ OMake*.omc
 *.sig
 *.log
 gmon.out
+/Atdgen.omc
 /ob_benchmark
 /ob_bm_makedata
 /ob_bm_read
@@ -28,6 +29,10 @@ gmon.out
 /obigstore
 /ob_load
 /ob_repl
+/src/server/obs_config_j.ml
+/src/server/obs_config_j.mli
+/src/server/obs_config_t.ml
+/src/server/obs_config_t.mli
 /test/ob_benchmark
 /test/ob_bm_makedata
 /test/ob_bm_read

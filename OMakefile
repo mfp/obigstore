@@ -9,6 +9,8 @@ if $(file-exists $(shell $(OCAMLC) -where)/dynlink.cmxa)
     HAS_NATDYNLINK = true
     export HAS_NATDYNLINK
 
+include Atdgen
+
 # allow to override the above variables from command line
 DefineCommandVars()
 
@@ -50,6 +52,8 @@ OCAMLPACKS[] =
     lwt.syntax.log
     lwt.preemptive
     ocamlgraph
+    atdgen
+    yojson
 
 if $(not $(defined LEVELDB_DIR))
     OCAMLPACKS[] += leveldb

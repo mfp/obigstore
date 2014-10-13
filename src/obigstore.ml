@@ -21,6 +21,8 @@ open Printf
 open Lwt
 
 module String = BatString
+module List   = BatList
+
 module S = Obs_server.Make(Obs_storage)
 
 let host = ref "0.0.0.0"
@@ -37,6 +39,9 @@ let replication_wait = ref Obs_protocol_server.Await_commit
 let max_concurrency = ref 5000
 let engine = ref "default"
 let async_replication = ref false
+let auth_file = ref ""
+let role     = ref "guest"
+let password = ref "guest"
 
 let set_await_recv () =
   replication_wait := Obs_protocol_server.Await_commit
@@ -46,8 +51,11 @@ let params =
     [
       "-host", Arg.Set_string host, "HOST IP or hostname to listen to (default: 0.0.0.0)";
       "-port", Arg.Set_string port, "PORT Port or service name to listen to (default: 12050)";
+      "-auth", Arg.Set_string auth_file, "FILE Read auth configuration from FILE.";
       "-master", Arg.String (fun s -> master := Some s),
         "HOST:PORT Replicate database reachable on HOST:PORT.";
+      "-role", Arg.Set_string role, "ROLE Authentify as ROLE";
+      "-password", Arg.Set_string password, "PASS Authentify using password PASS";
       "-async-replication", Arg.Set async_replication,
         " Perform asynchronous replication (used with -master).";
       "-debug", Arg.Set debug, " Dump debug info to stderr.";
@@ -128,7 +136,8 @@ let text_protos =
     (0, 0, 0), (module Obs_protocol_textual.Version_0_0_0 : Obs_protocol.SERVER_FUNCTIONALITY);
   ]
 
-let protos = (List.(rev (sort compare bin_protos)), List.(rev (sort compare text_protos)))
+let protos = (List.(rev (sort Pervasives.compare bin_protos)),
+              List.(rev (sort Pervasives.compare text_protos)))
 
 let () =
   Arg.parse
@@ -164,8 +173,18 @@ let () =
             (Printf.sprintf "Impossible to obtain a socket address from %s/%s" !host !port)) in
 
   let address, data_address = List.hd address_pairs in
-  let auth                  = Obs_auth.accept_all in
 
+  let read_auth () =
+    match !auth_file with
+      | "" -> return Obs_auth.accept_all
+      | f ->
+          try_lwt
+            Obs_config.read_auth f
+          with exn ->
+            eprintf "Error while parsing %S\n" f;
+            prerr_endline (Printexc.to_string exn);
+            exit 1
+  in
     match !db_dir with
       | None -> Arg.usage params usage_message;
           exit 1
@@ -177,7 +196,8 @@ let () =
             | _ -> Arg.usage params usage_message; exit 1
           end;
           Lwt_main.run begin
-            lwt db =
+            lwt auth = read_auth () in
+            lwt db   =
               match !master with
                 | None ->
                     Lwt.return (open_db dir)
@@ -202,7 +222,7 @@ let () =
                     lwt mic, moc, master_data_addr = try_connect remote_pairs in
                     let mode = if !async_replication then `Async else `Sync in
                       get_synced_db (mic, moc) ~mode ~dir ~address ~data_address ~master_data_addr
-                        auth protos ~role:"guest" ~password:"guest"
+                        auth protos ~role:!role ~password:!password
             in
               S.run_server db
                 ~max_async_reqs:!max_concurrency

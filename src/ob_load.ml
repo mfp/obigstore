@@ -24,9 +24,11 @@ open Obs_util
 module D = Obs_protocol_client.Make(Obs_protocol_bin.Version_0_0_0)
 
 let keyspace = ref ""
-let server = ref "127.0.0.1"
-let port = ref 12050
-let file = ref "-"
+let server   = ref "127.0.0.1"
+let port     = ref 12050
+let file     = ref "-"
+let role     = ref "guest"
+let password = ref "guest"
 
 let usage_message = "Usage: ob_load -keyspace NAME [options]"
 
@@ -36,6 +38,8 @@ let params =
       "-keyspace", Arg.Set_string keyspace, "NAME Dump tables in keyspace NAME.";
       "-server", Arg.Set_string server, "ADDR Connect to server at ADDR.";
       "-port", Arg.Set_int port, "N Connect to server port N (default: 12050)";
+      "-role", Arg.Set_string role, "ROLE Authentify as ROLE";
+      "-password", Arg.Set_string password, "PASS Authentify using password PASS";
       "-i", Arg.Set_string file, "FILE Load from FILE (default: -)";
     ]
 
@@ -69,9 +73,6 @@ let load db ~keyspace ?size ich =
                 ?max:size Lwt_io.stderr loop_load
             with End_of_file -> return_unit)
 
-let role = "guest"
-let password = "guest"
-
 let () =
   Printexc.record_backtrace true;
   Arg.parse params ignore usage_message;
@@ -90,6 +91,6 @@ let () =
     let addr = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port) in
     let data_address = Unix.ADDR_INET (Unix.inet_addr_of_string !server, !port + 1) in
     lwt ich, och = Lwt_io.open_connection addr in
-    lwt db = D.make ~data_address ich och ~role ~password in
+    lwt db = D.make ~data_address ich och ~role:!role ~password:!password in
       load db ~keyspace:!keyspace ?size input
   end
