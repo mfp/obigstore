@@ -392,6 +392,7 @@ struct
   let internal_error = write_error 500 "internal error"
   let deadlock = write_error 501 "deadlock"
   let dirty_data = write_error 502 "dirty data"
+  let denied = write_error 403 "denied"
 
   let int64_writer =
     writer (fun ?buf och x -> write_line och (":" ^ Int64.to_string x))

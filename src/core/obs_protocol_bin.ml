@@ -196,6 +196,7 @@ struct
     | -4 -> raise_lwt (Error Internal_error)
     | -5 -> raise_lwt Deadlock
     | -6 -> raise_lwt Dirty_data
+    | -7 -> raise_lwt Denied
     | n -> raise_lwt (Error (Other n))
 
   let reader f ich =
@@ -220,6 +221,9 @@ struct
 
   let dirty_data =
     writer (fun b () -> E.add_status b (-6))
+
+  let denied =
+    writer (fun b () -> E.add_status b (-7))
 
   let return_keyspace =
     writer (fun b ks ->

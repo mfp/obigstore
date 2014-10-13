@@ -29,6 +29,10 @@ exception Dirty_data
 (** Exception raised by the {!lock} operation if a deadlock is detected. *)
 exception Deadlock
 
+(** Operation denied owning to insufficient permissions or invalid
+ * credentials. *)
+exception Denied
+
 type table = string
 
 let table_of_string x = x

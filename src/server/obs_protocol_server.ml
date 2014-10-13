@@ -247,7 +247,7 @@ struct
                        | Unix.Unix_error((Unix.ECONNRESET | Unix.EPIPE), _, _)
                        | Denied -> begin
                            try_lwt
-                             P.bad_request c.och ~request_id ()
+                             P.denied c.och ~request_id ()
                            with _ -> return_unit
                          end
                        | Abort_all_txs ->

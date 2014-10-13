@@ -186,7 +186,7 @@ struct
       Lwt_io.write_line och response >>
       match_lwt Lwt_io.read_line ich with
           "+OK" -> return_unit
-        | _ -> raise_lwt (Failure (sprintf "Authentication error (role %S)" role))
+        | _ -> raise_lwt Obs_data_model.Denied
 
   let make ~data_address ich och ~role ~password =
     let t =
