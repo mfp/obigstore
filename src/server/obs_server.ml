@@ -112,7 +112,7 @@ struct
               handle_connection server auth protos { ich; och; addr }
             finally
               (try_lwt Lwt_io.flush och with _ -> return ()) >>
-              (try Lwt_io.abort och >> Lwt_io.abort ich with _ -> return_unit)
+              (try_lwt Lwt_io.abort och >> Lwt_io.abort ich with _ -> return_unit)
         with
           | End_of_file
           | Unix.Unix_error ((Unix.ECONNRESET | Unix.EPIPE), _, _) ->
