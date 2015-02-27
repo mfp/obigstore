@@ -27,6 +27,7 @@ module S = Obs_server.Make(Obs_storage)
 
 let host = ref "0.0.0.0"
 let port = ref "12050"
+let sock = ref ""
 let db_dir = ref None
 let debug = ref false
 let write_buffer_size = ref (4 * 1024 * 1024)
@@ -51,6 +52,7 @@ let params =
     [
       "-host", Arg.Set_string host, "HOST IP or hostname to listen to (default: 0.0.0.0)";
       "-port", Arg.Set_string port, "PORT Port or service name to listen to (default: 12050)";
+      "-sock", Arg.Set_string sock, "PATH Unix domain socket to listen at";
       "-auth", Arg.Set_string auth_file, "FILE Read auth configuration from FILE.";
       "-master", Arg.String (fun s -> master := Some s),
         "HOST:PORT Replicate database reachable on HOST:PORT.";
@@ -170,9 +172,20 @@ let () =
     if address_pairs = [] then
        raise
          (Invalid_argument
-            (Printf.sprintf "Impossible to obtain a socket address from %s/%s" !host !port)) in
+            (sprintf "Impossible to obtain a socket address from %s/%s" !host !port)) in
 
   let address, data_address = List.hd address_pairs in
+
+  let addresses = match !sock with
+    | "" -> []
+    | s ->
+        begin try
+          match (Unix.stat s).Unix.st_kind with
+            | Unix.S_SOCK -> Unix.unlink s
+            | _ -> () (* will fail eventually on Unix.bind *)
+        with Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+        end;
+        [Unix.ADDR_UNIX s] in
 
   let read_auth () =
     match !auth_file with
@@ -227,5 +240,5 @@ let () =
               S.run_server db
                 ~max_async_reqs:!max_concurrency
                 ~replication_wait:!replication_wait
-                ~address ~data_address auth protos
+                ~address ~addresses ~data_address auth protos
           end

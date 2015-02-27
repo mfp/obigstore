@@ -103,8 +103,8 @@ struct
       lwt () = Lwt_log.info_f ~section
                  "Got connection from %s" (string_of_addr addr)
       in
-        Lwt_unix.setsockopt fd Unix.TCP_NODELAY true;
-        Lwt_unix.setsockopt fd Unix.SO_KEEPALIVE true;
+        (try Lwt_unix.setsockopt fd Unix.TCP_NODELAY true with _ -> ());
+        (try Lwt_unix.setsockopt fd Unix.SO_KEEPALIVE true with _ -> ());
         ignore begin try_lwt
           let ich = Lwt_io.of_fd Lwt_io.input fd in
           let och = Lwt_io.of_fd Lwt_io.output fd in
@@ -127,8 +127,13 @@ struct
     accept_loop handle_connection ~server auth protos sock
 
   let make_sock ?(reuseaddr=true) ?(backlog=1024) address =
-    let sock = Lwt_unix.socket (Unix.domain_of_sockaddr address) Unix.SOCK_STREAM 0 in
-      if reuseaddr then Lwt_unix.setsockopt sock Unix.SO_REUSEADDR true;
+    let sock = Lwt_unix.socket
+                 (Unix.domain_of_sockaddr address) Unix.SOCK_STREAM 0
+    in
+      begin try
+        if reuseaddr then Lwt_unix.setsockopt sock Unix.SO_REUSEADDR true
+      with _ -> ()
+      end;
       Lwt_unix.bind sock address;
       Lwt_unix.listen sock backlog;
       sock
@@ -136,12 +141,15 @@ struct
   let rec run_server
         ?(replication_wait = Obs_protocol_server.Await_commit)
         ?(max_async_reqs = 5000)
-        db ~address ~data_address auth protos =
+        db ~address ?(addresses = []) ~data_address
+        auth protos =
     let server = S.make ~max_async_reqs ~replication_wait db in
-      Lwt.join
-        [ accept_loop handle_connection ~server auth protos (make_sock address);
-          accept_loop handle_data_connection ~server auth protos (make_sock data_address);
-        ]
+      Lwt_list.iter_p
+        (fun (handle, addr) ->
+           accept_loop handle ~server auth protos (make_sock addr))
+        ((handle_data_connection, data_address) ::
+         (handle_connection, address) ::
+         List.map (fun addr -> (handle_connection, addr)) addresses)
 
   and handle_connection server auth protos conn =
     lwt proto, perms = connection_handshake server auth protos conn.ich conn.och in
