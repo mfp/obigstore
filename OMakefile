@@ -33,7 +33,7 @@ OCAMLOPTFLAGS += -g -inline 100
 .PHONY: install
 .PHONY: uninstall
 
-OCAMLFLAGS     = -g -thread -w +a-4-6-9-27..29-32..99 -warn-error +a-4-6-9-18-27-28-29..99
+OCAMLFLAGS     = -g -thread -w +a-4-6-9-27..29-32..99 -warn-error -a
 OCAMLFINDFLAGS = -syntax camlp4o -ppopt -lwt-debug
 CFLAGS         = -g -Wall -O2 -fPIC
 
