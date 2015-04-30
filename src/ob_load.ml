@@ -44,7 +44,7 @@ let params =
     ]
 
 let load db ~keyspace ?size ich =
-  let region = Lwt_util.make_region 10 in (* max parallel reqs *)
+  let region = Obs_lwt_region.make_region 10 in (* max parallel reqs *)
   lwt ks = D.register_keyspace db keyspace in
   let error = ref None in
     D.repeatable_read_transaction ks
@@ -58,14 +58,14 @@ let load db ~keyspace ?size ich =
                  lwt () = Lwt_io.read_into_exactly ich buf 0 len in
                    ignore begin
                      try_lwt
-                       Lwt_util.run_in_region region 1
+                       Obs_lwt_region.run_in_region region 1
                          (fun () -> D.load tx buf >|= ignore)
                      with e ->
                        error := Some e;
                        return_unit
                    end;
                    (* wait until one of the reqs is done *)
-                   Lwt_util.run_in_region region 1 (fun () -> return_unit) >>
+                   Obs_lwt_region.run_in_region region 1 (fun () -> return_unit) >>
                    loop_load progress
              | Some error -> raise_lwt error
          in try_lwt

@@ -95,7 +95,7 @@ struct
         raw_dumps : (Int64.t, D.Raw_dump.raw_dump) Hashtbl.t;
         mutable raw_dump_seqno : Int64.t;
         replication_wait : replication_wait;
-        async_req_region : Lwt_util.region;
+        async_req_region : Obs_lwt_region.region;
         max_concurrency_factor : int;
         mutable curr_concurrency_factor : int;
       }
@@ -229,7 +229,7 @@ struct
     let throttling = D.throttling c.server.db in
     let new_factor = truncate (float c.server.max_concurrency_factor *. throttling) in
       c.server.curr_concurrency_factor <- new_factor;
-      Lwt_util.resize_region
+      Obs_lwt_region.resize_region
         c.server.async_req_region c.server.curr_concurrency_factor;
 
       match_lwt Lwt.choose [fst c.signal_error; c.read_request c] with
@@ -237,7 +237,7 @@ struct
         | Some (r, request_id, len) ->
             let cost = request_slot_cost c.server ~request_size:len r in
               ignore begin
-                Lwt_util.run_in_region c.server.async_req_region cost
+                Obs_lwt_region.run_in_region c.server.async_req_region cost
                   (fun () ->
                      begin try_lwt
                        check_perms perms r;
@@ -272,7 +272,7 @@ struct
               (* here we block if the allowed number of async reqs is reached
                * until one of them is done. Using [cost] here ensures we block
                * if the request consumed all of [curr_concurrency_factor - 1]. *)
-              Lwt_util.run_in_region c.server.async_req_region cost (fun () -> return_unit) >>
+              Obs_lwt_region.run_in_region c.server.async_req_region cost (fun () -> return_unit) >>
               service c perms
 
   and relay_to_handler c ~request_id = function
@@ -742,7 +742,7 @@ struct
         raw_dumps = Hashtbl.create 13;
         replication_wait;
         max_concurrency_factor;
-        async_req_region = Lwt_util.make_region max_concurrency_factor;
+        async_req_region = Obs_lwt_region.make_region max_concurrency_factor;
         curr_concurrency_factor = max_concurrency_factor;
       }
 
@@ -859,6 +859,8 @@ struct
         forward_updates ()
     with Not_found -> send_response_code `Unknown_dump och
 
+  let lwt_io_of_string ~mode str = Lwt_io.of_bytes ~mode (Lwt_bytes.of_string str)
+
   let service_data_client server ?(debug=false) ich och perms =
     try_lwt
       lwt (major, minor, bugfix) = data_conn_handshake ich och in
@@ -868,7 +870,7 @@ struct
             lwt req = Obs_protocol.read_exactly ich req_len in
             lwt req_crc = Obs_protocol.read_exactly ich 4 in
               if Obs_crc32c.string_masked req <> req_crc then raise Corrupted_data_header;
-              let req_ch = Lwt_io.of_string Lwt_io.input req in
+              let req_ch = lwt_io_of_string Lwt_io.input req in
               (* make sure we get a compile-time error if we ever change the
                * type witness *)
               let ()     = match perms with | `Full_access | `Replication -> () in

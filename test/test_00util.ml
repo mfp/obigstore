@@ -142,7 +142,7 @@ let lwt_tests
       ?(max_concurrency = 10)
       ?(concurrent_timeout = 10.0)
       ?(sequential=[]) concurrent =
-  let region     = Lwt_util.make_region max_concurrency in
+  let region     = Obs_lwt_region.make_region max_concurrency in
 
   let concurrent =
     List.map
@@ -151,7 +151,7 @@ let lwt_tests
          let init_t, init_u = Lwt.task () in
          let g () =
            ignore begin
-             Lwt_util.run_in_region region 1
+             Obs_lwt_region.run_in_region region 1
                (fun () ->
                   try_lwt
                     lwt () = init_t in
