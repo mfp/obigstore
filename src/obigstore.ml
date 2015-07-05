@@ -125,7 +125,21 @@ let get_synced_db (ich,och)
         raise exn
 
   in
-    async (fun () -> Lwt_stream.iter_s iter_f lwt_stream);
+    async begin fun () ->
+      let rec await_master_up () =
+        try_lwt
+          lwt fd, ich, och = Obs_conn.open_connection master_data_addr in
+            Lwt_io.close och
+        with _ ->
+          Lwt_unix.sleep 1. >>
+          await_master_up () in
+
+      Lwt_stream.iter_s iter_f lwt_stream >>
+      Lwt_io.eprintf "Waiting for master to come back.\n" >>
+      await_master_up () >>
+      Lwt_io.eprintf "master came back, exiting.\n" >>
+      exit 2
+    end;
     return db
 
 let bin_protos =

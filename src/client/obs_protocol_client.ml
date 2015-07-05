@@ -696,7 +696,8 @@ struct
             with exn ->
               Lwt_log.error_f ~section ~exn
                 "Exception in protocol client get_update_stream" >>
-              Lwt_io.abort och
+              Lwt_io.abort och >>
+              return (push None)
           end
         in return ret
 
