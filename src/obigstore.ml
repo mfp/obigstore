@@ -45,7 +45,7 @@ let role     = ref "guest"
 let password = ref "guest"
 
 let set_await_recv () =
-  replication_wait := Obs_protocol_server.Await_commit
+  replication_wait := Obs_protocol_server.Await_reception
 
 let params =
   Arg.align
