@@ -41,8 +41,8 @@ let max_concurrency = ref 5000
 let engine = ref "default"
 let async_replication = ref false
 let auth_file = ref ""
-let role     = ref "guest"
-let password = ref "guest"
+let role     = ref (try Sys.getenv "OBIGSTORE_ROLE" with _ -> "guest")
+let password = ref (try Sys.getenv "OBIGSTORE_PASSWORD" with _ -> "guest")
 
 let set_await_recv () =
   replication_wait := Obs_protocol_server.Await_reception
