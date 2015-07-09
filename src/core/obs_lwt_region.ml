@@ -21,7 +21,7 @@
  * 02111-1307, USA.
  *)
 
-open Lwt.Infix
+let (>>=) = Lwt.bind
 
 type region =
   { mutable size : int;
