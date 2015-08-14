@@ -20,7 +20,7 @@
 
 open Lwt
 
-(* taken from lwt_io.ml *)
+(* adapted from lwt_io.ml *)
 let open_connection ?buffer_size sockaddr =
   let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sockaddr) Unix.SOCK_STREAM 0 in
   let close = lazy begin
@@ -37,10 +37,10 @@ let open_connection ?buffer_size sockaddr =
     lwt () = Lwt_unix.connect fd sockaddr in
     (try Lwt_unix.set_close_on_exec fd with Invalid_argument _ -> ());
     return (fd,
-            Lwt_io.make ?buffer_size
+            Lwt_io.make ?buffer:(BatOption.map Lwt_bytes.create buffer_size)
               ~close:(fun _ -> Lazy.force close)
               ~mode:Lwt_io.input (Lwt_bytes.read fd),
-            Lwt_io.make ?buffer_size
+            Lwt_io.make ?buffer:(BatOption.map Lwt_bytes.create buffer_size)
               ~close:(fun _ -> Lazy.force close)
               ~mode:Lwt_io.output (Lwt_bytes.write fd))
   with exn ->
