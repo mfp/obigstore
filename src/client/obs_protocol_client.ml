@@ -263,7 +263,15 @@ struct
     let () =
       if debug_enabled () then
         ignore begin
-          lwt () = Lwt_unix.sleep 5.0 in
+          (* We make sure to cancel the Lwt_unix.sleep as soon as the request
+           * is serviced so as to avoid leaving lots of threads around (they
+           * can carry quite a lot of data if this is within a Lwt.with_value
+           * block). *)
+          let sleep = Lwt_unix.sleep 5.0 in
+          lwt () = Lwt.choose
+                     [ sleep; (try_lwt wait >> return_unit with _ -> return_unit) ]
+          in
+            (try Lwt.cancel sleep with _ -> ());
             match Lwt.poll wait with
                 None ->
                   Lwt_log.warning_f ~section "No response to request %d\n%s"
@@ -377,10 +385,17 @@ struct
         | true ->
             let t = exec () in
             let dt = 10. in
+            (* We make sure to cancel the Lwt_unix.sleep as soon as the request
+             * is serviced so as to avoid leaving lots of threads around (they
+             * can carry quite a lot of data if this is within a Lwt.with_value
+             * block). *)
+            let sleep = Lwt_unix.sleep dt >> return `Timeout in
               match_lwt
-                Lwt.choose [ Lwt_unix.sleep dt >> return `Timeout; t >> return `OK ]
+                Lwt.choose [sleep; (try_lwt t >> return `OK with _ -> return `OK)]
               with
-                  `OK -> t
+                | `OK ->
+                    (try Lwt.cancel sleep with _ -> ());
+                    t
                 | `Timeout ->
                     Lwt_log.warning_f ~section
                       "Locks in namespace %S not acquired in %fs: %s"
