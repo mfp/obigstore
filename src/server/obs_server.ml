@@ -136,7 +136,7 @@ struct
       end;
       Lwt_unix.bind sock address;
       begin match address with
-        | Unix.ADDR_UNIX s -> Unix.chmod s 0o700
+        | Unix.ADDR_UNIX s -> Unix.chmod s 0o770
         | _ -> ()
       end;
       Lwt_unix.listen sock backlog;
