@@ -43,6 +43,7 @@ if $(ge $(OCAML_MAJOR), 4)
 
 OCAMLPACKS[] =
     batteries
+    bytes
     camlp4.macro
     csv
     cryptokit
