@@ -105,7 +105,7 @@ struct
         id : client_id;
         (* each keypsace holds a list of child ks ("virtual keyspaces") so
          * that we can release them on parent tx commit *)
-        keyspaces : (keyspace * req_handler option * keyspace Queue.t) H.t;
+        keyspaces : (keyspace * req_handler option * keyspace Lwt_sequence.t) H.t;
         ich : Lwt_io.input_channel;
         och : Lwt_io.output_channel;
         server : t;
@@ -122,6 +122,7 @@ struct
     { ks_unique_id : ks_id;
       ks_tx_key : tx_data Lwt.key;
       ks_ks : D.keyspace;
+      mutable ks_node : keyspace Lwt_sequence.node option;
     }
 
   and req_handler = (tx_request Lwt_stream.t * (tx_request option -> unit))
@@ -355,8 +356,8 @@ struct
         (* we use even ids for "toplevel" keyspaces, and odd ones for
          * virtual keyspaces = transactions *)
         let ks_unique_id = ks_id_of_int (2 * D.keyspace_id ks_ks) in
-        let ks = { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); } in
-          H.add c.keyspaces ks_unique_id (ks, None, Queue.create ());
+        let ks = { ks_unique_id; ks_ks; ks_tx_key = Lwt.new_key (); ks_node = None } in
+          H.add c.keyspaces ks_unique_id (ks, None, Lwt_sequence.create ());
           Lwt_log.info_f ~section:gen_section
             "Registered namespace %S:%d" name (ks_unique_id :> int) >>
           P.return_keyspace ?buf c.och ~request_id (ks_unique_id :> int)
@@ -367,8 +368,8 @@ struct
               (* we use even ids for "toplevel" keyspaces, and odd ones for
                * virtual keyspaces = transactions *)
               let ks_unique_id = ks_id_of_int (2 * D.keyspace_id ks_ks) in
-              let ks = { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); } in
-                H.add c.keyspaces ks_unique_id (ks, None, Queue.create ());
+              let ks = { ks_ks; ks_unique_id; ks_tx_key = Lwt.new_key (); ks_node = None } in
+                H.add c.keyspaces ks_unique_id (ks, None, Lwt_sequence.create ());
                 P.return_keyspace_maybe ?buf c.och ~request_id
                   (Some ks_unique_id :> int option)
       end
@@ -641,18 +642,18 @@ struct
             let ks =
               { ks_unique_id = new_transaction_id ();
                 ks_tx_key = ks.ks_tx_key; ks_ks = ks';
-              }
-            in
+                ks_node = None;
+              } in
+            lwt () =
+              Lwt_log.debug_f ~section:gen_section
+                "Registering virtual (TX) keyspace %d for %d"
+                (ks.ks_unique_id :> int) (outer_ks_id :> int) in
+            (* register it in the parent's children set *)
+            let node = Lwt_sequence.add_l ks children in
+              ks.ks_node <- Some node;
               try_lwt
-                lwt () =
-                  Lwt_log.debug_f ~section:gen_section
-                    "Registering virtual (TX) keyspace %d for %d"
-                    (ks.ks_unique_id :> int) (outer_ks_id :> int)
-                in
                 (* install handler *)
-                H.add c.keyspaces ks.ks_unique_id (ks, Some handler, Queue.create ());
-                (* register it as child *)
-                Queue.push ks children;
+                H.add c.keyspaces ks.ks_unique_id (ks, Some handler, Lwt_sequence.create ());
                 P.return_keyspace ?buf c.och ~request_id (ks.ks_unique_id :> int) >>
                 lwt txid = D.transaction_id ks.ks_ks in
                 Lwt_log.debug_f ~section:tx_section
@@ -713,7 +714,8 @@ struct
     try
       let _, _, children = H.find c.keyspaces ks.ks_unique_id in
         H.remove c.keyspaces ks.ks_unique_id;
-        Queue.iter (remove_keyspace c) children
+        BatOption.may Lwt_sequence.remove ks.ks_node;
+        Lwt_sequence.iter_l (remove_keyspace c) children
     with Not_found -> ()
 
   let setup_auto_yield t c =
