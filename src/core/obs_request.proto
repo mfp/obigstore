@@ -101,6 +101,8 @@ type raw_dump_id = long
 
 type raw_dump_mode = Sync | Async | No_stream
 
+type sync_mode = Sync | Async | Default
+
 message request =
     Register_keyspace { name : string; }
   | Get_keyspace { name : string; }
@@ -109,7 +111,7 @@ message request =
   | Table_size_on_disk { keyspace : keyspace; table : table }
   | Key_range_size_on_disk { keyspace : keyspace; table : table;
                              range : range<string> }
-  | Begin { keyspace : keyspace; tx_type : tx_type; }
+  | Begin { keyspace : keyspace; tx_type : tx_type; sync : sync_mode }
   | Commit { keyspace : keyspace; }
   | Abort { keyspace : keyspace; }
   | Lock { keyspace : keyspace; names : [string]; shared : bool; }

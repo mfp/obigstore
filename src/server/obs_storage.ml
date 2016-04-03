@@ -226,22 +226,24 @@ type slave =
     {
       slave_id : int;
       slave_push : (Obs_bytea.t -> [`ACK | `NACK] Lwt.u -> unit);
-      mutable slave_mode : sync_mode;
+      mutable slave_mode : slave_sync_mode;
 
       (* slave_mode_target will be changed from Async to Sync after
        * [get_update_stream] is applied on a raw_dump created in [`Sync] mode;
        * i.e., the slave is async until the time the update stream is
        * accessed, thus avoiding blocking writes while the slave is fetching
        * data files before it can start to process the update stream *)
-      mutable slave_mode_target : sync_mode;
+      mutable slave_mode_target : slave_sync_mode;
       mutable slave_pending_updates : int;
     }
 
-and sync_mode = Async | Sync | No_stream
+and slave_sync_mode = Async | Sync | No_stream
 
 module WRITEBATCH : sig
   type t
   type tx
+
+  type sync_mode = [ `Sync | `Async ]
 
   val make : L.db -> L.iterator Lwt_pool.t ref -> fsync:bool -> t
 
@@ -253,9 +255,9 @@ module WRITEBATCH : sig
 
   val unregister_slave : t -> slave -> unit
 
-  val delete_substring : tx -> string -> int -> int -> unit
-  val put_substring : tx -> string -> int -> int -> string -> int -> int -> unit
-  val put : tx -> string -> string -> unit
+  val delete_substring : tx -> mode:sync_mode -> string -> int -> int -> unit
+  val put_substring : tx -> mode:sync_mode -> string -> int -> int -> string -> int -> int -> unit
+  val put : tx -> mode:sync_mode -> string -> string -> unit
   val timestamp : tx -> Int64.t
 
   (* indicate that a 'reload keyspace' record is to be added to the
@@ -269,7 +271,7 @@ struct
   type t =
       { db : L.db;
         mutable wb : L.writebatch;
-        mutable dirty : bool;
+        mutable dirty : dirty_status;
         mutable closed : bool;
         mutable sync_wait : unit Lwt.t * unit Lwt.u;
         mutable wait_last_sync : unit Lwt.t * unit Lwt.u;
@@ -297,6 +299,10 @@ struct
   and throttling =
       No_throttling
     | Throttle of int (* started when read N L0 files  *) * float (* rate *)
+
+  and dirty_status = Not_dirty | Dirty_sync | Dirty_async
+
+  and sync_mode = [ `Sync | `Async ]
 
   type tx = { t : t; mutable valid : bool; timestamp : Int64.t; }
 
@@ -368,12 +374,16 @@ struct
 
   let make db iter_pool ~fsync =
     let t =
-      { db; wb = L.Batch.make (); dirty = false; closed = false;
+      { db;
+        wb = L.Batch.make ();
+        dirty = Not_dirty;
+        closed = false;
         sync_wait = Lwt.wait ();
         wait_last_sync = Lwt.wait ();
         iter_pool;
         serialized_update = Obs_bytea.create 128;
-        slave_tbl = IM.empty; fsync;
+        slave_tbl = IM.empty;
+        fsync;
         need_keyspace_reload = false;
         throttling = No_throttling;
         wait_for_dirty = Throttled_condition.make 0.001;
@@ -381,44 +391,47 @@ struct
     in
       ignore begin try_lwt
         let rec writebatch_loop () =
-          if not (t.dirty || t.closed) then begin
-            lwt () = Throttled_condition.wait t.wait_for_dirty in
-              t.wait_for_dirty <- Throttled_condition.make 0.001;
-              writebatch_loop ()
-          end else begin
-            (* at this point, dirty || closed *)
-            if not t.dirty then begin
-              Lwt.wakeup_later (snd t.wait_last_sync) ();
-              (* exit the writebatch_loop *)
-              return_unit
-            end else begin
-              (* closed && dirty || not closed && dirty *)
-              (* need a "reload keyspace" record if needed *)
-              if t.need_keyspace_reload then
-                Obs_bytea.add_byte t.serialized_update 0xFF;
-              let wb = t.wb in
-              let u = snd t.sync_wait in
-              let u' = snd t.wait_last_sync in
-              let serialized_update = t.serialized_update in
-              let () =
-                t.dirty <- false;
-                t.wb <- L.Batch.make ();
-                t.need_keyspace_reload <- false;
-                t.wait_for_dirty <- Throttled_condition.make 0.001;
-                t.sync_wait <- Lwt.wait ();
-                t.wait_last_sync <- Lwt.wait ();
-                t.serialized_update <- Obs_bytea.create 128 in
-              let () = control_throttling t in
-              lwt () =
-                Lwt_preemptive.detach
-                  (L.Batch.write ~sync:t.fsync t.db) wb
-              and () = push_to_slaves t serialized_update in
-                iter_pool := make_iter_pool t.db;
-                Lwt.wakeup_later u ();
-                Lwt.wakeup_later u' ();
-                writebatch_loop ()
-            end
-          end
+          match t.closed, t.dirty with
+            | false, Not_dirty ->
+                lwt () = Throttled_condition.wait t.wait_for_dirty in
+                  t.wait_for_dirty <- Throttled_condition.make 0.001;
+                  writebatch_loop ()
+            | true, Not_dirty ->
+                Lwt.wakeup_later (snd t.wait_last_sync) ();
+                (* exit the writebatch_loop *)
+                return_unit
+            | _, (Dirty_async | Dirty_sync) ->
+                (* need a "reload keyspace" record if needed *)
+                if t.need_keyspace_reload then
+                  Obs_bytea.add_byte t.serialized_update 0xFF;
+                let wb = t.wb in
+                let u = snd t.sync_wait in
+                let u' = snd t.wait_last_sync in
+                let serialized_update = t.serialized_update in
+                let dirty = t.dirty in
+                let () =
+                  t.dirty <- Not_dirty;
+                  t.wb <- L.Batch.make ();
+                  t.need_keyspace_reload <- false;
+                  t.wait_for_dirty <- Throttled_condition.make 0.001;
+                  t.sync_wait <- Lwt.wait ();
+                  t.wait_last_sync <- Lwt.wait ();
+                  t.serialized_update <- Obs_bytea.create 128 in
+                let () = control_throttling t in
+
+                let sync = match t.fsync, dirty with
+                             | false, _ -> false
+                             | true, Dirty_sync -> true
+                             | true, (Not_dirty | Dirty_async) -> false
+                in
+
+                lwt () = Lwt_preemptive.detach (L.Batch.write ~sync t.db) wb
+                and () = push_to_slaves t serialized_update in
+
+                  iter_pool := make_iter_pool t.db;
+                  Lwt.wakeup_later u ();
+                  Lwt.wakeup_later u' ();
+                  writebatch_loop ()
         in
           writebatch_loop ()
       with exn ->
@@ -439,7 +452,9 @@ struct
   let close t =
     t.closed <- true;
     Throttled_condition.signal t.wait_for_dirty;
-    if t.dirty then fst t.wait_last_sync else return_unit
+    match t.dirty with
+      | Not_dirty -> return_unit
+      | Dirty_sync | Dirty_async -> fst t.wait_last_sync
 
   let perform t f =
     if t.closed then
@@ -450,38 +465,44 @@ struct
       let tx = { t; valid = true; timestamp; } in
         try
           f tx;
-          if not t.dirty then
-            return_unit
-          else begin
-            Throttled_condition.signal t.wait_for_dirty;
-            waiter
-          end
+          match t.dirty with
+            | Not_dirty -> return_unit
+            | Dirty_sync | Dirty_async ->
+                Throttled_condition.signal t.wait_for_dirty;
+                waiter
         with exn ->
           tx.valid <- false;
           raise exn
 
   let timestamp tx = tx.timestamp
 
-  let delete_substring tx s off len =
+  let update_dirty dirty mode = match dirty, mode with
+    | Not_dirty, `Sync -> Dirty_sync
+    | Not_dirty, `Async -> Dirty_async
+    | Dirty_async, `Async -> Dirty_async
+    | Dirty_sync, (`Async | `Sync)
+    | Dirty_async, `Sync -> Dirty_sync
+
+  let delete_substring tx ~mode s off len =
     if not tx.valid then
       failwith "WRITEBATCH.delete_substring on expired transaction";
-    tx.t.dirty <- true;
+    tx.t.dirty <- update_dirty tx.t.dirty mode;
     L.Batch.delete_substring tx.t.wb s off len;
     if not (IM.is_empty tx.t.slave_tbl) then begin
       let u = tx.t.serialized_update in
-        Obs_bytea.add_byte u 0;
+        Obs_bytea.add_byte u (match mode with `Sync -> 0x00 | `Async -> 0x02) ;
         Obs_bytea.add_int32_le u len;
         Obs_bytea.add_substring u s off len;
     end
 
-  let put_substring tx k o1 l1 v o2 l2 =
+  let put_substring tx ~mode k o1 l1 v o2 l2 =
     if not tx.valid then
       failwith "WRITEBATCH.put_substring on expired transaction";
-    tx.t.dirty <- true;
+    tx.t.dirty <- update_dirty tx.t.dirty mode;
     L.Batch.put_substring tx.t.wb k o1 l1 v o2 l2;
     if not (IM.is_empty tx.t.slave_tbl) then begin
       let u = tx.t.serialized_update in
-        Obs_bytea.add_byte u 1;
+        Obs_bytea.add_byte u (match mode with `Sync -> 0x01 | `Async -> 0x03) ;
         Obs_bytea.add_int32_le u l1;
         Obs_bytea.add_substring u k o1 l1;
         Obs_bytea.add_int32_le u l2;
@@ -491,8 +512,8 @@ struct
   let need_keyspace_reload tx =
     tx.t.need_keyspace_reload <- true
 
-  let put tx k v =
-    put_substring tx k 0 (String.length k) v 0 (String.length v)
+  let put tx ~mode k v =
+    put_substring tx ~mode k 0 (String.length k) v 0 (String.length v)
 end
 
 let cmp_table t1 t2 =
@@ -834,6 +855,8 @@ module rec TYPES : sig
         nested_tx_mutex : Lwt_mutex.t;
 
         started_at : float;
+
+        mutable sync_mode : WRITEBATCH.sync_mode;
       }
 end = TYPES
 
@@ -1180,6 +1203,7 @@ let register_keyspace t ks_name =
     let wait_sync =
       WRITEBATCH.perform t.writebatch begin fun b ->
         WRITEBATCH.put b
+          ~mode:`Sync
           (Obs_datum_encoding.keyspace_table_key ks_name)
           (string_of_int ks_id);
         WRITEBATCH.need_keyspace_reload b;
@@ -1337,25 +1361,26 @@ let key_range_size_on_disk ks ?first ?up_to table =
         in
           detach_ks_op ks (L.get_approximate_size ks.ks_db.db _from) _to
 
-let register_new_table_and_add_to_writebatch_aux put ks wb table =
+let register_new_table_and_add_to_writebatch_aux ~mode put ks wb table =
   let last = Hashtbl.fold (fun _ idx m -> max m idx) ks.ks_tables 0 in
   (* TODO: find first free one (if existent) LT last *)
   let table_id = last + 1 in
   let k = Obs_datum_encoding.Keyspace_tables.ks_table_table_key
             ks.ks_name (string_of_table table) in
   let v = string_of_int table_id in
-    put wb k v;
+    put wb ~mode k v;
     Hashtbl.add ks.ks_tables table table_id;
     Hashtbl.add ks.ks_rev_tables table_id table;
     table_id
 
 let register_new_table_and_add_to_writebatch =
-  register_new_table_and_add_to_writebatch_aux L.Batch.put
+  register_new_table_and_add_to_writebatch_aux
+    (fun wb ~mode s -> L.Batch.put wb s)
 
 let register_new_table_and_add_to_writebatch' =
   register_new_table_and_add_to_writebatch_aux
-    (fun wb k v ->
-       WRITEBATCH.put wb k v;
+    (fun wb ~mode k v ->
+       WRITEBATCH.put wb ~mode k v;
        WRITEBATCH.need_keyspace_reload wb)
 
 let find_col_watches_and_dirty_key_watches ks table key =
@@ -1391,7 +1416,7 @@ let dirty_prefix_watches ks table key =
 
 let new_tx_id = let n = ref 1 in (fun () -> incr n; !n)
 
-let rec transaction_aux with_iter_pool ks f =
+let rec transaction_aux with_iter_pool ?(sync = `Default) ks f =
   match Lwt.get ks.ks_tx_key with
     | None ->
         with_iter_pool ks.ks_db None begin fun ~iter_pool ~repeatable_read ->
@@ -1410,6 +1435,7 @@ let rec transaction_aux with_iter_pool ks f =
               tx_notifications = Notif_queue.empty;
               tainted = None; nested_tx_mutex = Lwt_mutex.create ();
               started_at = Unix.gettimeofday ();
+              sync_mode = (match sync with `Default | `Sync -> `Sync | `Async -> `Async);
             } in
           try_lwt
             ks.ks_curr_txs := CURRENT_TXS.add tx.tx_id tx !(ks.ks_curr_txs);
@@ -1434,8 +1460,14 @@ let rec transaction_aux with_iter_pool ks f =
         Lwt_mutex.with_lock parent_tx.nested_tx_mutex begin fun () ->
           with_iter_pool
             ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
-              let tx = { parent_tx with tx_id = new_tx_id (); iter_pool; repeatable_read;
-                                        nested_tx_mutex = Lwt_mutex.create (); }
+              let sync_mode = match sync, parent_tx.sync_mode with
+                                | (`Default | `Async), x -> x
+                                | `Sync, _ -> `Sync in
+              let tx = { parent_tx with
+                           tx_id = new_tx_id (); iter_pool; repeatable_read;
+                           nested_tx_mutex = Lwt_mutex.create ();
+                           sync_mode;
+                       }
               in
                 lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in
                   (* because we serialize sub-transactions, it's safe to update
@@ -1445,6 +1477,11 @@ let rec transaction_aux with_iter_pool ks f =
                   parent_tx.deleted <- tx.deleted;
                   parent_tx.added_keys <- tx.added_keys;
                   parent_tx.tx_notifications <- tx.tx_notifications;
+                  parent_tx.sync_mode <-
+                    begin match tx.sync_mode, parent_tx.sync_mode with
+                      | `Async, `Async -> `Async
+                      | `Sync, _ | _, `Sync -> `Sync
+                    end;
                   return y
             end
         end
@@ -1506,6 +1543,7 @@ and commit_outermost_transaction ks tx =
                                  incr cols_written;
                                  bytes_written := !bytes_written + len;
                                  WRITEBATCH.delete_substring b
+                                   ~mode:tx.sync_mode
                                    (Obs_bytea.unsafe_string datum_key) 0
                                    len)
                             s)
@@ -1518,7 +1556,8 @@ and commit_outermost_transaction ks tx =
                  Some t -> t
                | None ->
                    (* must add table to keyspace table list *)
-                   register_new_table_and_add_to_writebatch' ks b table
+                   register_new_table_and_add_to_writebatch'
+                     ~mode:tx.sync_mode ks b table
              in M.iter
                (fun key m ->
                   dirty_prefix_watches ks table key;
@@ -1536,6 +1575,7 @@ and commit_outermost_transaction ks tx =
                            incr cols_written;
                            bytes_written := !bytes_written + klen + vlen;
                            WRITEBATCH.put_substring b
+                             ~mode:tx.sync_mode
                              (Obs_bytea.unsafe_string datum_key) 0 klen
                              c.data 0 vlen)
                       m)
@@ -1584,15 +1624,17 @@ and notify ks topic =
           subs
     with _ -> () end
 
-let read_committed_transaction ks f =
+let read_committed_transaction ?sync ks f =
   transaction_aux
+    ?sync
     (fun db parent_tx f -> match parent_tx with
          None -> f ~iter_pool:db.db_iter_pool ~repeatable_read:false
        | Some tx -> f ~iter_pool:tx.iter_pool ~repeatable_read:false)
     ks f
 
-let repeatable_read_transaction ks f =
+let repeatable_read_transaction ?sync ks f =
   transaction_aux
+    ?sync
     (fun db parent_tx f -> match parent_tx with
          Some { repeatable_read = true; iter_pool; _} ->
            f ~iter_pool ~repeatable_read:true
@@ -3148,7 +3190,7 @@ let rec put_multi_columns_no_tx ks table data =
           Some t -> t
         | None ->
             (* must add table to keyspace table list *)
-            register_new_table_and_add_to_writebatch' ks b table
+            register_new_table_and_add_to_writebatch' ~mode:`Sync ks b table
       in
         List.iter
           (fun (key, columns) ->
@@ -3167,6 +3209,7 @@ let rec put_multi_columns_no_tx ks table data =
                       incr cols_written;
                       bytes_written := !bytes_written + klen + vlen;
                       WRITEBATCH.put_substring b
+                        ~mode:`Sync
                         (Obs_bytea.unsafe_string datum_key) 0 klen
                         c.data 0 vlen)
                  columns)
@@ -3402,7 +3445,7 @@ let load tx data =
       | None ->
           (* register table first *)
           let table =
-            register_new_table_and_add_to_writebatch tx.ks wb table_name in
+            register_new_table_and_add_to_writebatch ~mode:`Sync tx.ks wb table_name in
           let () = dirty_prefix_watches tx.ks table key in
           let col_watches = find_col_watches_and_dirty_key_watches tx.ks table key in
             dirty_col_watches col_watches column;
@@ -3622,7 +3665,7 @@ struct
            if n >= max then ()
            else begin
              match s.[n] with
-               | '\x01' -> (* add *)
+               | '\x01' | '\x03'-> (* add *)
                  let klen = read_int32_le s (n + 1) in
                  let vlen = read_int32_le s (n + 1 + 4 + klen) in
                    (* TODO: instead of writing as usual and letting
@@ -3631,12 +3674,15 @@ struct
                     * WRITEBATCH.put_substring and delete_substring) and
                     * forward the entire update as is *)
                    WRITEBATCH.put_substring b
+                     ~mode:(if s.[n] = '\x03' then `Async else `Sync)
                      s (n + 1 + 4) klen
                      s (n + 1 + 4 + klen + 4) vlen;
                    apply_update s (n + 1 + 4 + klen + 4 + vlen) max
-               | '\x00' -> (* delete *)
+               | '\x00' | '\x02' -> (* delete *)
                  let klen = read_int32_le s (n + 1) in
-                   WRITEBATCH.delete_substring b s (n + 1 + 4) klen;
+                   WRITEBATCH.delete_substring b
+                     ~mode:(if s.[n] = '\x02' then `Async else `Sync)
+                     s (n + 1 + 4) klen;
                    apply_update s (n + 1 + 4 + klen) max
                | '\xFF' -> (* reload keyspaces *)
                    must_reload := true;
@@ -3772,14 +3818,14 @@ let load ks data = with_transaction ks ~ensure_exclusion:false (fun tx -> load t
 
 let load_stats ks = with_read_transaction ks load_stats
 
-let read_committed_transaction ks f =
+let read_committed_transaction ?sync ks f =
   Profile("read_committed_transaction", PROF.dummy_table, begin
-    read_committed_transaction ks (fun _ -> f ks)
+    read_committed_transaction ?sync ks (fun _ -> f ks)
   end)
 
-let repeatable_read_transaction ks f =
+let repeatable_read_transaction ?sync ks f =
   Profile("repeatable_read_transaction", PROF.dummy_table, begin
-    repeatable_read_transaction ks (fun _ -> f ks)
+    repeatable_read_transaction ?sync ks (fun _ -> f ks)
   end)
 
 let get_property t property =

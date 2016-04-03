@@ -143,10 +143,10 @@ sig
     ?first:key -> ?up_to:key -> unit -> Int64.t Lwt.t
 
   val read_committed_transaction :
-    keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
+    ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   val repeatable_read_transaction :
-    keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
+    ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   val lock : keyspace -> shared:bool -> string list -> unit Lwt.t
 

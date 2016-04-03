@@ -139,7 +139,7 @@ struct
       read_arg_opt ich >|=
       Option.map_default tx_type_of_string Tx_type.Read_committed
     in
-      return (Begin { Begin.keyspace; tx_type; })
+      return (Begin { Begin.keyspace; tx_type; sync = Sync_mode.Sync })
   end;;
 
   cmd "COMMIT" 1 begin fun nargs ich och ->

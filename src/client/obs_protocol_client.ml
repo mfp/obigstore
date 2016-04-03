@@ -350,10 +350,16 @@ struct
                        from_key; to_key; })
       P.read_ok
 
-  let transaction_aux tx_type ks f =
+  let transaction_aux tx_type ?(sync = `Sync) ks f =
     lwt ks_id =
       async_request_ks ks
-        (Begin { Begin.keyspace = ks.ks_id; tx_type }) P.read_keyspace in
+        (Begin
+           { Begin.keyspace = ks.ks_id; tx_type;
+             sync = (match sync with
+                       | `Sync -> Sync_mode.Sync
+                       | `Async -> Sync_mode.Async
+                       | `Default -> Sync_mode.Default)
+           }) P.read_keyspace in
     let ks = { ks_id; ks_name = ks.ks_name; ks_db = ks.ks_db; ks_parent = Some ks; } in
       try_lwt
         lwt y = f ks in
@@ -368,11 +374,11 @@ struct
             async_request_ks ks (Abort { Abort.keyspace = ks.ks_id }) P.read_ok >>
             raise_lwt e
 
-  let read_committed_transaction ks f =
-    transaction_aux Tx_type.Read_committed ks f
+  let read_committed_transaction ?sync ks f =
+    transaction_aux Tx_type.Read_committed ?sync ks f
 
-  let repeatable_read_transaction ks f =
-    transaction_aux Tx_type.Repeatable_read ks f
+  let repeatable_read_transaction ?sync ks f =
+    transaction_aux Tx_type.Repeatable_read ?sync ks f
 
   let lock ks ~shared names =
     let exec () =

@@ -99,7 +99,9 @@ phrase : /* empty */  { Nothing }
   | size      { $1 }
   | BEGIN     { with_ks (fun keyspace ->
                            R.Begin { R.Begin.keyspace;
-                                     tx_type = Tx_type.Repeatable_read; }) }
+                                     tx_type = Tx_type.Repeatable_read;
+                                     sync = Sync_mode.Sync;
+                                   }) }
   | COMMIT    { with_ks (fun keyspace -> R.Commit { R.Commit.keyspace }) }
   | ABORT     { with_ks (fun keyspace -> R.Abort { R.Abort.keyspace }) }
   | LOCK id_list
