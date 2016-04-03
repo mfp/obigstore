@@ -113,6 +113,13 @@ type tx_info   =
       held_locks : (string * lock_kind) list;
     }
 
+(** Specify transaction semantics. *)
+type sync_mode =
+  [ `Sync  (** Synchronous commit, with full fsync (unless disabled globally) *)
+  | `Async (** Asynchronous commit, without fsync. Durability not guaranteed
+             * in the event of system crashes. *)
+  ]
+
 (* {2 Data model } *)
 
 module type RAW_DUMP =
@@ -199,8 +206,15 @@ sig
     * transaction [TX3] whose execution will start only once the
     * [TX2] transaction completes, but [TX2] will not finish until [TX3] is
     * done.
+    *
+    * @param sync Specify sync mode. The final sync mode used on commit for
+    * the outermost transaction is the most restrictive amongst the ones
+    * specified by it and its descendents (e.g., if any uses [~sync:`Sync],
+    * this is the mode that will be used, regardless of what [sync] mode was
+    * used in the outermost transaction).
     *)
-  val read_committed_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
+  val read_committed_transaction :
+    ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   (** [repeatable_read_transaction ks f] runs [f] in a transaction.
     * Two read operations with the same parameters performed in [f]'s scope
@@ -211,7 +225,8 @@ sig
     * Refer to {!read_committed_transaction} for information on concurrent
     * execution of nested transactions.
     * *)
-  val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
+  val repeatable_read_transaction :
+    ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   (** [transaction_id ks] returns the ID of the current and outermost
     * transaction (useful for logging and reporting), or None if not inside a

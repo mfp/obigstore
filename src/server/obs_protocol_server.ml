@@ -398,9 +398,9 @@ struct
              D.key_range_size_on_disk ks.ks_ks table
                ?first:range.first ?up_to:range.up_to >>=
              P.return_key_range_size_on_disk ?buf c.och ~request_id)
-    | Begin { Begin.keyspace; tx_type; } ->
+    | Begin { Begin.keyspace; tx_type; sync; } ->
         with_keyspace c keyspace ~request_id
-          (fun x -> respond_to_begin ?buf c x ~request_id tx_type)
+          (fun x -> respond_to_begin ?buf c x ~request_id tx_type sync)
     | Commit { Commit.keyspace; _ } ->
         (* only commit if we're inside a tx *)
         with_keyspace c keyspace ~request_id
@@ -626,7 +626,7 @@ struct
              D.changed_tables ks.ks_ks tx_id >>=
              P.return_changed_tables ?buf c.och ~request_id)
 
-  and respond_to_begin ?buf c (ks, _, children) ~request_id tx_type =
+  and respond_to_begin ?buf c (ks, _, children) ~request_id tx_type sync =
     let module P = (val c.payload_writer : Obs_protocol.PAYLOAD_WRITER) in
     let transaction_f = match tx_type with
         Tx_type.Repeatable_read -> D.repeatable_read_transaction
@@ -638,7 +638,11 @@ struct
         let (req_stream, pushf) as handler = Lwt_stream.create () in
         let outer_ks_id = ks.ks_unique_id in
         lwt commit_reqid =
-          transaction_f ks.ks_ks begin fun ks' ->
+          transaction_f
+            ~sync:(match sync with
+                     | Sync_mode.Sync -> `Sync
+                     | Sync_mode.Async -> `Async)
+            ks.ks_ks begin fun ks' ->
             let ks =
               { ks_unique_id = new_transaction_id ();
                 ks_tx_key = ks.ks_tx_key; ks_ks = ks';

@@ -113,6 +113,8 @@ type tx_info   =
       held_locks : (string * lock_kind) list;
     }
 
+type sync_mode = [`Sync | `Async]
+
 (* {2 Data model } *)
 
 module type RAW_DUMP =
@@ -163,9 +165,11 @@ sig
     keyspace -> ?first:string -> ?up_to:string -> table -> Int64.t Lwt.t
 
   (** {3 Transactions} *)
-  val read_committed_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
+  val read_committed_transaction :
+    ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
-  val repeatable_read_transaction : keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
+  val repeatable_read_transaction :
+    ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t
 
   (** [transaction_id ks] returns the ID of the current and outermost
     * transaction (useful for logging and reporting), or None if not inside a

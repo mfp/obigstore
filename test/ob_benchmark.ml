@@ -73,12 +73,13 @@ struct
   (* let random_payload len = String.make len '0' *)
   let random_key = random_string_maker ()
 
-  let bm_put_columns ?(iters=10000) ?(batch_size=1000) make_row ks ~table =
+  let bm_put_columns ~async ?(iters=10000) ?(batch_size=1000) make_row ks ~table =
     lwt insert_time =
       time begin fun () ->
         for_lwt i = 1 to iters / batch_size do
           let rows = List.init batch_size (fun _ -> make_row ()) in
             D.read_committed_transaction ks
+              ~sync:(if async then `Async else `Sync)
               (fun tx ->
                  Lwt_list.iter_p
                    (fun (key, columns) -> D.put_columns tx table key columns)
@@ -112,15 +113,15 @@ struct
   let pr_separator () =
     print_endline (String.make 80 '-')
 
-  let run_put_colums_bm ~rounds ~iterations ~batch_size ~avg_cols ~payload db =
+  let run_put_colums_bm ~async ~rounds ~iterations ~batch_size ~avg_cols ~payload db =
     lwt ks = D.register_keyspace db "ks1" in
       printf "column insertion time (%d row batches, %d columns avg)\n"
         batch_size avg_cols;
       pr_separator ();
       for_lwt i = 0 to rounds - 1 do
         lwt dt =
-          bm_put_columns ~iters:iterations ~batch_size
-                          (make_row_dummy ~avg_cols ~payload) ks ~table:table_dummy in
+          bm_put_columns ~async ~iters:iterations ~batch_size
+            (make_row_dummy ~avg_cols ~payload) ks ~table:table_dummy in
         lwt size_on_disk = D.table_size_on_disk ks table_dummy in
           printf "%7d -> %7d    %8.5fs  (%.0f/s)   ~%Ld bytes\n%!"
              (i * iterations) ((i + 1) * iterations) dt (float iterations /. dt)
@@ -204,7 +205,7 @@ struct
           in iter_in_region f (t >> t') tl
     in iter_in_region f (return ()) l
 
-  let bm_simple_write_aux mk_key ~iterations ~payload db table =
+  let bm_simple_write_aux mk_key ~async ~iterations ~payload db table =
     lwt ks = D.register_keyspace db "simple" in
     let chunksize = iterations / (max 2 (1000 / payload)) in
     let chunks = iterations / chunksize in
@@ -221,7 +222,13 @@ struct
         (fun () ->
            iter_p_in_region ~size:50
              (iter_p_in_region ~size:100
-                (fun (k, v) -> D.put_columns ks table k [mk_col "value" v]))
+                (fun (k, v) ->
+                   if not async then
+                     D.put_columns ks table k [mk_col "value" v]
+                   else
+                     D.read_committed_transaction ~sync:`Async ks
+                       (fun tx ->
+                          D.put_columns tx table k [mk_col "value" v])))
              keys) in
     lwt overhead1 =
       time
@@ -235,8 +242,14 @@ struct
         (fun () ->
            iter_p_in_region ~size:50
              (fun l ->
-                D.put_multi_columns ks (DM.table_of_string (DM.string_of_table table ^ "_multi"))
-                  (List.map (fun (k, v) -> (k, [mk_col "value" v])) l))
+                if not async then
+                  D.put_multi_columns ks (DM.table_of_string (DM.string_of_table table ^ "_multi"))
+                    (List.map (fun (k, v) -> (k, [mk_col "value" v])) l)
+                else
+                  D.read_committed_transaction ~sync:`Async ks
+                    (fun tx ->
+                       D.put_multi_columns tx (DM.table_of_string (DM.string_of_table table ^ "_multi"))
+                         (List.map (fun (k, v) -> (k, [mk_col "value" v])) l)))
              keys) in
     lwt overhead2 =
       time
@@ -250,9 +263,9 @@ struct
     in
       return (dt -. overhead1, dt2 -. overhead2, nkeys)
 
-  let bm_sequential_write ~iterations ~payload db =
+  let bm_sequential_write ~async ~iterations ~payload db =
     lwt (dt, dt_multi, nkeys) =
-      bm_simple_write_aux string_of_int ~iterations ~payload db
+      bm_simple_write_aux string_of_int ~async ~iterations ~payload db
         (DM.table_of_string "sequential_write")
     in
       print_newline ();
@@ -262,10 +275,10 @@ struct
         nkeys dt_multi (truncate (float nkeys /. dt_multi));
       return ()
 
-  let bm_random_write ~iterations ~payload db =
+  let bm_random_write ~async ~iterations ~payload db =
     lwt (dt, dt_multi, nkeys) =
       bm_simple_write_aux (fun _ -> random_key 20)
-        ~iterations ~payload db (DM.table_of_string "random_write")
+        ~async ~iterations ~payload db (DM.table_of_string "random_write")
     in
       print_newline ();
       printf "Rand write: %d keys in %8.5fs (%d/s)\n%!"
@@ -354,7 +367,7 @@ struct
   let maybe_run_bm bms bm f = if List.mem bm bms then f () else return ()
 
   let run
-        ~rounds ~iterations ~avg_cols ~batch_size
+        ~rounds ~iterations ~avg_cols ~batch_size ~async
         ~complex_payload ~run_benchmarks
         ~run_read_committed
         ~seq_iterations ~seq_payload =
@@ -363,14 +376,17 @@ struct
       Test_00util.keep_tmp := false;
       run Put_columns
         (fun () -> run_put_colums_bm
+                     ~async
                      ~payload:complex_payload
                      ~rounds ~iterations ~batch_size ~avg_cols db) >>
       run Random_write
         (fun () -> bm_random_write
+                     ~async
                      ~iterations:seq_iterations
                      ~payload:seq_payload db) >>
       run Seq_write
         (fun () -> bm_sequential_write
+                     ~async
                      ~iterations:seq_iterations
                      ~payload:seq_payload db) >>
       run Count (fun () -> bm_count db) >>
@@ -402,6 +418,7 @@ let iterations = ref 10000
 let batch_size = ref 1000
 let avg_cols = ref 10
 let complex_payload = ref 16
+let async = ref false
 
 let benchmarks = ref "PWwcRr"
 
@@ -430,6 +447,8 @@ let params =
           "    put cols(P), rand write(W), seq write(w), count(c),\n     \
               rand read(R), seq read(r)\n\n \
            Multi-column row insertion:";
+
+      "-async", Arg.Set async, "Use async writes (no fsync).";
 
       "-complex-write-rounds", Arg.Set_int rounds,
         "N Run N put_columns rounds (default: 10).";
@@ -488,6 +507,7 @@ let () =
   if not !remote_test then
     Lwt_unix.run
       (BM_Obs_storage.run
+         ~async:!async
          ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
          ~complex_payload:!complex_payload
          ~batch_size:!batch_size
@@ -511,6 +531,7 @@ let () =
       Lwt_unix.run
         (BM.run
            ~rounds:!rounds ~iterations:!iterations ~avg_cols:!avg_cols
+           ~async:!async
            ~complex_payload:!complex_payload
            ~batch_size:!batch_size
            ~run_read_committed:false
