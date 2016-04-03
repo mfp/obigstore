@@ -641,7 +641,8 @@ struct
           transaction_f
             ~sync:(match sync with
                      | Sync_mode.Sync -> `Sync
-                     | Sync_mode.Async -> `Async)
+                     | Sync_mode.Async -> `Async
+                     | Sync_mode.Default -> `Default)
             ks.ks_ks begin fun ks' ->
             let ks =
               { ks_unique_id = new_transaction_id ();

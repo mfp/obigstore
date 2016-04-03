@@ -355,7 +355,10 @@ struct
       async_request_ks ks
         (Begin
            { Begin.keyspace = ks.ks_id; tx_type;
-             sync = (match sync with `Sync -> Sync_mode.Sync | `Async -> Sync_mode.Async)
+             sync = (match sync with
+                       | `Sync -> Sync_mode.Sync
+                       | `Async -> Sync_mode.Async
+                       | `Default -> Sync_mode.Default)
            }) P.read_keyspace in
     let ks = { ks_id; ks_name = ks.ks_name; ks_db = ks.ks_db; ks_parent = Some ks; } in
       try_lwt

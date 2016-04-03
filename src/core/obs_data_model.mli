@@ -118,6 +118,10 @@ type sync_mode =
   [ `Sync  (** Synchronous commit, with full fsync (unless disabled globally) *)
   | `Async (** Asynchronous commit, without fsync. Durability not guaranteed
              * in the event of system crashes. *)
+  | `Default (** In outermost transaction: use synchronous commit.
+               * In nested transactions: inherit parent mode
+               * (can still be modified by a child transaction).
+               *)
   ]
 
 (* {2 Data model } *)
@@ -211,7 +215,8 @@ sig
     * the outermost transaction is the most restrictive amongst the ones
     * specified by it and its descendents (e.g., if any uses [~sync:`Sync],
     * this is the mode that will be used, regardless of what [sync] mode was
-    * used in the outermost transaction).
+    * used in the outermost transaction). Default value: [`Default] (refer to
+    * {!sync_mode}.
     *)
   val read_committed_transaction :
     ?sync:sync_mode -> keyspace -> (keyspace -> 'a Lwt.t) -> 'a Lwt.t

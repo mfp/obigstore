@@ -101,7 +101,7 @@ type raw_dump_id = long
 
 type raw_dump_mode = Sync | Async | No_stream
 
-type sync_mode = Sync | Async
+type sync_mode = Sync | Async | Default
 
 message request =
     Register_keyspace { name : string; }

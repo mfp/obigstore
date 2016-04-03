@@ -243,6 +243,8 @@ module WRITEBATCH : sig
   type t
   type tx
 
+  type sync_mode = [ `Sync | `Async ]
+
   val make : L.db -> L.iterator Lwt_pool.t ref -> fsync:bool -> t
 
   val close : t -> unit Lwt.t
@@ -299,6 +301,8 @@ struct
     | Throttle of int (* started when read N L0 files  *) * float (* rate *)
 
   and dirty_status = Not_dirty | Dirty_sync | Dirty_async
+
+  and sync_mode = [ `Sync | `Async ]
 
   type tx = { t : t; mutable valid : bool; timestamp : Int64.t; }
 
@@ -852,7 +856,7 @@ module rec TYPES : sig
 
         started_at : float;
 
-        mutable sync_mode : sync_mode;
+        mutable sync_mode : WRITEBATCH.sync_mode;
       }
 end = TYPES
 
@@ -1412,7 +1416,7 @@ let dirty_prefix_watches ks table key =
 
 let new_tx_id = let n = ref 1 in (fun () -> incr n; !n)
 
-let rec transaction_aux with_iter_pool ?(sync = `Sync) ks f =
+let rec transaction_aux with_iter_pool ?(sync = `Default) ks f =
   match Lwt.get ks.ks_tx_key with
     | None ->
         with_iter_pool ks.ks_db None begin fun ~iter_pool ~repeatable_read ->
@@ -1431,7 +1435,7 @@ let rec transaction_aux with_iter_pool ?(sync = `Sync) ks f =
               tx_notifications = Notif_queue.empty;
               tainted = None; nested_tx_mutex = Lwt_mutex.create ();
               started_at = Unix.gettimeofday ();
-              sync_mode = sync;
+              sync_mode = (match sync with `Default | `Sync -> `Sync | `Async -> `Async);
             } in
           try_lwt
             ks.ks_curr_txs := CURRENT_TXS.add tx.tx_id tx !(ks.ks_curr_txs);
@@ -1456,9 +1460,13 @@ let rec transaction_aux with_iter_pool ?(sync = `Sync) ks f =
         Lwt_mutex.with_lock parent_tx.nested_tx_mutex begin fun () ->
           with_iter_pool
             ks.ks_db (Some parent_tx) begin fun ~iter_pool ~repeatable_read ->
-              let tx = { parent_tx with tx_id = new_tx_id (); iter_pool; repeatable_read;
-                                        nested_tx_mutex = Lwt_mutex.create ();
-                                        sync_mode = sync;
+              let sync_mode = match sync, parent_tx.sync_mode with
+                                | (`Default | `Async), x -> x
+                                | `Sync, _ -> `Sync in
+              let tx = { parent_tx with
+                           tx_id = new_tx_id (); iter_pool; repeatable_read;
+                           nested_tx_mutex = Lwt_mutex.create ();
+                           sync_mode;
                        }
               in
                 lwt y = Lwt.with_value ks.ks_tx_key (Some tx) (fun () -> f tx) in

@@ -113,7 +113,7 @@ type tx_info   =
       held_locks : (string * lock_kind) list;
     }
 
-type sync_mode = [`Sync | `Async]
+type sync_mode = [`Sync | `Async | `Default]
 
 (* {2 Data model } *)
 
