@@ -36,8 +36,8 @@ let output          = ref "-"
 let raw_dump_dstdir = ref None
 let verbose         = ref false
 let serverside      = ref true
-let role            = ref "guest"
-let password        = ref "guest"
+let role            = ref (try Sys.getenv "OBIGSTORE_ROLE" with _ -> "guest")
+let password        = ref (try Sys.getenv "OBIGSTORE_PASSWORD" with _ -> "guest")
 
 let usage_message = "Usage: ob_dump [-serverside | -keyspace NAME | -full DIR] [options]"
 

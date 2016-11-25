@@ -27,8 +27,8 @@ let keyspace = ref ""
 let server   = ref "127.0.0.1"
 let port     = ref 12050
 let file     = ref "-"
-let role     = ref "guest"
-let password = ref "guest"
+let role     = ref (try Sys.getenv "OBIGSTORE_ROLE" with _ -> "guest")
+let password = ref (try Sys.getenv "OBIGSTORE_PASSWORD" with _ -> "guest")
 
 let usage_message = "Usage: ob_load -keyspace NAME [options]"
 
