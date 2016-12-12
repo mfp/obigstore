@@ -266,11 +266,28 @@ module WRITEBATCH : sig
 
   (* requested rate relative to maximum (1.0 being no throttling) *)
   val throttling : t -> float
+
+  val register_dirty_check :
+    tx ->
+    ks:int ->
+    key:(table:table -> key:string -> bool) ->
+    column:(table:table -> key:string -> col:string -> bool) ->
+    prefix:(table:table -> prefix:string -> bool) -> unit
+
+  val is_key_dirty    : t -> ks:int -> table:table -> key:string -> bool
+  val is_col_dirty    : t -> ks:int -> table:table -> key:string -> col:string -> bool
+  val is_prefix_dirty : t -> ks:int -> table:table -> prefix:string -> bool
 end =
 struct
+  module IH = BatHashtbl.Make(struct
+      type t = int
+      let hash n = n
+      let equal = (==)
+    end)
   type t =
       { db : L.db;
         mutable wb : L.writebatch;
+        mutable dirty_checks : dirty_checks IH.t * dirty_checks IH.t;
         mutable dirty : dirty_status;
         mutable closed : bool;
         mutable sync_wait : unit Lwt.t * unit Lwt.u;
@@ -295,6 +312,12 @@ struct
 
         mutable wait_for_dirty : Throttled_condition.t;
       }
+
+  and dirty_checks = {
+    mutable check_key    : (table:table -> key:string -> bool) list;
+    mutable check_col    : (table:table -> key:string -> col:string -> bool) list;
+    mutable check_prefix : (table:table -> prefix:string -> bool) list;
+  }
 
   and throttling =
       No_throttling
@@ -376,6 +399,7 @@ struct
     let t =
       { db;
         wb = L.Batch.make ();
+        dirty_checks = (IH.create 3, IH.create 3);
         dirty = Not_dirty;
         closed = false;
         sync_wait = Lwt.wait ();
@@ -425,9 +449,30 @@ struct
                              | true, (Not_dirty | Dirty_async) -> false
                 in
 
+                  (* While we're running L.Batch.write in a detached thread,
+                   * new writes against the new wb (initialized just
+                   * above) could happen. The corresponding watch_xxx
+                   * invalidations must be recorded and taken into account if
+                   * concurrent watch_xxx are performed.
+                   *
+                   * We do as follows: while L.Batch.write is being performed,
+                   * invalidations are recorded in 2 tables,
+                   *    (PRE, POST)
+                   * and concurrent invalidation checks in watch_xxx check
+                   * against both tables. When L.Batch.write is done, we
+                   * discard PRE, and rotate the tables:
+                   *    (T1, T2) ->  (T2, <EMPTY>)
+                   * T2 will thus hold the invalidations caused by writes
+                   * to the new wb while the previous one was being flushed.
+                   * Most of the time, POST is empty. It's only while
+                   * L.Batch.write is being performed that it might be
+                   * non-empty.
+                   *)
+                  t.dirty_checks <- (fst t.dirty_checks, IH.create 3);
                 lwt () = Lwt_preemptive.detach (L.Batch.write ~sync t.db) wb
                 and () = push_to_slaves t serialized_update in
 
+                  t.dirty_checks <- (snd t.dirty_checks, IH.create 3);
                   iter_pool := make_iter_pool t.db;
                   Lwt.wakeup_later u ();
                   Lwt.wakeup_later u' ();
@@ -514,6 +559,49 @@ struct
 
   let put tx ~mode k v =
     put_substring tx ~mode k 0 (String.length k) v 0 (String.length v)
+
+  let register_dirty_check tx ~ks ~key ~column ~prefix =
+    let register dc =
+      let checks =
+        try IH.find dc ks
+        with Not_found ->
+          let v = { check_key = []; check_col = []; check_prefix = [] } in
+            IH.add dc ks v;
+            v
+      in
+        checks.check_key <- key :: checks.check_key;
+        checks.check_col <- column :: checks.check_col;
+        checks.check_prefix <- prefix :: checks.check_prefix
+    in
+      register @@ fst tx.t.dirty_checks;
+      register @@ snd tx.t.dirty_checks
+
+  let is_key_dirty t ~ks ~table ~key =
+    let is_dirty dc =
+      match IH.find_option dc ks with
+        | None -> false
+        | Some checks ->
+            List.exists (fun f -> f ~table ~key) checks.check_key
+    in
+      is_dirty (fst t.dirty_checks) || is_dirty (snd t.dirty_checks)
+
+  let is_col_dirty t ~ks ~table ~key ~col =
+    let is_dirty dc =
+      match IH.find_option dc ks with
+        | None -> false
+        | Some checks ->
+            List.exists (fun f -> f ~table ~key ~col) checks.check_col
+    in
+      is_dirty (fst t.dirty_checks) || is_dirty (snd t.dirty_checks)
+
+  let is_prefix_dirty t ~ks ~table ~prefix =
+    let is_dirty dc =
+      match IH.find_option dc ks with
+        | None -> false
+        | Some checks ->
+            List.exists (fun f -> f ~table ~prefix) checks.check_prefix
+    in
+      is_dirty (fst t.dirty_checks) || is_dirty (snd t.dirty_checks)
 end
 
 let cmp_table t1 t2 =
@@ -853,6 +941,10 @@ module rec TYPES : sig
 
         (* we serialize execution of nested TXs using the following mutex *)
         nested_tx_mutex : Lwt_mutex.t;
+
+        mutable watches        : (table * string (* key *)) list;
+        mutable col_watches    : (table * string (* key *) * string (* col *)) list;
+        mutable prefix_watches : (table * string (* key_prefix *)) list;
 
         started_at : float;
 
@@ -1436,6 +1528,9 @@ let rec transaction_aux with_iter_pool ?(sync = `Default) ks f =
               tainted = None; nested_tx_mutex = Lwt_mutex.create ();
               started_at = Unix.gettimeofday ();
               sync_mode = (match sync with `Default | `Sync -> `Sync | `Async -> `Async);
+              watches        = [];
+              col_watches    = [];
+              prefix_watches = [];
             } in
           try_lwt
             ks.ks_curr_txs := CURRENT_TXS.add tx.tx_id tx !(ks.ks_curr_txs);
@@ -1520,12 +1615,64 @@ and commit_outermost_transaction ks tx =
     let bytes_written = ref 0 in
     let cols_written = ref 0 in
 
+    let wb = tx.ks.ks_db.writebatch in
+
     let wait_sync =
-      WRITEBATCH.perform tx.ks.ks_db.writebatch begin fun b ->
+      WRITEBATCH.perform wb begin fun b ->
         begin match tx.tainted with
             None -> ()
           | Some flag -> if DIRTY_FLAG.is_set flag then raise Dirty_data
         end;
+        List.iter
+          (fun (table, key) ->
+             if WRITEBATCH.is_key_dirty wb ~ks:ks.ks_id ~table ~key
+             then raise Dirty_data)
+          tx.watches;
+        List.iter
+          (fun (table, key, col) ->
+             if WRITEBATCH.is_col_dirty wb ~ks:ks.ks_id ~table ~key ~col then raise Dirty_data)
+          tx.col_watches;
+        List.iter
+          (fun (table, prefix) ->
+             if WRITEBATCH.is_prefix_dirty wb ~ks:ks.ks_id ~table ~prefix then raise Dirty_data)
+          tx.prefix_watches;
+
+        WRITEBATCH.register_dirty_check b
+          ~ks:ks.ks_id
+          ~key:begin fun ~table ~key ->
+            let contains ~table ~key m =
+              try
+                let m = TM.find table m in
+                  M.mem key m
+              with Not_found -> false
+            in
+              contains ~table ~key tx.deleted ||
+              contains ~table ~key tx.added
+          end
+          ~column:begin fun ~table ~key ~col ->
+            (try
+               S.mem col @@ M.find key @@ TM.find table tx.deleted
+             with Not_found -> false) ||
+            (try
+               M.mem col @@ M.find key @@ TM.find table tx.added
+             with Not_found -> false)
+          end
+          ~prefix:begin fun ~table ~prefix ->
+            let matches ~table ~prefix m =
+              try
+                 M.iter
+                   (fun key _ ->
+                      if BatString.starts_with key prefix then raise Dirty_data)
+                   (TM.find table tx.added);
+                 false
+               with
+                 | Not_found -> false
+                 | Dirty_data -> true
+            in
+              matches ~table ~prefix tx.deleted ||
+              matches ~table ~prefix tx.added
+          end;
+
         TM.iter
           (fun table m ->
              match find_maybe ks.ks_tables table with
@@ -1749,18 +1896,26 @@ let get_tainted_flag tx =
 
 let watch_key tx table key =
   match find_maybe tx.ks.ks_tables table with
-      None -> ()
-    | Some table ->
+    | None -> ()
+    | Some tid ->
         let flag = get_tainted_flag tx in
         let flags, _ =
           try
-            Hashtbl.find tx.ks.ks_watches (table, key)
+            Hashtbl.find tx.ks.ks_watches (tid, key)
           with Not_found ->
             let x = (DIRTY_FLAGS.create 2, Hashtbl.create 2) in
-              Hashtbl.add tx.ks.ks_watches (table, key) x;
+              Hashtbl.add tx.ks.ks_watches (tid, key) x;
               x
-        in DIRTY_FLAGS.add flags flag;
-           setup_flag_key_cleanup tx.ks.ks_watches table key flag
+        in
+          begin
+            if WRITEBATCH.is_key_dirty
+                 tx.ks.ks_db.writebatch ~ks:tx.ks.ks_id ~table ~key
+            then
+              DIRTY_FLAG.set flag;
+          end;
+          DIRTY_FLAGS.add flags flag;
+          setup_flag_key_cleanup tx.ks.ks_watches tid key flag;
+          tx.outermost_tx.watches <- (table, key) :: tx.outermost_tx.watches
 
 let watch_keys ks table keys =
   Profile("watch_keys", table, begin
@@ -1789,11 +1944,11 @@ let setup_prefix_flag_cleanup watches table prefix flag =
 let watch_prefix tx table prefix =
   match find_maybe tx.ks.ks_tables table with
       None -> ()
-    | Some table ->
+    | Some tid ->
         let flag = get_tainted_flag tx in
         let m =
           try
-            Hashtbl.find tx.ks.ks_prefix_watches table
+            Hashtbl.find tx.ks.ks_prefix_watches tid
           with Not_found ->
             Obs_ternary.empty in
         let flags =
@@ -1801,10 +1956,18 @@ let watch_prefix tx table prefix =
             Obs_ternary.find prefix m
           with Not_found -> DIRTY_FLAGS.create 2
         in
+          begin
+            if WRITEBATCH.is_prefix_dirty
+                 tx.ks.ks_db.writebatch ~ks:tx.ks.ks_id ~table ~prefix
+            then
+              DIRTY_FLAG.set flag;
+          end;
           DIRTY_FLAGS.add flags flag;
-          Hashtbl.replace tx.ks.ks_prefix_watches table
+          Hashtbl.replace tx.ks.ks_prefix_watches tid
             (Obs_ternary.add prefix flags m);
-          setup_prefix_flag_cleanup tx.ks.ks_prefix_watches table prefix flag
+          setup_prefix_flag_cleanup tx.ks.ks_prefix_watches tid prefix flag;
+          tx.outermost_tx.prefix_watches <-
+            (table, prefix) :: tx.outermost_tx.prefix_watches
 
 let watch_prefixes ks table keys =
   Profile("watch_prefixes", table, begin
@@ -1816,14 +1979,14 @@ let watch_prefixes ks table keys =
 let watch_column tx table key column =
   match find_maybe tx.ks.ks_tables table with
       None -> ()
-    | Some table ->
+    | Some tid ->
         let flag = get_tainted_flag tx in
         let _, col_watches =
           try
-            Hashtbl.find tx.ks.ks_watches (table, key)
+            Hashtbl.find tx.ks.ks_watches (tid, key)
           with Not_found ->
             let x = (DIRTY_FLAGS.create 2, Hashtbl.create 2) in
-              Hashtbl.add tx.ks.ks_watches (table, key) x;
+              Hashtbl.add tx.ks.ks_watches (tid, key) x;
               x in
         let flags =
           try
@@ -1833,8 +1996,16 @@ let watch_column tx table key column =
               Hashtbl.add col_watches column x;
               x
         in
+          begin
+            if WRITEBATCH.is_col_dirty
+                 tx.ks.ks_db.writebatch ~ks:tx.ks.ks_id ~table ~key ~col:column
+            then
+              DIRTY_FLAG.set flag;
+          end;
           DIRTY_FLAGS.add flags flag;
-          setup_flag_column_cleanup tx.ks.ks_watches table key column flag
+          setup_flag_column_cleanup tx.ks.ks_watches tid key column flag;
+          tx.outermost_tx.col_watches <-
+            (table, key, column) :: tx.outermost_tx.col_watches
 
 let watch_columns ks table l =
   Profile("watch_columns", table, begin
@@ -3179,19 +3350,39 @@ let put_multi_columns tx table data =
     (fun (key, columns) -> put_columns tx table key columns)
     data
 
-let rec put_multi_columns_no_tx ks table data =
+let rec put_multi_columns_no_tx ks tablename data =
   let cols_written = ref 0 in
   let bytes_written = ref 0 in
   let datum_key = put_multi_columns_no_tx_buf in
   let wait_sync =
     WRITEBATCH.perform ks.ks_db.writebatch begin fun b ->
       let table =
-        match find_maybe ks.ks_tables table with
+        match find_maybe ks.ks_tables tablename with
           Some t -> t
         | None ->
             (* must add table to keyspace table list *)
-            register_new_table_and_add_to_writebatch' ~mode:`Sync ks b table
+            register_new_table_and_add_to_writebatch' ~mode:`Sync ks b tablename
       in
+
+        WRITEBATCH.register_dirty_check b ~ks:ks.ks_id
+          ~key:begin fun ~table ~key ->
+            if tablename <> table then false
+            else List.exists (fun (k, _) -> k = key) data
+          end
+          ~column:begin fun ~table ~key ~col ->
+            if tablename <> table then false
+            else
+              List.exists
+                (fun (k, cols) ->
+                   k = key && List.exists (fun c -> c.name = col) cols)
+                data
+          end
+          ~prefix:begin fun ~table ~prefix ->
+            if tablename <> table then false
+            else
+              List.exists (fun (k, _) -> BatString.starts_with k prefix) data
+          end;
+
         List.iter
           (fun (key, columns) ->
              dirty_prefix_watches ks table key;

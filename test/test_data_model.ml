@@ -1313,6 +1313,174 @@ struct
   let test_watch_keys p =
     Lwt_pool.use p (fun db1 -> Lwt_pool.use p (test_watch_keys db1))
 
+  let test_watch_keys_randomized p =
+    let concurrency = 20 in
+
+    let rec run_with_kss = function
+      | (nkss, kss) when nkss < concurrency ->
+          Lwt_pool.use p
+            (fun db ->
+               lwt ks = D.register_keyspace db "test_watch_keys_randomized" in
+                 run_with_kss (nkss + 1, ks :: kss))
+      | (_, kss) ->
+          let module ROW =
+            struct
+              open Obs_data_model
+
+              let name = "tasks"
+
+              type 'a row = { v : Int64.t; busy : bool }
+              module Codec = Obs_key_encoding.Positive_int64
+
+              let row_of_key_data kd =
+                let get n = (List.find (fun c -> c.name = n) kd.columns).data in
+                try
+                  let v    = Int64.of_string @@ get "v" in
+                  let busy = match get "busy" with "0" -> false | _ -> true in
+                    Some { v; busy }
+                with _ -> None
+
+              let row_of_key_data      = `Raw row_of_key_data
+              let row_needs_timestamps = false
+            end in
+
+          let module TASKS = Obs_typed_table.Make(ROW)(D) in
+          let module H     = BatHashtbl in
+
+          let open ROW in
+
+          let column ~name ~data =
+            let open Obs_data_model in
+              { name; data; timestamp = No_timestamp; } in
+
+          let columns l = List.map (fun (k, v) -> column k v) l in
+
+          let kss      = Array.of_list kss in
+
+          let h        = H.create 13 in
+          let busy     = H.create 13 in
+          let ntasks   = 1000 in
+
+          let t, u     = Lwt.wait () in
+          let finished = ref false in
+
+          let simulate_correct_exclusion = false in
+
+          let pick_rows l =
+            let rec pick (n, ret) = function
+              | [] -> List.rev ret
+              | _ when n >= 5 -> List.rev ret
+              | x :: tl ->
+                 if simulate_correct_exclusion then
+                   match H.mem busy x.v with
+                     | true -> pick (n, ret) tl
+                     | false ->
+                         (* "atomic" as far as Lwt threads are concerned  *)
+                         H.replace busy x.v ();
+                         pick (n + 1, x :: ret) tl
+                 else if x.busy then
+                   pick (n, ret) tl
+                 else
+                   pick (n + 1, x :: ret) tl
+            in
+              pick (0, []) l
+          in
+
+          let rec get_tasks id ks =
+            if !finished then
+              return []
+            else
+              try_lwt
+                match_lwt
+                  D.read_committed_transaction ks
+                    (fun ks ->
+                       lwt l  = TASKS.(get_rows ~max_keys:25 ks `All) >|=
+                                snd >|= pick_rows in
+                       lwt () = TASKS.watch_keys ks @@ List.map (fun r -> r.v) l in
+                       (* recheck after watch_keys to avoid TOCTTOU *)
+                       lwt l  =
+                         if simulate_correct_exclusion then
+                           return l
+                         else
+                           TASKS.get_rows ks @@ `Discrete (List.map (fun t -> t.v) l) >|=
+                           snd >|= pick_rows
+                       in
+                         TASKS.put_multi_columns ks @@
+                           List.map (fun t -> (t.v, columns ["busy", "1"])) l >>
+                           return l)
+                with
+                  | [] -> Lwt_unix.sleep 0.001 >> get_tasks id ks
+                  | l -> return l
+              with Obs_data_model.Dirty_data ->
+                Lwt_unix.sleep @@ Random.float 1. >>
+                get_tasks id ks
+          in
+
+          let enqueue_tasks ks l =
+            TASKS.put_multi_columns ks @@
+              List.map
+                (fun n -> (Int64.of_int n, columns ["v", string_of_int n; "busy", "0"])) l in
+
+          let live_workers = ref 0 in
+
+          let rec worker id ks =
+            let proc t =
+              try_lwt
+                Lwt_unix.sleep 0.001 >>
+                TASKS.delete_key ks t.v >>
+                (* we deliberately do not remove it from the [busy] set to
+                 * prevent it from being taken again in
+                 * [simulate_correct_exclusion = true] mode *)
+                return_unit
+              finally
+                H.modify_opt t.v (fun n -> Some (BatOption.map_default succ 1 n)) h;
+                if H.length h >= ntasks then (try Lwt.wakeup u () with _ -> ());
+                return_unit
+            in
+
+              match_lwt get_tasks id ks with
+                | [] -> return_unit
+                | l ->
+                    Lwt_list.iter_p proc l >>
+                    worker id ks
+          in
+
+            for i = 0 to concurrency - 1 do
+              ignore begin
+                try_lwt worker i kss.(i)
+                with _ -> return_unit
+                finally
+                  return @@ decr live_workers
+              end
+            done;
+
+            lwt () =
+              Lwt_pool.use p
+                (fun db ->
+                   lwt ks = D.register_keyspace db "test_watch_keys_randomized" in
+                     enqueue_tasks ks @@ Array.to_list @@ Array.init ntasks (fun i -> i)) in
+
+            lwt () = t in
+              finished := true;
+              try_lwt
+                for i = 0 to ntasks - 1 do
+                  aeq_some ~msg:(sprintf "for %d" i) string_of_int 1 @@
+                  H.Exceptionless.find h (Int64.of_int i)
+                done;
+                return_unit
+              finally
+                (* avoid closing the DB while there are live workers so as to
+                 * prevent 'Internal error, LevelDB.Error("leveldb handle closed")
+                 * messages *)
+                let rec wait_for_workers () =
+                  if !live_workers > 0 then
+                    Lwt_unix.sleep 0.01 >> wait_for_workers ()
+                  else return_unit
+                in
+                  wait_for_workers ()
+    in
+      run_with_kss (0, [])
+
   let test_watch_columns db1 db2 =
     lwt ks1 = D.register_keyspace db1 "test_watch_columns" in
     lwt ks2 = D.register_keyspace db2 "test_watch_columns" in
@@ -1907,6 +2075,8 @@ struct
       "interlocked txs from diff conns", test_interlocked_txs;
       "lock exclusion from diff conns", test_lock_exclusion;
       "optimistic concurrency control (watch_keys)", test_watch_keys;
+      "optimistic concurrency control (watch_keys, randomized)",
+        test_watch_keys_randomized;
       "optimistic concurrency control (watch_prefixes)", test_watch_prefixes;
       "optimistic concurrency control (watch_columns)", test_watch_columns;
     ]
