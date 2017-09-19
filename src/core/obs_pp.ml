@@ -39,7 +39,7 @@ let all_chars_satisfy pred s =
     done;
     !ok_so_far
 
-external is_printable: char -> bool = "caml_is_printable"
+external is_printable: char -> bool = "obigstore_is_printable"
 
 let hex_table =
   Array.init 16 (fun n -> let s = Printf.sprintf "%X" n in s.[0])

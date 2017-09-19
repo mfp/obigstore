@@ -48,6 +48,26 @@ extern "C" {
 #include <caml/alloc.h>
 #include <caml/threads.h>
 
+#ifdef HAS_LOCALE
+#include <locale.h>
+#endif
+
+CAMLprim value obigstore_is_printable(value chr)
+{
+  int c;
+
+#ifdef HAS_LOCALE
+  static int locale_is_set = 0;
+  if (! locale_is_set) {
+    setlocale(LC_CTYPE, "");
+    locale_is_set = 1;
+  }
+#endif
+  c = Int_val(chr);
+  return Val_bool(isprint(c));
+}
+
+
 const char cMetadata_prefix = 0;
 const char cDatum_prefix = 1;
 
